@@ -1,0 +1,13 @@
+color k188 red
+color K188 red
+reset colors
+color K188 red
+reset colors
+color K188 red
+color reset
+color k188 red
+color h188 green n188 yellow
+cluster 1.0 30
+COLOR k188 red
+query [1-10]
+color "*" red
