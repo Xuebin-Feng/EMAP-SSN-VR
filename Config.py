@@ -13,939 +13,4126 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Configuration GUI for the EMAP-SSN VR viewer.
-
-This mirrors the main program's Config GUI, but it belongs to ``opt_vr`` and
-configures only the VR front end. The main program's GUI is left untouched and
-knows nothing about this submodule.
-
-Two things follow from being the VR side rather than the desktop side:
-
-* **Layout dimensionality is not a setting.** The VR viewer is three
-  dimensional by definition, so this GUI always requests 3D layouts. There is
-  no 2D/3D control, the same way the desktop GUI has no such control.
-* **Everything is stored inside the submodule.** Settings are written to
-  ``opt_vr/vr_settings.json`` and every directory is resolved relative to
-  ``opt_vr``, so a VR configuration never disturbs the desktop program's
-  ``viewer_settings.json`` and the two can be configured independently.
-
-What is *not* duplicated is anything scientific. Cache identity, manifest
-matching and canonical folder naming come from ``Cache_Manifest``; layout
-generation is handed to ``Layout_Cache_Generator``; fonts, palette and the
-responsive field layout come from ``desktop.Desktop_App``. Only the window
-itself is local, because that was the part the main GUI could not share.
-
-Run it with ``opt_vr/Viewer.bat``, or directly::
-
-    .venv/Scripts/python.exe opt_vr/Config.py
-"""
-
-from __future__ import annotations
-
-import json
-import os
+import unicodedata  # Pre-load to prevent Windows DLL search path conflicts with Qt/OpenGL
 import sys
+if __name__ == "__main__" and "--headless" in sys.argv:
+    from utilities.Headless_Settings import main as headless_main
+    raise SystemExit(headless_main("config"))
+# Import Libraries
+import ast
+import html
+import json
+import math
+import os
+import re
 import tempfile
+from types import SimpleNamespace
+import traceback
+from pathlib import Path
 
-import _bootstrap  # noqa: F401  - puts the parent src tree on sys.path
+# opt_vr sits beside the main program; _bootstrap puts its src tree on
+# sys.path so every upstream import below resolves exactly as it does
+# for the desktop GUI this file was copied from.
+import _bootstrap
 
-import Cache_Manifest as cache_manifest
-import Settings as vr_settings
-from Layout_Cache_Generator import LayoutGenerationSettings
-from desktop.Desktop_App import (
-    UI_QSS_FONT_STACK,
-    ResponsiveFieldLayout,
-    configure_qt_application_fonts,
-    force_light_palette,
-    show_window_in_front,
-)
-from desktop.Viewer_State import ALIASES, DEFAULTS, encode_document
 from utilities.Terminal_Launcher import HoldMode, launch_in_terminal
-
-from PySide6.QtCore import Qt, QThread, Signal
-from PySide6.QtGui import QIcon
-from PySide6.QtWidgets import (
-    QApplication,
-    QCheckBox,
-    QComboBox,
-    QDoubleSpinBox,
-    QFileDialog,
-    QFormLayout,
-    QFrame,
-    QHBoxLayout,
-    QLabel,
-    QLineEdit,
-    QMainWindow,
-    QMessageBox,
-    QPushButton,
-    QScrollArea,
-    QSizePolicy,
-    QSpinBox,
-    QTabWidget,
-    QVBoxLayout,
-    QWidget,
+from desktop.Desktop_App import (
+    APPLICATION_VERSION,
+    CONFIG_DISPLAY_NAME,
+    VIEWER_DISPLAY_NAME,
+    VIEWER_DESKTOP_FILE_NAME,
+    configure_linux_qt_desktop_identity,
 )
+from Layout_Cache_Generator import LayoutGenerationSettings
+from desktop.Viewer_State import (
+    INPUT_PROFILE_DEFAULTS, VISUAL_PROFILE_DEFAULTS, PHYSICS_PROFILE_DEFAULTS, DIRECTORY_PROFILE_DEFAULTS, LEGACY_DEFAULT_DIRECTORY_PATHS, PROFILE_ENUM_VALUES, PROFILE_RANGES
+)
+#: This window configures the VR front end, so it names itself accordingly
+#: rather than borrowing the desktop program's display names.
+VR_CONFIG_DISPLAY_NAME = "EMAP-SSN VR Configuration"
+VR_VIEWER_DISPLAY_NAME = "EMAP-SSN VR Viewer"
 
-OPT_VR_DIR = _bootstrap.OPT_VR_DIR
-PROJECT_ROOT = _bootstrap.PROJECT_ROOT
-SRC_DIR = _bootstrap.SRC_DIR
-
-#: Written and read only by the VR side. The desktop program's
-#: viewer_settings.json is never touched.
-SETTINGS_FILE = os.path.join(OPT_VR_DIR, "vr_settings.json")
-
-VIEWER_SCRIPT = os.path.join(OPT_VR_DIR, "Viewer.py")
-GENERATOR_SCRIPT = os.path.join(SRC_DIR, "Layout_Cache_Generator.py")
-
-WINDOW_TITLE = "EMAP-SSN VR Configuration"
-VIEWER_TITLE = "EMAP-SSN VR Viewer"
-GENERATOR_TITLE = "EMAP-SSN Layout Generator"
-
-#: The VR viewer is three dimensional. Not a user choice - a property of which
-#: viewer this GUI launches.
+#: Layout dimensionality is fixed: the VR viewer has no 2D mode, exactly as
+#: the desktop viewer has no 3D one.
 LAYOUT_DIMENSIONS = 3
 
-NEW_CACHE_ENTRY = "(New Layout Cache)"
+os.environ["QT_LOGGING_RULES"] = "qt.qpa.window=false"
 
-TAB_CONTENT_MARGIN = 18
-TAB_ROW_SPACING = 12
+# --- Placeholder Parameters ---
+SEQUENCE_SET = ""
+ALIGNMENT_REFERENCE = ""
+ALIGNMENT_OFFSET = 0
+SIMILARITY_THRESHOLD = None
+TOP_EDGE_PERCENT = None    
+ALIGNMENT_SCORE = None
+NORM_MODE = None
+UMAP_MODE = None
+UMAP_NEIGHBORS = None
+UMAP_MIN_DIST = None
+TARGET_CACHE_FILE = os.environ.get("SSN_TARGET_CACHE", None)
+TARGET_CACHE_PATH = os.environ.get("SSN_TARGET_CACHE_PATH", None)
+TARGET_CACHE_MODE = os.environ.get("SSN_TARGET_CACHE_MODE", None)
 
-#: Same field metrics as the main GUI, so the two windows read alike.
-FIELD_LABEL_WIDTH = 180
-FIELD_HORIZONTAL_SPACING = 12
+# This GUI belongs to the submodule, so its root - and every relative
+# directory it resolves - is opt_vr. MAIN_PROJECT_ROOT is kept only for
+# reaching the shared pipeline scripts under src/.
+PROJECT_ROOT = Path(_bootstrap.OPT_VR_DIR)
+MAIN_PROJECT_ROOT = Path(_bootstrap.PROJECT_ROOT)
+SRC_DIR = Path(_bootstrap.SRC_DIR)
+
+# --- Directory & File Paths ---
+INPUT_FILE_ALIAS = "$input_file$"
+CACHE_FILE_ALIAS = "$cache_file$"
+ANALYSIS_RESULT_ALIAS = "$analysis_result$"
+
+INPUT_FILE_DIR = "Input_Files"
+CACHE_FILE_DIR = "Cache_Files"
+ANALYSIS_RESULT_DIR = "Analysis_Results"
+
+FASTA_DIR = os.path.join(INPUT_FILE_ALIAS, "Sequence_Sets")
+MSA_DIR = os.path.join(INPUT_FILE_ALIAS, "Multiple_Alignments")
+HDF5_DIR = os.path.join(INPUT_FILE_ALIAS, "Networks_EValues")
+SAVED_LAYOUT_DIR = os.path.join(CACHE_FILE_ALIAS, "Saved_Layouts")
+SETTING_EXPORT_DIR = os.path.join(CACHE_FILE_ALIAS, "Exported_Settings")
+METADATA_DIR = os.path.join(INPUT_FILE_ALIAS, "Meta_Data")
+HEADER_LIST_DIR = os.path.join(INPUT_FILE_ALIAS, "Header_Lists")
+DEFAULT_SAVED_CONFIG_DIR = os.path.join(CACHE_FILE_ALIAS, "Saved_Config")
+SAVED_CONFIG_DIR = DEFAULT_SAVED_CONFIG_DIR
+
+DIRECTORY_PATH_ALIASES = {
+    INPUT_FILE_ALIAS: "INPUT_FILE_DIR",
+    CACHE_FILE_ALIAS: "CACHE_FILE_DIR",
+    ANALYSIS_RESULT_ALIAS: "ANALYSIS_RESULT_DIR",
+}
+DEPRECATED_DIRECTORY_KEYS = frozenset({
+    "LOGO_DIR",
+    "CLUSTER_LABEL_DIR",
+    "SEQUENCE_EXPORT_DIR",
+    "PRINT_SAVE_DIR",
+    "STRUCTURES_DIR",
+})
+OBSOLETE_LAYOUT_ENGINE_KEYS = frozenset({
+    "PHYSICS_ENGINE",
+    "MC_SWEEPS",
+    "MC_QUENCH_SWEEPS",
+    "MC_TELEPORT_PROBABILITY",
+    "MC_RANDOM_SEED",
+    "SGLD_MIN_K",
+    "SGLD_K_PERCENT",
+    "SGLD_START_TEMP",
+    "SGLD_NOISE_SCALE",
+})
+
+# --- Explicit Input File Paths ---
+# You can manually replace these string paths to decouple file logic:
+NODE_FASTA_FILE = ""
+
+# Default values if scanning directories fails:
+MSA_FILE = ""
+INPUT_HDF5 = ""
+
+# Sequences File points to NODE_FASTA_FILE for backward compatibility
+SEQUENCES_FILE = ""
+
+# --- Command Settings ---
+GAP_CHARS = ['-', '.']
+FILTER_MIN_OCCUPANCY = 10.0
+
+# --- Visual Defaults ---
+NODE_SIZE = 10
+EDGE_WIDTH = 1.0
+EDGE_ALPHA = 0.1     
+NODE_BOUNDARY_WIDTH = 0.5
+TEXT_SIZE = 8
+TEXT_COLOR = 'grey'
+INITIAL_NODE_COLOR = '#4488ff'
+HOVER_COLOR = '#ffaa00'
+CONNECTED_NODE_COLOR = '#ff0000'
+EDGE_COLOR = '#000000'
+LOW_RESOURCE_MODE = False
+NODE_BOUNDARY_COLOR = '#000000'
+
+# --- Grid Packing Settings ---
+PACKING_GRID_SIZE = 20.0  # The base size of one grid square
+PACKING_PADDING = 10.0     # Extra padding applied to the bounding box of each cluster
+
+# --- Simulation & Physics Settings ---
+LAYOUT_DEVICE_SELECTION = "auto"
+SPRING_K = 5.0             
+COULOMB_K = 10.0            
+COULOMB_CUTOFF = 30.0      
+DAMPING = 0.9              
+MAX_FORCE_LIMIT = 20.0      
+MAX_TOTAL_REPULSION_FORCE = 0.0
+
+DT = 0.005
+BOX_SCALE = 2.0
+MAX_STEPS = 10000           
+RMSD_THRESHOLD = 0.005 
+PERCENTAGE_DROP_THRESHOLD = 0.1    
+RMSD_WINDOW = 50
+ENABLE_PROGRESSIVE_SIMULATION = False
+PACKING_GEOMETRY = "Square"
 
 
-def make_field_group(pairs, *, name="", **options):
-    """One row of label/control pairs, laid out as the main GUI lays them out."""
-    group = QWidget()
-    group.setObjectName(name)
-    first_label = pairs[0][0]
-    first_label.setFixedWidth(max(FIELD_LABEL_WIDTH, first_label.minimumWidth()))
-    ResponsiveFieldLayout(
-        group,
-        pairs,
-        tuple(1 for _ in pairs),
-        spacing=FIELD_HORIZONTAL_SPACING,
-        wrap_labels=False,
-        **options,
-    )
-    return group
 
 
-# ---------------------------------------------------------------------------
-# Widgets
-#
-# The main GUI defines equivalents inside its `if __name__ == "__main__"`
-# block, which makes them unimportable. They are small, so they are restated
-# here rather than refactored out of a file this submodule does not own.
-# ---------------------------------------------------------------------------
-
-class NoScrollComboBox(QComboBox):
-    """A combo box that ignores the wheel unless it has focus."""
-
-    def wheelEvent(self, event):
-        if self.hasFocus():
-            super().wheelEvent(event)
-        else:
-            event.ignore()
 
 
-class NoScrollSpinBox(QSpinBox):
-    def wheelEvent(self, event):
-        if self.hasFocus():
-            super().wheelEvent(event)
-        else:
-            event.ignore()
-
-
-class NoScrollDoubleSpinBox(QDoubleSpinBox):
-    def wheelEvent(self, event):
-        if self.hasFocus():
-            super().wheelEvent(event)
-        else:
-            event.ignore()
-
-
-class OptionalDoubleSpinBox(NoScrollDoubleSpinBox):
-    """A spin box whose empty state means ``None``.
-
-    Similarity threshold and top-edge percent are mutually exclusive, and the
-    unused one must round-trip as null rather than as zero.
-    """
-
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.setSpecialValueText(" ")
-        self.setMinimum(-1.0)
-        self.setValue(self.minimum())
-
-    def optionalValue(self):
-        if self.value() <= self.minimum():
-            return None
-        return float(self.value())
-
-    def setOptionalValue(self, value):
-        if value is None or str(value).strip().lower() in ("", "none", "null"):
-            self.setValue(self.minimum())
-        else:
-            try:
-                self.setValue(float(value))
-            except (TypeError, ValueError):
-                self.setValue(self.minimum())
-
-
-class CacheHashWorker(QThread):
-    """Hash the inputs off the UI thread.
-
-    The network HDF5 runs to gigabytes, so hashing it inline would freeze the
-    window for as long as the read takes.
-    """
-
-    finished_ok = Signal(dict)
-    failed = Signal(str)
-
-    def __init__(self, sequence_path, network_path, parent=None):
-        super().__init__(parent)
-        self._sequence_path = sequence_path
-        self._network_path = network_path
-
-    def run(self):
-        try:
-            metadata = cache_manifest.validate_network_schema(self._network_path)
-            self.finished_ok.emit(
-                {
-                    "sequence": cache_manifest.fingerprint_file(self._sequence_path),
-                    "network": cache_manifest.fingerprint_file(self._network_path),
-                    "network_type": metadata.network_type,
-                }
-            )
-        except Exception as error:  # surfaced in the cache tracker label
-            self.failed.emit(str(error))
-
-
-# ---------------------------------------------------------------------------
-# Field specification
-#
-# Declarative so the tabs stay readable and every setting is visibly accounted
-# for. Keys match the main program's settings schema exactly, which is what
-# lets the generated layout cache be interchangeable.
-# ---------------------------------------------------------------------------
-
-VISUAL_FIELDS = (
-    ("NODE_SIZE", "Node Size:", "int", {"min": 1, "max": 200}),
-    ("EDGE_WIDTH", "Edge Width:", "float", {"min": 0.0, "max": 20.0, "step": 0.1}),
-    ("NODE_BOUNDARY_WIDTH", "Node Boundary Width:", "float",
-     {"min": 0.0, "max": 20.0, "step": 0.1}),
-    ("EDGE_ALPHA", "Edge Alpha:", "float", {"min": 0.0, "max": 1.0, "step": 0.05}),
-    ("TEXT_SIZE", "Text Size:", "int", {"min": 1, "max": 100}),
-    ("TEXT_COLOR", "Text Colour:", "text", {}),
-    ("INITIAL_NODE_COLOR", "Node Colour:", "text", {}),
-    ("HOVER_COLOR", "Hover Colour:", "text", {}),
-    ("CONNECTED_NODE_COLOR", "Connected Node Colour:", "text", {}),
-    ("EDGE_COLOR", "Edge Colour:", "text", {}),
-    ("NODE_BOUNDARY_COLOR", "Node Boundary Colour:", "text", {}),
-    ("LOW_RESOURCE_MODE", "Low Resource Mode:", "bool", {}),
-)
-
-PHYSICS_FIELDS = (
-    ("LAYOUT_DEVICE_SELECTION", "Compute Device:", "choice",
-     {"choices": ("auto", "cpu", "cuda")}),
-    ("SPRING_K", "Spring Constant:", "float", {"min": 0.0, "max": 1000.0, "step": 0.5}),
-    ("COULOMB_K", "Coulomb Constant:", "float",
-     {"min": 0.0, "max": 1000.0, "step": 0.5}),
-    ("COULOMB_CUTOFF", "Coulomb Cutoff:", "float",
-     {"min": 0.0, "max": 10000.0, "step": 1.0}),
-    ("DAMPING", "Damping:", "float", {"min": 0.0, "max": 1.0, "step": 0.01}),
-    ("DT", "Time Step:", "float", {"min": 0.0, "max": 1.0, "step": 0.001, "decimals": 4}),
-    ("MAX_STEPS", "Max Steps:", "int", {"min": 1, "max": 10_000_000}),
-    ("RMSD_THRESHOLD", "RMSD Threshold:", "float",
-     {"min": 0.0, "max": 100.0, "step": 0.001, "decimals": 4}),
-    ("PERCENTAGE_DROP_THRESHOLD", "Plateau Threshold %:", "float",
-     {"min": 0.0, "max": 100.0, "step": 0.05}),
-    ("RMSD_WINDOW", "RMSD Window:", "int", {"min": 1, "max": 100_000}),
-    ("ENABLE_PROGRESSIVE_SIMULATION", "Progressive Simulation:", "bool", {}),
-    ("PACKING_GEOMETRY", "Packing Geometry:", "choice",
-     {"choices": ("Square", "Circle")}),
-    ("PACKING_GRID_SIZE", "Packing Grid Size:", "float",
-     {"min": 0.0, "max": 10000.0, "step": 1.0}),
-    ("LAYOUT_SEED", "Layout Seed:", "int", {"min": 0, "max": 2_147_483_647}),
-)
-
-VR_FIELDS = (
-    ("VR_HOST", "Unity Host:", "text", {}),
-    ("VR_PORT", "Unity Port:", "int", {"min": 1, "max": 65535}),
-    ("DISTANCE_SCALE", "Distance Scale:", "float",
-     {"min": 0.001, "max": 1000.0, "step": 0.1, "decimals": 3}),
-    ("NEIGHBOR_COLOR", "Neighbour Colour:", "text", {}),
-    ("ENABLE_EDGE_FILTERING", "Limit Rendered Edges:", "bool", {}),
-    ("MAX_RENDER_EDGES", "Max Rendered Edges:", "int", {"min": 0, "max": 100_000_000}),
-)
-
-DIRECTORY_FIELDS = (
-    ("INPUT_FILE_DIR", "Input Files:"),
-    ("CACHE_FILE_DIR", "Cache Files:"),
-    ("ANALYSIS_RESULT_DIR", "Analysis Results:"),
-    ("FASTA_DIR", "Sequence Sets:"),
-    ("MSA_DIR", "Multiple Alignments:"),
-    ("HDF5_DIR", "Networks:"),
-    ("METADATA_DIR", "Metadata:"),
-    ("HEADER_LIST_DIR", "Header Lists:"),
-    ("SAVED_LAYOUT_DIR", "Layout Caches:"),
-    ("SETTING_EXPORT_DIR", "Exported Settings:"),
-    ("VR_APP_DIR", "Unity Build:"),
-)
-
-TOOLTIPS = {
-    "ALIGNMENT_SCORE": "Alignment scoring mode used to build the similarity network.",
-    "NORM_MODE": "How raw alignment scores are normalised before thresholding.",
-    "ALIGNMENT_REFERENCE": "Sequence ID whose numbering anchors alignment positions.",
-    "ALIGNMENT_OFFSET": "Residue offset applied to the reference numbering.",
-    "FILTER_MIN_OCCUPANCY": "Minimum column occupancy retained from the alignment.",
-    "SIMILARITY_THRESHOLD": "Keep edges scoring above this value. Mutually exclusive "
-                            "with Top Edge %.",
-    "TOP_EDGE_PERCENT": "Keep the strongest N% of possible edges. Mutually exclusive "
-                        "with Similarity Threshold.",
-    "UMAP_MODE": "Use UMAP to place nodes instead of the physics simulation.",
-    "VR_HOST": "Address the Unity client connects to. The shipped build has "
-               "127.0.0.1 baked into its scene.",
-    "VR_PORT": "TCP port of the Python/Unity bridge.",
-    "DISTANCE_SCALE": "Multiplier applied to layout coordinates before they reach "
-                      "the headset.",
-    "MAX_RENDER_EDGES": "Upper bound on edges sent to Unity, to keep the frame rate "
-                        "usable on large networks.",
-    "LAYOUT_SEED": "Seed for reproducible layouts. Blank or 0 means unseeded.",
+DIRECTORY_DISPLAY_NAMES = {
+    "INPUT_FILE_DIR": "Input File Directory",
+    "CACHE_FILE_DIR": "Cache File Directory",
+    "ANALYSIS_RESULT_DIR": "Analysis Results Directory",
+    "FASTA_DIR": "Input FASTA Directory",
+    "SAVED_LAYOUT_DIR": "Layout Directory",
+    "SETTING_EXPORT_DIR": "Setting Export Directory",
 }
 
+#: Settings that belong to the Python/Unity bridge. The desktop program has no
+#: equivalent, so they are declared here rather than in the shared schema.
+VR_PROFILE_DEFAULTS = {
+    "VR_HOST": "127.0.0.1",
+    "VR_PORT": 5005,
+    "DISTANCE_SCALE": 1.0,
+    # NEIGHBOR_COLOR is deliberately absent: Settings republishes
+    # INITIAL_NODE_COLOR under that name, and it wins, so a second control for
+    # it would silently lose whatever the user picked.
+    "ENABLE_EDGE_FILTERING": True,
+    "MAX_RENDER_EDGES": 500000,
+    "VR_APP_DIR": "VR_App",
+}
 
-class VRConfigGUI(QMainWindow):
-    """The VR configuration window."""
+for _vr_key, _vr_value in VR_PROFILE_DEFAULTS.items():
+    globals().setdefault(_vr_key, _vr_value)
 
-    def __init__(self):
-        super().__init__()
-        self.setWindowTitle(WINDOW_TITLE)
-        self.resize(1100, 820)
-        self.setStyleSheet(f"* {{ {UI_QSS_FONT_STACK} }}")
+#: Settings the desktop viewer draws but the Unity client does not. Keeping a
+#: control for them would invite tuning something with no effect: nothing in
+#: the VR runtime reads any of these, and no shared command does either.
+UNUSED_IN_VR = frozenset({
+    "TEXT_SIZE",          # no HUD text is rendered in the headset
+    "TEXT_COLOR",         # ditto
+    "LOW_RESOURCE_MODE",  # a VisPy canvas optimisation; Unity does the drawing
+    "PACKING_GEOMETRY",   # 3D packs onto spherical shells, ignoring Square/Circle
+})
 
-        self.inputs = {}
-        self.labels = {}
-        self.current_cache_folder = None
-        self._hash_worker = None
+#: The bridge settings sit on the Visual Effects tab, so they share its profile
+#: group rather than forming one of their own.
+VR_VISUAL_PROFILE_DEFAULTS = {
+    **{
+        key: value
+        for key, value in VISUAL_PROFILE_DEFAULTS.items()
+        if key not in UNUSED_IN_VR
+    },
+    **VR_PROFILE_DEFAULTS,
+}
 
-        self.values = self._load_settings()
+VR_PHYSICS_PROFILE_DEFAULTS = {
+    key: value
+    for key, value in PHYSICS_PROFILE_DEFAULTS.items()
+    if key not in UNUSED_IN_VR
+}
 
-        central = QWidget()
-        outer = QVBoxLayout(central)
-        outer.setContentsMargins(12, 12, 12, 12)
-        outer.setSpacing(10)
+TAB_PROFILE_SPECS = {
+    "inputs_outputs": {
+        "defaults": INPUT_PROFILE_DEFAULTS,
+        "allow_default": False,
+    },
+    "visual_effects": {
+        "defaults": VR_VISUAL_PROFILE_DEFAULTS,
+        "allow_default": True,
+    },
+    "simulation_physics": {
+        "defaults": VR_PHYSICS_PROFILE_DEFAULTS,
+        "allow_default": True,
+    },
+    "directories": {
+        "defaults": DIRECTORY_PROFILE_DEFAULTS,
+        "allow_default": True,
+    },
+}
 
-        self.tabs = QTabWidget()
-        outer.addWidget(self.tabs)
+PROFILE_TAB_DISPLAY_NAMES = {
+    "inputs_outputs": "Inputs & Outputs",
+    "visual_effects": "Visual Effects",
+    "simulation_physics": "Simulation & Physics",
+    "directories": "Directories",
+}
 
-        self.tip_panel = QLabel("Configure the VR viewer, then press Save && Run.")
-        self.tip_panel.setWordWrap(True)
-        self.tip_panel.setStyleSheet("color: #555;")
-        outer.addWidget(self.tip_panel)
+RESERVED_PROFILE_NAMES = {"custom", "default", "new"}
+CONFIG_TAB_CONTENT_MARGIN = 18
+CONFIG_TAB_ROW_SPACING = 12
+CONFIG_FIELD_LABEL_WIDTH = 180
+CONFIG_FIELD_HORIZONTAL_SPACING = 12
+CONFIG_SEPARATOR_THICKNESS = 2
+CONFIG_SEPARATOR_PADDING = 24
+PROFILE_DISABLED_LABEL_STYLESHEET = "QLabel:disabled { color: #888; }"
+PROFILE_DISABLED_SPINBOX_STYLESHEET = (
+    "QSpinBox:disabled, QDoubleSpinBox:disabled { "
+    "background-color: #f0f0f0; color: #888; }"
+)
+PROFILE_DISABLED_TOGGLE_STYLESHEET = (
+    "QPushButton:disabled { background-color: #e0e0e0; color: #888; "
+    "border-radius: 14px; font-weight: bold; border: 1px solid #bdbdbd; }"
+)
 
-        buttons = QHBoxLayout()
-        buttons.addStretch(1)
-        self.btn_save = QPushButton("Save")
-        self.btn_save.clicked.connect(self.save_settings)
-        self.btn_run = QPushButton("Save && Run")
-        self.btn_run.setStyleSheet("font-weight: bold;")
-        self.btn_run.clicked.connect(self.save_and_run)
-        buttons.addWidget(self.btn_save)
-        buttons.addWidget(self.btn_run)
-        outer.addLayout(buttons)
 
-        self.setCentralWidget(central)
 
-        self._build_inputs_tab()
-        self._build_visual_tab()
-        self._build_physics_tab()
-        self._build_vr_tab()
-        self._build_directories_tab()
 
-        self._apply_tooltips()
-        self.refresh_file_dropdowns()
-        self.refresh_cache_discovery()
-
-    # -- settings -------------------------------------------------------
-
-    def _load_settings(self):
-        """Defaults from the shared schema, overlaid with the VR settings file."""
-        values = dict(DEFAULTS)
-        values.update(vr_settings.VR_DEFAULTS)
-        if os.path.exists(SETTINGS_FILE):
-            try:
-                with open(SETTINGS_FILE, encoding="utf-8") as handle:
-                    stored = json.load(handle)
-                if isinstance(stored, dict):
-                    values.update(stored)
-            except (OSError, ValueError) as error:
-                print(f"[VR Config] Ignoring unreadable {SETTINGS_FILE}: {error}")
-        values["LAYOUT_DIMENSIONS"] = LAYOUT_DIMENSIONS
-        return values
-
-    def _resolve_directory(self, key):
-        """Absolute path for a directory setting, rooted inside opt_vr."""
-        raw = self.inputs[key].text().strip() if key in self.inputs else ""
-        if not raw:
-            raw = str(self.values.get(key, ""))
-        return vr_settings.resolve_directory_path(raw) if raw else ""
-
-    # -- widget construction --------------------------------------------
-
-    def _register(self, key, label_text, widget):
-        label = QLabel(label_text)
-        self.inputs[key] = widget
-        self.labels[key] = label
-        return label
-
-    def _make_field(self, key, label_text, kind, options):
-        if kind == "int":
-            widget = NoScrollSpinBox()
-            widget.setRange(options.get("min", 0), options.get("max", 1_000_000))
-            try:
-                widget.setValue(int(self.values.get(key, 0) or 0))
-            except (TypeError, ValueError):
-                widget.setValue(options.get("min", 0))
-        elif kind == "float":
-            widget = NoScrollDoubleSpinBox()
-            widget.setDecimals(options.get("decimals", 3))
-            widget.setRange(options.get("min", 0.0), options.get("max", 1_000_000.0))
-            widget.setSingleStep(options.get("step", 0.1))
-            try:
-                widget.setValue(float(self.values.get(key, 0.0) or 0.0))
-            except (TypeError, ValueError):
-                widget.setValue(options.get("min", 0.0))
-        elif kind == "bool":
-            widget = QCheckBox()
-            widget.setChecked(bool(self.values.get(key, False)))
-        elif kind == "choice":
-            widget = NoScrollComboBox()
-            widget.addItems(list(options.get("choices", ())))
-            current = str(self.values.get(key, ""))
-            if current and widget.findText(current) >= 0:
-                widget.setCurrentText(current)
+def resolve_directory_path(value, base_directories=None):
+    """Expand one exact leading directory alias without changing other paths."""
+    if value is None:
+        return value
+    raw_path = os.fspath(value)
+    bases = base_directories or {}
+    for alias, setting_key in DIRECTORY_PATH_ALIASES.items():
+        if raw_path == alias:
+            suffix = ""
+        elif raw_path.startswith(alias) and raw_path[len(alias):len(alias) + 1] in {"/", "\\"}:
+            suffix = raw_path[len(alias):].lstrip("/\\")
         else:
-            widget = QLineEdit(str(self.values.get(key, "") or ""))
-        widget.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
-        return self._register(key, label_text, widget)
+            continue
 
-    def _rows(self, specs, per_row=2):
-        """Lay fields out two per row, as the main GUI does."""
-        container = QWidget()
-        column = QVBoxLayout(container)
-        column.setContentsMargins(0, 0, 0, 0)
-        column.setSpacing(TAB_ROW_SPACING)
-        pairs = []
-        for key, label_text, kind, options in specs:
-            label = self._make_field(key, label_text, kind, options)
-            pairs.append((label, self.inputs[key]))
-        for index in range(0, len(pairs), per_row):
-            column.addWidget(make_field_group(
-                pairs[index:index + per_row],
-                name=f"row{index}", equal_fields=True, column_spacing=24,
-            ))
-        return container
-
-    def _add_tab(self, content, title):
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.Shape.NoFrame)
-        scroll.setMinimumWidth(600)
-        scroll.setWidget(content)
-        self.tabs.addTab(scroll, title)
-
-    def _browse_row(self, key, label_text):
-        line = QLineEdit(str(self.values.get(key, "") or ""))
-        label = self._register(key, label_text, line)
-        button = QPushButton("...")
-        button.setFixedWidth(36)
-
-        def choose():
-            start = vr_settings.resolve_directory_path(line.text().strip()) or OPT_VR_DIR
-            chosen = QFileDialog.getExistingDirectory(self, label_text, start)
-            if chosen:
-                line.setText(self._relative_to_opt_vr(chosen))
-                self.refresh_file_dropdowns()
-                self.refresh_cache_discovery()
-
-        button.clicked.connect(choose)
-        line.editingFinished.connect(self.refresh_file_dropdowns)
-        row = QWidget()
-        layout = QHBoxLayout(row)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.addWidget(label)
-        layout.addWidget(line, 1)
-        layout.addWidget(button)
-        return row
-
-    @staticmethod
-    def _relative_to_opt_vr(path):
-        """Store paths inside the submodule as relative, so it stays portable."""
-        try:
-            relative = os.path.relpath(path, OPT_VR_DIR)
-        except ValueError:
-            return path
-        return path if relative.startswith("..") else relative
-
-    # -- tabs -----------------------------------------------------------
-
-    def _build_inputs_tab(self):
-        tab = QWidget()
-        form = QFormLayout(tab)
-        form.setContentsMargins(
-            TAB_CONTENT_MARGIN, TAB_CONTENT_MARGIN,
-            TAB_CONTENT_MARGIN, TAB_CONTENT_MARGIN,
+        base_path = os.fspath(
+            bases.get(setting_key, globals().get(setting_key, ""))
         )
-        form.setSpacing(TAB_ROW_SPACING)
-
-        self.cb_fasta = NoScrollComboBox()
-        self.cb_fasta.setEditable(False)
-        self.cb_hdf5 = NoScrollComboBox()
-        self.cb_msa = NoScrollComboBox()
-        for widget in (self.cb_fasta, self.cb_hdf5, self.cb_msa):
-            widget.currentTextChanged.connect(self.refresh_cache_discovery)
-
-        form.addRow(QLabel("Sequence Set / Subset (.fasta):"), self.cb_fasta)
-        form.addRow(QLabel("Network Edges Input (.h5):"), self.cb_hdf5)
-        form.addRow(QLabel("MSA Input (.fasta / _sparse.h5):"), self.cb_msa)
-
-        self.inputs["NODE_FASTA_FILE"] = self.cb_fasta
-        self.inputs["INPUT_HDF5"] = self.cb_hdf5
-        self.inputs["MSA_FILE"] = self.cb_msa
-
-        form.addRow(self._rows((
-            ("ALIGNMENT_SCORE", "Alignment Score Mode:", "choice",
-             {"choices": ("global", "local")}),
-            ("NORM_MODE", "Normalization Mode:", "choice",
-             {"choices": ("alignment_length", "shorter_sequence",
-                          "longer_sequence", "average_sequence")}),
-        )))
-        form.addRow(self._rows((
-            ("ALIGNMENT_REFERENCE", "Alignment Reference ID:", "text", {}),
-            ("FILTER_MIN_OCCUPANCY", "Min Occupancy %:", "float",
-             {"min": 0.0, "max": 100.0, "step": 1.0, "decimals": 2}),
-        )))
-        form.addRow(self._rows((
-            ("ALIGNMENT_OFFSET", "Alignment Offset:", "int",
-             {"min": -1_000_000, "max": 1_000_000}),
-            ("UMAP_MODE", "Plot UMAP Instead:", "bool", {}),
-        )))
-
-        self.spin_thresh = OptionalDoubleSpinBox()
-        self.spin_thresh.setDecimals(4)
-        self.spin_thresh.setMaximum(1e9)
-        self.spin_thresh.setOptionalValue(self.values.get("SIMILARITY_THRESHOLD"))
-        self.spin_top = OptionalDoubleSpinBox()
-        self.spin_top.setDecimals(2)
-        self.spin_top.setMaximum(100.0)
-        self.spin_top.setOptionalValue(self.values.get("TOP_EDGE_PERCENT"))
-        self.inputs["SIMILARITY_THRESHOLD"] = self.spin_thresh
-        self.inputs["TOP_EDGE_PERCENT"] = self.spin_top
-        self.labels["SIMILARITY_THRESHOLD"] = QLabel("Similarity Threshold:")
-        self.labels["TOP_EDGE_PERCENT"] = QLabel("Top Edge %:")
-        for widget in (self.spin_thresh, self.spin_top):
-            widget.valueChanged.connect(self.refresh_cache_discovery)
-
-        form.addRow(make_field_group(
-            [
-                (self.labels["SIMILARITY_THRESHOLD"], self.spin_thresh),
-                (self.labels["TOP_EDGE_PERCENT"], self.spin_top),
-            ],
-            name="edgeFilterRow", equal_fields=True, column_spacing=24,
-        ))
-
-        form.addRow(self._rows((
-            ("UMAP_NEIGHBORS", "UMAP Neighbours:", "int", {"min": 2, "max": 10_000}),
-            ("UMAP_MIN_DIST", "UMAP Min Distance:", "float",
-             {"min": 0.0, "max": 1.0, "step": 0.01}),
-        )))
-
-        separator = QFrame()
-        separator.setFrameShape(QFrame.Shape.HLine)
-        separator.setStyleSheet("color: #ccc;")
-        form.addRow(separator)
-
-        self.lbl_cache_tracker = QLabel("Target Cache: resolving...")
-        self.lbl_cache_tracker.setWordWrap(True)
-        form.addRow(QLabel("Target Cache:"), self.lbl_cache_tracker)
-
-        self.cb_cache_file = NoScrollComboBox()
-        form.addRow(QLabel("Selected Cache File:"), self.cb_cache_file)
-
-        self._add_tab(tab, "Inputs && Outputs")
-
-    def _build_visual_tab(self):
-        tab = QWidget()
-        layout = QVBoxLayout(tab)
-        layout.setContentsMargins(
-            TAB_CONTENT_MARGIN, TAB_CONTENT_MARGIN,
-            TAB_CONTENT_MARGIN, TAB_CONTENT_MARGIN,
-        )
-        layout.addWidget(self._rows(VISUAL_FIELDS))
-        layout.addStretch(1)
-        self._add_tab(tab, "Visual Effects")
-
-    def _build_physics_tab(self):
-        tab = QWidget()
-        layout = QVBoxLayout(tab)
-        layout.setContentsMargins(
-            TAB_CONTENT_MARGIN, TAB_CONTENT_MARGIN,
-            TAB_CONTENT_MARGIN, TAB_CONTENT_MARGIN,
-        )
-        note = QLabel(
-            "The VR viewer always solves three dimensional layouts; there is no "
-            "2D option here by design."
-        )
-        note.setWordWrap(True)
-        note.setStyleSheet("color: #555; font-style: italic;")
-        layout.addWidget(note)
-        layout.addWidget(self._rows(PHYSICS_FIELDS))
-        layout.addStretch(1)
-        self._add_tab(tab, "Simulation && Physics")
-
-    def _build_vr_tab(self):
-        tab = QWidget()
-        layout = QVBoxLayout(tab)
-        layout.setContentsMargins(
-            TAB_CONTENT_MARGIN, TAB_CONTENT_MARGIN,
-            TAB_CONTENT_MARGIN, TAB_CONTENT_MARGIN,
-        )
-        note = QLabel(
-            "Settings for the Python/Unity bridge. The shipped Unity build has "
-            "127.0.0.1:5005 baked into its scene, so changing the endpoint also "
-            "means rebuilding the client."
-        )
-        note.setWordWrap(True)
-        note.setStyleSheet("color: #555; font-style: italic;")
-        layout.addWidget(note)
-        layout.addWidget(self._rows(VR_FIELDS))
-        layout.addStretch(1)
-        self._add_tab(tab, "VR && Unity")
-
-    def _build_directories_tab(self):
-        tab = QWidget()
-        layout = QVBoxLayout(tab)
-        layout.setContentsMargins(
-            TAB_CONTENT_MARGIN, TAB_CONTENT_MARGIN,
-            TAB_CONTENT_MARGIN, TAB_CONTENT_MARGIN,
-        )
-        note = QLabel(
-            f"Relative paths resolve inside the submodule ({OPT_VR_DIR}). "
-            f"Aliases {', '.join(sorted(ALIASES))} expand to the directories above them."
-        )
-        note.setWordWrap(True)
-        note.setStyleSheet("color: #555; font-style: italic;")
-        layout.addWidget(note)
-        for key, label_text in DIRECTORY_FIELDS:
-            layout.addWidget(self._browse_row(key, label_text))
-        layout.addStretch(1)
-        self._add_tab(tab, "Directories")
-
-    def _apply_tooltips(self):
-        for key, text in TOOLTIPS.items():
-            for holder in (self.inputs, self.labels):
-                widget = holder.get(key)
-                if widget is not None:
-                    widget.setToolTip(text)
-
-    # -- file dropdowns --------------------------------------------------
-
-    def refresh_file_dropdowns(self):
-        for key, directory_key, suffixes in (
-            ("NODE_FASTA_FILE", "FASTA_DIR", (".fasta", ".fa", ".faa")),
-            ("INPUT_HDF5", "HDF5_DIR", (".h5",)),
-            ("MSA_FILE", "MSA_DIR", (".fasta", ".fa", ".h5")),
-        ):
-            combo = self.inputs[key]
-            previous = combo.currentText() or str(self.values.get(key, "") or "")
-            previous = os.path.basename(previous)
-            directory = self._resolve_directory(directory_key)
-            names = []
-            if directory and os.path.isdir(directory):
-                names = sorted(
-                    entry.name
-                    for entry in os.scandir(directory)
-                    if entry.is_file() and entry.name.lower().endswith(suffixes)
-                )
-            combo.blockSignals(True)
-            combo.clear()
-            combo.addItems(names)
-            if previous and previous in names:
-                combo.setCurrentText(previous)
-            combo.blockSignals(False)
-
-    # -- cache discovery -------------------------------------------------
-
-    def _cache_paths_from_inputs(self):
-        fasta = self.inputs["NODE_FASTA_FILE"].currentText().strip()
-        network = self.inputs["INPUT_HDF5"].currentText().strip()
-        if not fasta or not network:
-            return None, None
-        return (
-            os.path.join(self._resolve_directory("FASTA_DIR"), fasta),
-            os.path.join(self._resolve_directory("HDF5_DIR"), network),
-        )
-
-    def _cache_setting_values(self):
-        """Mirrors the generator's _manifest_settings, including dimensionality."""
-        return {
-            "alignment_score": self.inputs["ALIGNMENT_SCORE"].currentText() or None,
-            "normalization": self.inputs["NORM_MODE"].currentText() or None,
-            "umap_mode": self.inputs["UMAP_MODE"].isChecked(),
-            "umap_neighbors": self.inputs["UMAP_NEIGHBORS"].value(),
-            "top_edge_percent": self.spin_top.optionalValue(),
-            "similarity_threshold": self.spin_thresh.optionalValue(),
-            "layout_dimensions": LAYOUT_DIMENSIONS,
-        }
-
-    def _set_cache_unavailable(self, message, colour="#d32f2f"):
-        self.current_cache_folder = None
-        self.lbl_cache_tracker.setText(message)
-        self.lbl_cache_tracker.setStyleSheet(f"color: {colour};")
-        self.cb_cache_file.clear()
-        self.cb_cache_file.setEnabled(False)
-
-    def refresh_cache_discovery(self):
-        sequence_path, network_path = self._cache_paths_from_inputs()
-        if not sequence_path or not network_path:
-            self._set_cache_unavailable("Target Cache: select a sequence set and network")
-            return
-        if not (os.path.isfile(sequence_path) and os.path.isfile(network_path)):
-            self._set_cache_unavailable("Target Cache: input files not found")
-            return
-        if self._hash_worker is not None and self._hash_worker.isRunning():
-            return
-        self.lbl_cache_tracker.setText("Target Cache: hashing inputs...")
-        self.lbl_cache_tracker.setStyleSheet("color: #555;")
-        self._hash_worker = CacheHashWorker(sequence_path, network_path, self)
-        self._hash_worker.finished_ok.connect(self._apply_cache_discovery)
-        self._hash_worker.failed.connect(
-            lambda message: self._set_cache_unavailable(f"Cache error: {message}")
-        )
-        self._hash_worker.start()
-
-    def _apply_cache_discovery(self, records):
-        sequence_path, network_path = self._cache_paths_from_inputs()
-        if not sequence_path:
-            return
-        settings = self._cache_setting_values()
-        try:
-            compatibility = cache_manifest.build_compatibility(
-                records["sequence"]["sha256"],
-                records["network"]["sha256"],
-                records["network_type"],
-                **settings,
-            )
-            saved_layout_dir = self._resolve_directory("SAVED_LAYOUT_DIR")
-            canonical_name = cache_manifest.build_canonical_cache_name(
-                sequence_path, network_path, records["network_type"], **settings,
-            )
-            default_folder = cache_manifest.resolve_default_cache_folder(
-                saved_layout_dir, canonical_name, compatibility
-            )
-            matches = cache_manifest.find_matching_manifest_folders(
-                saved_layout_dir, compatibility
-            )
-        except Exception as error:
-            self._set_cache_unavailable(f"Cache compatibility error: {error}")
-            return
-
-        self.cb_cache_file.blockSignals(True)
-        self.cb_cache_file.clear()
-        self.cb_cache_file.setEnabled(True)
-
-        if len(matches) > 1:
-            self.cb_cache_file.blockSignals(False)
-            self._set_cache_unavailable(
-                f"Error: {len(matches)} compatible cache folders found"
-            )
-            return
-
-        if matches:
-            folder = matches[0]["folder"]
-            self.current_cache_folder = folder
-            names = sorted(
-                entry.name
-                for entry in os.scandir(folder)
-                if entry.is_file() and entry.name.lower().endswith(".h5")
-            )
-            self.cb_cache_file.addItems(names)
-            self.cb_cache_file.addItem(NEW_CACHE_ENTRY)
-            self.lbl_cache_tracker.setText(
-                f"Compatible Folder: {os.path.basename(folder)}"
-            )
-            self.lbl_cache_tracker.setStyleSheet("color: green; font-weight: bold;")
-        else:
-            self.current_cache_folder = default_folder
-            self.cb_cache_file.addItem(NEW_CACHE_ENTRY)
-            self.lbl_cache_tracker.setText(
-                f"Target Folder: {os.path.basename(default_folder)} [Needs Computing]"
-            )
-            self.lbl_cache_tracker.setStyleSheet("color: #d32f2f;")
-        self.cb_cache_file.blockSignals(False)
-
-    # -- collect / save ---------------------------------------------------
-
-    def collect_data(self):
-        data = dict(self.values)
-        for key, widget in self.inputs.items():
-            if isinstance(widget, OptionalDoubleSpinBox):
-                data[key] = widget.optionalValue()
-            elif isinstance(widget, QComboBox):
-                data[key] = widget.currentText()
-            elif isinstance(widget, QCheckBox):
-                data[key] = widget.isChecked()
-            elif isinstance(widget, (QSpinBox, QDoubleSpinBox)):
-                data[key] = widget.value()
-            elif isinstance(widget, QLineEdit):
-                data[key] = widget.text().strip()
-        if data.get("UMAP_MODE"):
-            data["SIMILARITY_THRESHOLD"] = None
-            data["TOP_EDGE_PERCENT"] = None
-        elif data.get("TOP_EDGE_PERCENT") is not None:
-            data["SIMILARITY_THRESHOLD"] = None
-        data["LAYOUT_DIMENSIONS"] = LAYOUT_DIMENSIONS
-        return data
-
-    def save_settings(self):
-        data = self.collect_data()
-        try:
-            handle, temporary = tempfile.mkstemp(
-                dir=OPT_VR_DIR, prefix=".vr_settings_", suffix=".json"
-            )
-            with os.fdopen(handle, "w", encoding="utf-8", newline="\n") as stream:
-                json.dump(data, stream, indent=4, sort_keys=True)
-                stream.write("\n")
-            os.replace(temporary, SETTINGS_FILE)
-        except OSError as error:
-            QMessageBox.critical(self, "Save Error", f"Could not write settings:\n{error}")
-            return False
-        self.values = data
-        self.tip_panel.setText(f"Saved to {SETTINGS_FILE}")
-        return True
-
-    # -- launch -----------------------------------------------------------
-
-    def _layout_settings_document(self, target_cache_path):
-        values = dict(self.values)
-        values["LAYOUT_DIMENSIONS"] = LAYOUT_DIMENSIONS
-        values["TARGET_CACHE_PATH"] = target_cache_path
-        for key in ("NODE_FASTA_FILE", "INPUT_HDF5", "MSA_FILE"):
-            name = values.get(key) or ""
-            directory = {
-                "NODE_FASTA_FILE": "FASTA_DIR",
-                "INPUT_HDF5": "HDF5_DIR",
-                "MSA_FILE": "MSA_DIR",
-            }[key]
-            if name and not os.path.isabs(name):
-                values[key] = os.path.join(self._resolve_directory(directory), name)
-        for key, _ in DIRECTORY_FIELDS:
-            values[key] = self._resolve_directory(key)
-        settings = LayoutGenerationSettings.from_document(
-            encode_document("layout", values), project_root=OPT_VR_DIR
-        )
-        return settings.to_document(project_root=OPT_VR_DIR)
-
-    def _viewer_settings_snapshot(self, data):
-        handle, path = tempfile.mkstemp(prefix="vr_viewer_", suffix=".json")
-        with os.fdopen(handle, "w", encoding="utf-8", newline="\n") as stream:
-            json.dump(data, stream, indent=4)
-            stream.write("\n")
-        return path
-
-    def save_and_run(self):
-        if self.current_cache_folder is None:
-            QMessageBox.warning(
-                self, "No Cache Selected",
-                "Choose a sequence set and network whose layout cache can be "
-                "resolved before launching.",
-            )
-            return
-        if not self.save_settings():
-            return
-
-        selected = self.cb_cache_file.currentText()
-        needs_generation = selected == NEW_CACHE_ENTRY or not selected
-        if needs_generation:
-            filename = cache_manifest.next_cache_version_filename(
-                self.current_cache_folder
-            )
-        else:
-            filename = selected
-        target_cache_path = os.path.join(self.current_cache_folder, filename)
-
-        data = self.collect_data()
-        data["TARGET_CACHE_PATH"] = target_cache_path
-        for key, _ in DIRECTORY_FIELDS:
-            data[key] = self._resolve_directory(key)
-        snapshot = self._viewer_settings_snapshot(data)
-
-        environment = os.environ.copy()
-        environment.pop("SSN_TARGET_CACHE", None)
-        environment["SSN_VIEWER_SETTINGS_PATH"] = snapshot
-
-        executable = sys.executable
-        try:
-            if needs_generation:
-                document = self._layout_settings_document(target_cache_path)
-                handle, layout_path = tempfile.mkstemp(
-                    prefix="vr_layout_", suffix=".json"
-                )
-                with os.fdopen(handle, "w", encoding="utf-8", newline="\n") as stream:
-                    json.dump(document, stream, indent=4)
-                    stream.write("\n")
-                self.tip_panel.setText("Launching Layout_Cache_Generator.py...")
-                launch_in_terminal(
-                    [executable, "-u", GENERATOR_SCRIPT, layout_path,
-                     "--delete-settings"],
-                    cwd=PROJECT_ROOT,
-                    env=environment,
-                    hold=HoldMode.ON_ERROR,
-                    title=GENERATOR_TITLE,
-                )
-            else:
-                self.tip_panel.setText("Launching the VR viewer...")
-                launch_in_terminal(
-                    [executable, "-u", VIEWER_SCRIPT,
-                     "--settings", snapshot, "--delete-settings"],
-                    cwd=OPT_VR_DIR,
-                    env=environment,
-                    hold=HoldMode.ON_ERROR,
-                    title=VIEWER_TITLE,
-                )
-        except (OSError, RuntimeError) as error:
-            try:
-                os.unlink(snapshot)
-            except OSError:
-                pass
-            QMessageBox.critical(self, "Launch Error", str(error))
+        if not suffix:
+            return os.path.normpath(base_path)
+        suffix_parts = [part for part in re.split(r"[/\\]+", suffix) if part]
+        return os.path.normpath(os.path.join(base_path, *suffix_parts))
+    return raw_path
 
 
-def main():
-    application = QApplication.instance() or QApplication(sys.argv)
+def _migrate_default_directory_path(key, value):
+    """Link an old canonical child default to its configurable base alias."""
+    legacy_default = LEGACY_DEFAULT_DIRECTORY_PATHS.get(key)
+    if legacy_default is None or not isinstance(value, str):
+        return value
+    portable_value = value.replace("\\", "/").rstrip("/")
+    portable_legacy = legacy_default.replace("\\", "/").rstrip("/")
+    if portable_value == portable_legacy:
+        return DIRECTORY_PROFILE_DEFAULTS[key]
+    return value
+
+
+def _resolve_runtime_path_settings():
+    """Resolve aliases after settings overrides, before Viewer code consumes them."""
+    for key in (
+        "FASTA_DIR",
+        "MSA_DIR",
+        "HDF5_DIR",
+        "METADATA_DIR",
+        "HEADER_LIST_DIR",
+        "SAVED_LAYOUT_DIR",
+        "SETTING_EXPORT_DIR",
+        "NODE_FASTA_FILE",
+        "MSA_FILE",
+        "INPUT_HDF5",
+    ):
+        value = globals().get(key)
+        if value:
+            globals()[key] = resolve_directory_path(value)
+
+
+def _resolved_saved_config_root(value, base_directories=None):
+    resolved_value = resolve_directory_path(
+        value or DEFAULT_SAVED_CONFIG_DIR,
+        base_directories=base_directories,
+    )
+    path = Path(str(resolved_value)).expanduser()
+    if not path.is_absolute():
+        path = PROJECT_ROOT / path
+    return path.resolve()
+
+
+def _migrate_saved_config_dir(value):
+    normalized = os.path.normpath(str(value or "")).replace("\\", "/").rstrip("/")
+    if normalized.casefold() in {"saved_config", "cache_files/saved_config"}:
+        return DEFAULT_SAVED_CONFIG_DIR
+    return value
+
+
+def _discover_profile_names(root, tab_id):
+    folder = Path(root) / tab_id
     try:
-        configure_qt_application_fonts(application)
-    except Exception as error:
-        print(f"Warning: could not configure fonts: {error}")
+        names = sorted((
+            entry.stem
+            for entry in folder.iterdir()
+            if entry.is_file()
+            and entry.suffix.lower() == ".json"
+            and entry.stem.casefold() not in RESERVED_PROFILE_NAMES
+        ), key=str.casefold)
+    except (FileNotFoundError, NotADirectoryError, OSError):
+        return []
+    unique_names = {}
+    for name in names:
+        unique_names.setdefault(name.casefold(), name)
+    return list(unique_names.values())
+
+
+def _validate_profile_name(name, existing_names=()):
+    normalized = str(name).strip()
+    if normalized.lower().endswith(".json"):
+        normalized = normalized[:-5].rstrip()
+    if not normalized:
+        raise ValueError("Enter a profile name.")
+    if normalized.casefold() in RESERVED_PROFILE_NAMES:
+        raise ValueError(f"'{normalized}' is a reserved profile name.")
+    if normalized in {".", ".."} or normalized.endswith((" ", ".")):
+        raise ValueError("Profile names cannot end with a space or period.")
+    if re.search(r'[<>:"/\\|?*\x00-\x1f]', normalized):
+        raise ValueError("Profile names cannot contain path separators or Windows-reserved characters.")
+    windows_stem = normalized.split(".", 1)[0].casefold()
+    windows_reserved = {"con", "prn", "aux", "nul"}
+    windows_reserved.update(f"com{i}" for i in range(1, 10))
+    windows_reserved.update(f"lpt{i}" for i in range(1, 10))
+    if windows_stem in windows_reserved:
+        raise ValueError(f"'{normalized}' is reserved by Windows.")
+    if normalized.casefold() in {str(item).casefold() for item in existing_names}:
+        raise ValueError(f"A profile named '{normalized}' already exists.")
+    return normalized
+
+
+def _atomic_write_json(path, data):
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, temporary_path = tempfile.mkstemp(
+        prefix=f".{path.name}.", suffix=".partial", dir=str(path.parent)
+    )
     try:
-        force_light_palette(application)
-    except Exception as error:
-        print(f"Warning: could not force light palette: {error}")
-        application.setStyle("Fusion")
+        with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as handle:
+            json.dump(data, handle, indent=4)
+            handle.write("\n")
+        os.replace(temporary_path, path)
+    except Exception:
+        try:
+            os.unlink(temporary_path)
+        except OSError:
+            pass
+        raise
 
-    for candidate in ("viewer_logo.ico", "viewer_logo.png"):
-        icon_path = os.path.join(SRC_DIR, "bin", "logos", candidate)
-        if os.path.exists(icon_path):
-            application.setWindowIcon(QIcon(icon_path))
-            break
+# --- JSON Settings Override ---
+import Cache_Manifest as cache_manifest
 
-    window = VRConfigGUI()
-    show_window_in_front(window)
-    return application.exec()
+def apply_viewer_settings(settings_dict):
+    """Apply a dictionary of viewer settings to EMAPSSN_Config globals."""
+    if not isinstance(settings_dict, dict):
+        return
+    LEGACY_KEYS_MAPPING = {
+        "NEIGHBOR_COLOR": "INITIAL_NODE_COLOR"
+    }
+    for k, v in settings_dict.items():
+        if k in LEGACY_KEYS_MAPPING:
+            k = LEGACY_KEYS_MAPPING[k]
+        if k == "SAVED_CONFIG_DIR":
+            v = _migrate_saved_config_dir(v)
+        if k in DIRECTORY_PROFILE_DEFAULTS:
+            v = _migrate_default_directory_path(k, v)
+        if k in globals() and v is not None and (str(v).strip() != "" or k in ["MSA_FILE", "ALIGNMENT_REFERENCE"]):
+            orig = globals()[k]
+            if isinstance(orig, int) and not isinstance(orig, bool):
+                try: v = int(v)
+                except: pass
+            elif isinstance(orig, float):
+                try: v = float(v)
+                except: pass
+            elif isinstance(orig, bool):
+                v = str(v).lower() in ['true', '1', 't', 'y', 'yes']
+            elif isinstance(orig, list):
+                try: v = ast.literal_eval(v) if isinstance(v, str) else v
+                except: pass
+            elif orig is None:
+                if v == "None": v = None
+                elif str(v).replace('.', '', 1).isdigit():
+                    v = float(v) if '.' in str(v) else int(v)
+            globals()[k] = v
+    _resolve_runtime_path_settings()
 
 
+DEFAULT_SETTINGS_FILE = str(PROJECT_ROOT / "vr_settings.json")
+SETTINGS_FILE = os.environ.get("SSN_VIEWER_SETTINGS_PATH") or DEFAULT_SETTINGS_FILE
+viewer_settings = {}
+if not os.environ.get("SSN_VIEWER_EXPLICIT_SETTINGS") and os.path.exists(SETTINGS_FILE):
+    try:
+        with open(SETTINGS_FILE, "r", encoding="utf-8") as f:
+            viewer_settings = json.load(f)
+            apply_viewer_settings(viewer_settings)
+    except Exception as e:
+        print(f"Failed to load viewer settings: {e}")
+
+_resolve_runtime_path_settings()
+if NODE_FASTA_FILE:
+    SEQUENCES_FILE = NODE_FASTA_FILE
+    SEQUENCE_SET = os.path.splitext(os.path.basename(NODE_FASTA_FILE))[0]
+    if MSA_FILE and "none_[e1_ra]_alignment.fasta" in MSA_FILE.lower():
+        MSA_FILE = os.path.join(MSA_DIR, f"{SEQUENCE_SET}_[E1_RA]_alignment.fasta")
+    if not INPUT_HDF5 or "none_[e1_ra]_network.h5" in INPUT_HDF5.lower():
+        INPUT_HDF5 = os.path.join(HDF5_DIR, f"{SEQUENCE_SET}_[E1_RA]_network.h5")
+
+
+def _handoff_to_viewer(
+    project_root,
+    env,
+    *,
+    settings_path=None,
+    platform_name=None,
+    executable=None,
+):
+    """Launch the viewer while preserving each platform's terminal contract."""
+    executable = executable or sys.executable
+    project_root = os.path.abspath(project_root)
+    viewer_script = str(Path(_bootstrap.OPT_VR_DIR) / "Viewer.py")
+    argv = [executable, "-u", viewer_script]
+    if settings_path:
+        argv.extend(["--settings", os.fspath(settings_path), "--delete-settings"])
+    return launch_in_terminal(
+        argv,
+        cwd=project_root,
+        env=env,
+        hold=HoldMode.ON_ERROR,
+        title=VR_VIEWER_DISPLAY_NAME,
+        platform_name=platform_name,
+    )
+
+
+def _handoff_to_layout_generator(
+    project_root,
+    layout_settings_path,
+    env,
+    *,
+    launch_viewer=True,
+    platform_name=None,
+    executable=None,
+):
+    """Launch the layout generator in a terminal, optionally handing off to viewer."""
+    executable = executable or sys.executable
+    project_root = os.path.abspath(project_root)
+    generator_script = str(SRC_DIR / "Layout_Cache_Generator.py")
+    argv = [executable, "-u", generator_script, layout_settings_path]
+    if launch_viewer:
+        argv.append("--launch-viewer")
+    argv.append("--delete-settings")
+    return launch_in_terminal(
+        argv,
+        cwd=project_root,
+        env=env,
+        hold=HoldMode.ON_ERROR,
+        title="EMAP-SSN Layout Generator",
+        platform_name=platform_name,
+    )
+
+
+def _create_layout_settings_snapshot(settings_doc):
+    """Write one private layout settings file for a single Layout Generator process."""
+    descriptor, path = tempfile.mkstemp(prefix="ssn_layout_", suffix=".json")
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as handle:
+            json.dump(settings_doc, handle, indent=4)
+            handle.write("\n")
+    except Exception:
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+        raise
+    return path
+
+
+def _create_viewer_settings_snapshot(settings):
+    """Write one private settings file for a single Viewer process."""
+    from desktop.Viewer_State import DEFAULTS, encode_document
+    settings = encode_document("viewer", {**DEFAULTS, **settings})
+    descriptor, path = tempfile.mkstemp(prefix="ssn_viewer_", suffix=".json")
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as handle:
+            json.dump(settings, handle, indent=4)
+            handle.write("\n")
+    except Exception:
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
+        raise
+    return path
+
+
+def _load_consistency_fasta_headers(fasta_path):
+    """Return the canonical FASTA headers used by downstream SSN workflows."""
+    from utilities.Sequence_Utils import load_sanitized_fasta
+
+    headers, _, _ = load_sanitized_fasta(fasta_path)
+    return headers
+
+
+def _load_consistency_msa_headers(msa_path):
+    """Return canonical MSA headers using the same rules as the viewer."""
+    from utilities.Sequence_Utils import (
+        load_sanitized_msa_fasta,
+        sanitize_msa_headers,
+    )
+
+    if os.path.splitext(msa_path)[1].lower() == ".h5":
+        import h5py
+
+        with h5py.File(msa_path, "r") as hf:
+            raw_headers = hf["headers"][:]
+        decoded_headers = [
+            header.decode("utf-8") if isinstance(header, bytes) else header
+            for header in raw_headers
+        ]
+        return sanitize_msa_headers(decoded_headers)
+
+    headers, _, _ = load_sanitized_msa_fasta(msa_path)
+    return headers
+
+
+def build_score_histogram_figure(
+    scores,
+    threshold,
+    *,
+    is_evalue,
+    norm_mode,
+):
+    """Build a score histogram without starting or owning a GUI event loop."""
+    from matplotlib.figure import Figure
+
+    figure = Figure(figsize=(10, 6))
+    axes = figure.add_subplot(111)
+    axes.hist(
+        scores,
+        bins=100,
+        color="#4488ff",
+        edgecolor="black",
+        alpha=0.7,
+    )
+    axes.axvline(
+        threshold,
+        color="red",
+        linestyle="dashed",
+        label=f"Threshold {threshold}",
+    )
+    mode_label = "E-Value" if is_evalue else norm_mode
+    axes.set_title(f"Score Distribution ({mode_label})")
+    axes.legend()
+    figure.tight_layout()
+    return figure
+
+# =============================================================================
+# GUI APPLICATION
+# =============================================================================
 if __name__ == "__main__":
-    sys.exit(main())
+    # Hardware_Utils imports PyTorch.  On Windows this must happen before
+    # PySide6/OpenGL initializes, otherwise torch's c10.dll can fail to load.
+    try:
+        from utilities import Hardware_Acceleration as Hardware_Utils
+    except ImportError:
+        import Hardware_Acceleration as Hardware_Utils
+
+    os.environ["QT_API"] = "pyside6"
+    os.environ["QT_MAC_WANTS_LIGHT_THEME"] = "1"
+    from PySide6.QtWidgets import (
+        QStackedWidget,
+        QApplication, QDialog, QMainWindow, QWidget, QVBoxLayout,
+        QHBoxLayout, QGridLayout, QTabWidget, QFormLayout, QLineEdit,
+        QComboBox, QPushButton, QMessageBox, QTextEdit,
+        QLabel, QSplitter, QSlider, QSpinBox, QDoubleSpinBox,
+        QStyle, QStyleOptionSlider, QFileDialog, QColorDialog, QSizePolicy,
+        QFrame, QScrollArea, QCheckBox,
+    )
+    from desktop.Desktop_App import (
+        ResponsiveFieldLayout,
+        ResponsiveFlowLayout,
+        ResponsiveSelectorLayout,
+        SingleInstanceController,
+        configure_qt_application_fonts,
+        force_light_palette,
+        qt_monospace_font,
+        show_window_in_front,
+    )
+    from PySide6.QtCore import Qt, QUrl, QThread, Signal
+    from PySide6.QtGui import (
+        QColor,
+        QDesktopServices,
+        QIcon,
+        QPalette,
+    )
+    from matplotlib.backends.backend_qtagg import (
+        FigureCanvasQTAgg,
+        NavigationToolbar2QT,
+    )
+
+    def apply_gated_input_palette(widget):
+        """Grey disabled inputs while retaining their native Fusion controls."""
+        palette = widget.palette()
+        disabled = QPalette.ColorGroup.Disabled
+        for role in (
+            QPalette.ColorRole.Base,
+            QPalette.ColorRole.AlternateBase,
+            QPalette.ColorRole.Button,
+            QPalette.ColorRole.Window,
+        ):
+            palette.setColor(disabled, role, QColor("#f0f0f0"))
+        for role in (
+            QPalette.ColorRole.Text,
+            QPalette.ColorRole.ButtonText,
+            QPalette.ColorRole.WindowText,
+            QPalette.ColorRole.PlaceholderText,
+        ):
+            palette.setColor(disabled, role, QColor("#888888"))
+        widget.setPalette(palette)
+
+    # --- Custom Widget Classes ---
+    class ScoreHistogramDialog(QDialog):
+        """Qt-owned modal container for a Matplotlib score histogram."""
+
+        def __init__(self, figure, parent=None):
+            super().__init__(parent)
+            self.setWindowTitle("Score Histogram")
+            self.resize(1000, 650)
+
+            self.figure = figure
+            self.canvas = FigureCanvasQTAgg(figure)
+            self.toolbar = NavigationToolbar2QT(self.canvas, self)
+
+            close_button = QPushButton("Close")
+            close_button.clicked.connect(self.accept)
+
+            button_layout = QHBoxLayout()
+            button_layout.addStretch(1)
+            button_layout.addWidget(close_button)
+
+            layout = QVBoxLayout(self)
+            layout.addWidget(self.toolbar)
+            layout.addWidget(self.canvas, 1)
+            layout.addLayout(button_layout)
+
+        def release_figure(self):
+            """Release Matplotlib resources after the modal dialog closes."""
+            self.figure.clear()
+            self.canvas.deleteLater()
+
+    class SpacedTipLabel(QLabel):
+        """Help-panel label with proportional multiline spacing."""
+
+        def __init__(self, text="", parent=None):
+            super().__init__(parent)
+            self.setTextFormat(Qt.TextFormat.RichText)
+            self.setText(text)
+
+        def setText(self, text):
+            escaped_text = html.escape(str(text)).replace("\r\n", "\n").replace("\r", "\n")
+            escaped_text = escaped_text.replace("\n", "<br>")
+            super().setText(f'<div style="line-height: 120%;">{escaped_text}</div>')
+
+    class NoScrollComboBox(QComboBox):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+            
+        def wheelEvent(self, event):
+            if not self.hasFocus():
+                event.ignore()
+            else:
+                super().wheelEvent(event)
+                
+    class DynamicComboBox(NoScrollComboBox):
+        def __init__(self, refresh_callback, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.refresh_callback = refresh_callback
+            
+        def showPopup(self):
+            if self.refresh_callback:
+                self.refresh_callback()
+            super().showPopup()
+            
+    class NoScrollSpinBox(QSpinBox):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+            self.setMinimumHeight(28)
+            
+        def wheelEvent(self, event):
+            if not self.hasFocus():
+                event.ignore()
+            else:
+                super().wheelEvent(event)
+                
+    class NoScrollDoubleSpinBox(QDoubleSpinBox):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+            self.setMinimumHeight(28)
+            
+        def wheelEvent(self, event):
+            if not self.hasFocus():
+                event.ignore()
+            else:
+                super().wheelEvent(event)
+
+    class OptionalNoScrollDoubleSpinBox(NoScrollDoubleSpinBox):
+        """Double spin box that keeps the existing blank/unset setting state."""
+
+        def __init__(self, unset_value, first_value, *args, **kwargs):
+            self._unset_value = float(unset_value)
+            self._first_value = float(first_value)
+            super().__init__(*args, **kwargs)
+
+        def setOptionalValue(self, value):
+            if value in [None, "", "None"]:
+                self.setValue(self._unset_value)
+            else:
+                self.setValue(float(value))
+
+        def optionalValue(self):
+            if self.value() <= self.minimum():
+                return None
+            return self.value()
+
+        def stepBy(self, steps):
+            if self.optionalValue() is None and steps > 0:
+                self.setValue(
+                    self._first_value + (steps - 1) * self.singleStep()
+                )
+                return
+            super().stepBy(steps)
+                
+    class NoScrollSlider(QSlider):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+            
+        def wheelEvent(self, event):
+            if not self.hasFocus():
+                event.ignore()
+            else:
+                super().wheelEvent(event)
+                
+        def mousePressEvent(self, event):
+            if event.button() == Qt.MouseButton.LeftButton:
+                opt = QStyleOptionSlider()
+                self.initStyleOption(opt)
+                sr = self.style().subControlRect(QStyle.ComplexControl.CC_Slider, opt, QStyle.SubControl.SC_SliderHandle, self)
+                if not sr.contains(event.position().toPoint()):
+                    val = self.style().sliderValueFromPosition(self.minimum(), self.maximum(), int(event.position().x()), self.width())
+                    self.setValue(val)
+                    event.accept()
+                    return
+            super().mousePressEvent(event)
+
+    class CacheHashWorker(QThread):
+        completed = Signal(int, object, str)
+
+        def __init__(self, request_id, sequence_path, network_path, cached_records=None):
+            super().__init__()
+            self.request_id = request_id
+            self.sequence_path = sequence_path
+            self.network_path = network_path
+            self.cached_records = cached_records or {}
+
+        def run(self):
+            try:
+                records = {}
+                for kind, path in (
+                    ("sequence", self.sequence_path),
+                    ("network", self.network_path),
+                ):
+                    records[kind] = self.cached_records.get(kind)
+                    if records[kind] is None:
+                        records[kind] = cache_manifest.fingerprint_file(
+                            path,
+                            cancellation_requested=self.isInterruptionRequested,
+                        )
+                records["network_type"] = cache_manifest.validate_network_schema(
+                    self.network_path
+                ).network_type
+                self.completed.emit(self.request_id, records, "")
+            except Exception as error:
+                self.completed.emit(self.request_id, {}, str(error))
+
+    class ConfigGUI(QMainWindow):
+        def __init__(self):
+            super().__init__()
+            self.setWindowTitle(VR_CONFIG_DISPLAY_NAME)
+            
+            # Set Window Icon
+            icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bin", "logos", "viewer_logo.ico")
+            if not os.path.exists(icon_path):
+                icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bin", "logos", "viewer_logo.png")
+            if os.path.exists(icon_path):
+                self.setWindowIcon(QIcon(icon_path))
+                
+            self.resize(1000, 650)
+            
+            self.central_widget = QWidget()
+            self.setCentralWidget(self.central_widget)
+            
+            # --- SPLIT LAYOUT ---
+            self.main_layout = QHBoxLayout(self.central_widget)
+            
+            # Retain native Fusion theme graphics but increase the invisible grab area width
+            self.main_split = QSplitter(Qt.Orientation.Horizontal)
+            self.main_split.setHandleWidth(12) 
+            self.main_layout.addWidget(self.main_split)
+            
+            # Left Panel Splitter (Vertical)
+            self.left_split = QSplitter(Qt.Orientation.Vertical)
+            self.left_split.setHandleWidth(12)
+            self.main_split.addWidget(self.left_split)
+            
+            # Left Top: Tabs Only
+            self.left_top_widget = QWidget()
+            self.left_top_layout = QVBoxLayout(self.left_top_widget)
+            self.left_top_layout.setContentsMargins(0, 0, 0, 0)
+            self.tabs = QTabWidget()
+            self.left_top_layout.addWidget(self.tabs)
+            
+            # Left Bottom: Tool Tip Box + Action Buttons
+            self.left_bottom_widget = QWidget()
+            self.left_bottom_layout = QVBoxLayout(self.left_bottom_widget)
+            self.left_bottom_layout.setContentsMargins(0, 0, 0, 6)
+            self.left_bottom_layout.setSpacing(6)
+            
+            self.tip_panel = SpacedTipLabel("Click or tab to an input or its label to see helpful tips here.")
+            self.tip_panel.setWordWrap(True)
+            self.tip_panel.setStyleSheet("color: #444; font-style: normal; background-color: #e8eaed; padding: 10px; border-radius: 5px;")
+            self.left_bottom_layout.addWidget(self.tip_panel, 1)
+            
+            action_row = QWidget()
+            action_row.setObjectName("configActionButtons")
+            action_row.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
+            btn_layout = ResponsiveFlowLayout(action_row)
+            self.btn_check = QPushButton("Consistency Check")
+            self.btn_check.setStyleSheet("background-color: #f39c12; color: white; font-weight: bold; padding: 5px;")
+            self.btn_check.clicked.connect(self.run_consistency_check)
+            
+            self.btn_save_run = QPushButton("Save && Run")
+            self.btn_save_run.clicked.connect(self.save_and_run)
+            self.btn_save_run.setStyleSheet("background-color: #4CAF50; color: white; font-weight: bold; padding: 5px;")
+
+            self.btn_export_layout = QPushButton("Export Layout Settings")
+            self.btn_export_layout.clicked.connect(self.export_layout_settings)
+            self.btn_export_layout.setEnabled(False)
+            self.btn_export_layout.setStyleSheet(
+                "background-color: #2196F3; color: white; "
+                "font-weight: bold; padding: 5px;"
+            )
+            self.btn_export_layout.setToolTip(
+                "Export a generation-only JSON file for the selected new layout cache."
+            )
+            
+            btn_save = QPushButton("Save")
+            btn_save.clicked.connect(self.save_only)
+            
+            btn_exit = QPushButton("Exit")
+            btn_exit.clicked.connect(self.close)
+            
+            btn_layout.addWidget(self.btn_save_run, 1)
+            btn_layout.addWidget(self.btn_export_layout, 1)
+            btn_layout.addWidget(self.btn_check, 1)
+            btn_layout.addWidget(btn_save, 1)
+            btn_layout.addWidget(btn_exit, 1)
+            self.left_bottom_layout.addWidget(action_row)
+            
+            self.left_split.addWidget(self.left_top_widget)
+            self.left_split.addWidget(self.left_bottom_widget)
+            
+            # Explicitly force the initial pixel heights (tabs get 550px, bottom gets 100px)
+            self.left_split.setSizes([450, 200])
+            
+            # Ensure that if the user resizes the window, extra space goes to the tabs, not the bottom
+            self.left_split.setStretchFactor(0, 1)
+            self.left_split.setStretchFactor(1, 0)
+            
+            # Right Panel: Statistics
+            self.right_panel = QWidget()
+            self.right_layout = QVBoxLayout(self.right_panel)
+            self.right_layout.setContentsMargins(0, 0, 0, 0)
+            self.stat_label = QLabel("Network Statistics Report")
+            self.stat_label.setStyleSheet("font-weight: bold; font-size: 14px;")
+            self.stat_display = QTextEdit()
+            self.stat_display.setReadOnly(True)
+            self.stat_display.setPlaceholderText("Select Fasta subset and HDF5 Network file, then click compute.")
+            self.stat_display.setFont(qt_monospace_font(self.stat_display.font()))
+            self.stat_display.setStyleSheet("background-color: #f5f5f5;")
+            self.right_layout.addWidget(self.stat_label)
+            self.right_layout.addWidget(self.stat_display)
+            
+            self.main_split.addWidget(self.right_panel)
+            self.main_split.setStretchFactor(0, 6) 
+            self.main_split.setStretchFactor(1, 4) 
+            
+            # Data Containers
+            self.inputs = {}
+            self.labels = {} 
+            self.color_swatches = {} 
+            self.profile_selectors = {}
+            self.profile_name_inputs = {}
+            self.profile_folder_buttons = {}
+            self.profile_labels = {}
+            self.profile_separators = {}
+            self.profile_content_widgets = {}
+            self._profile_previous_selection = {}
+            self._profile_loading = False
+            self._initializing_profiles = True
+            self._custom_settings = self._read_custom_settings()
+            self._cache_hash_cache = {}
+            self._cache_hash_request_id = 0
+            self._cache_hash_workers = {}
+            self._cache_hash_pending_keys = None
+            self._cache_launch_allowed = False
+            self._last_duplicate_signature = None
+            self.current_cache_folder = None
+            
+            self.create_inputs_tab()
+            self.create_visuals_tab()
+            self.create_physics_tab()
+            self.create_directories_tab()
+
+            self._prepare_responsive_layouts()
+            self._initializing_profiles = False
+            self._load_all_custom_profiles()
+            
+            self.cb_fasta.currentTextChanged.connect(self.update_live_validators)
+            self.cb_hdf5.currentTextChanged.connect(self.update_live_validators)
+            self.cb_score_mode.currentTextChanged.connect(self.update_live_validators)
+            self.cb_norm_mode.currentTextChanged.connect(self.update_live_validators)
+            self.line_ref.textChanged.connect(self._update_reference_controls)
+            self.spin_thresh.valueChanged.connect(self.update_live_validators)
+            self.spin_top.valueChanged.connect(self.update_live_validators)
+            self.cb_msa.currentTextChanged.connect(self.update_live_validators)
+            
+            self.update_live_validators()
+            self.setup_tips()
+
+        @staticmethod
+        def _make_field_group(pairs, *, parent=None, name="", ratios=None, **options):
+            group = parent if parent is not None else QWidget()
+            group.setObjectName(name)
+            pairs[0][0].setFixedWidth(max(CONFIG_FIELD_LABEL_WIDTH, pairs[0][0].minimumWidth()))
+            ResponsiveFieldLayout(
+                group, pairs, ratios or tuple(1 for _ in pairs),
+                spacing=CONFIG_FIELD_HORIZONTAL_SPACING, wrap_labels=False, **options,
+            )
+            return group
+
+        def _responsive_grid_rows(self, grid, name, *, trailing=False):
+            rows = {}
+            for index in range(grid.count()):
+                row, column, _, _ = grid.getItemPosition(index)
+                rows.setdefault(row, []).append((column, grid.itemAt(index).widget()))
+            while grid.count():
+                grid.takeAt(0)
+            result = QVBoxLayout()
+            result.setContentsMargins(0, 0, 0, 0)
+            result.setSpacing(12)
+            right_labels = [sorted(cells)[2][1] for cells in rows.values()
+                            if len(cells) == 4]
+            if right_labels:
+                shared_width = max(label.sizeHint().width() for label in right_labels)
+                for label in right_labels:
+                    label.setFixedWidth(max(label.minimumWidth(), shared_width))
+            for row, cells in sorted(rows.items()):
+                widgets = [widget for _, widget in sorted(cells)]
+                if len(widgets) == 1:
+                    result.addWidget(widgets[0])
+                    continue
+                pairs = list(zip(widgets[::2], widgets[1::2]))
+                options = {"equal_fields": not trailing, "column_spacing": 24}
+                if trailing:
+                    options.update(trailing=True,
+                                   control_stretches=(0,) * (len(pairs) - 1) + (1,))
+                result.addWidget(self._make_field_group(
+                    pairs, name=f"{name}Row{row}", **options,
+                ))
+            return result
+
+        def _add_scroll_tab(self, content, title):
+            scroll = QScrollArea()
+            scroll.setWidgetResizable(True)
+            scroll.setFrameShape(QFrame.Shape.NoFrame)
+            scroll.setMinimumWidth(600)
+            scroll.setWidget(content)
+            self.tabs.addTab(scroll, title)
+
+        def _prepare_responsive_layouts(self):
+            for combo in self.findChildren(QComboBox):
+                combo.setMinimumContentsLength(12)
+                combo.setSizeAdjustPolicy(
+                    QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon
+                )
+                combo.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+            for editor in self.findChildren(QLineEdit):
+                if isinstance(editor.parentWidget(), (QSpinBox, QDoubleSpinBox, QComboBox)):
+                    continue
+                editor.setMinimumWidth(editor.fontMetrics().horizontalAdvance("M" * 12))
+            for slider in self.findChildren(QSlider):
+                slider.setMinimumWidth(slider.fontMetrics().horizontalAdvance("M" * 8))
+            for form in self.findChildren(QFormLayout):
+                form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.DontWrapRows)
+                form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+
+        def _read_custom_settings(self):
+            try:
+                with open(DEFAULT_SETTINGS_FILE, "r", encoding="utf-8") as handle:
+                    data = json.load(handle)
+                if not isinstance(data, dict):
+                    raise ValueError("the JSON root must be an object")
+                if "SAVED_CONFIG_DIR" in data:
+                    data["SAVED_CONFIG_DIR"] = _migrate_saved_config_dir(
+                        data["SAVED_CONFIG_DIR"]
+                    )
+                for key in DEPRECATED_DIRECTORY_KEYS:
+                    data.pop(key, None)
+                for key in DIRECTORY_PROFILE_DEFAULTS:
+                    if key in data:
+                        data[key] = _migrate_default_directory_path(key, data[key])
+                return dict(data)
+            except FileNotFoundError:
+                return {}
+            except (OSError, ValueError, json.JSONDecodeError) as error:
+                print(f"Failed to load custom settings from {DEFAULT_SETTINGS_FILE}: {error}")
+                return {}
+
+        def _saved_config_root(self):
+            widget = self.inputs.get("SAVED_CONFIG_DIR")
+            value = widget.text() if widget is not None else globals().get(
+                "SAVED_CONFIG_DIR", SAVED_CONFIG_DIR
+            )
+            return _resolved_saved_config_root(
+                value,
+                base_directories=self._directory_base_values(),
+            )
+
+        def _add_profile_selector(
+            self,
+            tab_id,
+            form_layout,
+            *,
+            label_width=CONFIG_FIELD_LABEL_WIDTH,
+        ):
+            container = QWidget()
+            row_layout = ResponsiveSelectorLayout(container)
+            row_layout.setContentsMargins(0, 0, 0, 0)
+
+            selector = DynamicComboBox(
+                lambda selected_tab=tab_id: self._refresh_profile_combo(selected_tab)
+            )
+            name_input = QLineEdit()
+            name_input.setPlaceholderText("New profile name")
+            name_input.setVisible(False)
+            folder_button = QPushButton("📂")
+            folder_button.setFixedWidth(30)
+            folder_button.setToolTip("Open this tab's saved config folder")
+            row_layout.addWidget(selector, 1)
+            row_layout.addWidget(name_input, 1)
+            row_layout.addWidget(folder_button)
+
+            label = QLabel("Saved Config:")
+            label.setFixedWidth(label_width)
+            form_layout.addRow(label, container)
+
+            def open_profile_folder(checked=False, selected_tab=tab_id):
+                folder = self._saved_config_root() / selected_tab
+                os.makedirs(folder, exist_ok=True)
+                QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder)))
+
+            folder_button.clicked.connect(open_profile_folder)
+
+            self.profile_selectors[tab_id] = selector
+            self.profile_name_inputs[tab_id] = name_input
+            self.profile_folder_buttons[tab_id] = folder_button
+            self.profile_labels[tab_id] = label
+            self._profile_previous_selection[tab_id] = "(custom)"
+            self._refresh_profile_combo(tab_id)
+            selector.currentTextChanged.connect(
+                lambda text, selected_tab=tab_id: self._profile_selection_changed(
+                    selected_tab, text
+                )
+            )
+
+        def _profile_special_items(self, tab_id):
+            items = ["(custom)"]
+            if TAB_PROFILE_SPECS[tab_id]["allow_default"]:
+                items.append("(default)")
+            items.append("(new)")
+            return items
+
+        def _add_padded_separator(self, layout, object_name):
+            wrapper = QWidget()
+            wrapper_layout = QVBoxLayout(wrapper)
+            extra_padding = CONFIG_SEPARATOR_PADDING - CONFIG_TAB_ROW_SPACING
+            wrapper_layout.setContentsMargins(0, extra_padding, 0, extra_padding)
+            wrapper_layout.setSpacing(0)
+
+            separator = QFrame()
+            separator.setObjectName(object_name)
+            separator.setFrameShape(QFrame.Shape.NoFrame)
+            separator.setFixedHeight(CONFIG_SEPARATOR_THICKNESS)
+            separator.setSizePolicy(
+                QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
+            )
+            separator.setStyleSheet("background-color: #9e9e9e; border: none;")
+            wrapper_layout.addWidget(separator)
+            if isinstance(layout, QFormLayout):
+                layout.addRow(wrapper)
+            else:
+                layout.addWidget(wrapper)
+            return separator
+
+        def _add_profile_separator(self, tab_id, layout):
+            separator = self._add_padded_separator(
+                layout, f"{tab_id}_saved_config_separator"
+            )
+            self.profile_separators[tab_id] = separator
+
+        def _refresh_profile_combo(self, tab_id):
+            selector = self.profile_selectors[tab_id]
+            current = selector.currentText() or "(custom)"
+            items = _discover_profile_names(self._saved_config_root(), tab_id)
+            items.extend(self._profile_special_items(tab_id))
+            disappeared = current not in items
+
+            selector.blockSignals(True)
+            try:
+                selector.clear()
+                selector.addItems(items)
+                selector.setCurrentText("(custom)" if disappeared else current)
+            finally:
+                selector.blockSignals(False)
+
+            if (
+                disappeared
+                and current != "(custom)"
+                and not self._initializing_profiles
+                and not self._profile_loading
+            ):
+                self._profile_selection_changed(tab_id, "(custom)")
+
+        def _profile_path(self, tab_id, profile_name):
+            folder = self._saved_config_root() / tab_id
+            candidate = folder / f"{profile_name}.json"
+            if candidate.exists():
+                return candidate
+            try:
+                for entry in folder.iterdir():
+                    if (
+                        entry.is_file()
+                        and entry.suffix.lower() == ".json"
+                        and entry.stem.casefold() == str(profile_name).casefold()
+                    ):
+                        return entry
+            except (FileNotFoundError, NotADirectoryError, OSError):
+                pass
+            return candidate
+
+        def _normalize_profile_data(self, tab_id, raw_data, *, allow_extra=False):
+            if not isinstance(raw_data, dict):
+                raise ValueError("the JSON root must be an object")
+
+            defaults = TAB_PROFILE_SPECS[tab_id]["defaults"]
+            if tab_id == "directories":
+                ignored = DEPRECATED_DIRECTORY_KEYS
+            elif tab_id == "simulation_physics":
+                ignored = OBSOLETE_LAYOUT_ENGINE_KEYS
+            else:
+                ignored = set()
+            unknown = set(raw_data) - set(defaults) - ignored
+            if unknown and not allow_extra:
+                names = ", ".join(sorted(unknown))
+                raise ValueError(f"unknown setting key(s): {names}")
+
+            normalized = dict(defaults)
+            for key in defaults:
+                if key not in raw_data:
+                    continue
+                value = raw_data[key]
+                if tab_id == "directories":
+                    value = _migrate_default_directory_path(key, value)
+                default = defaults[key]
+                try:
+                    if default is None:
+                        if value is None or str(value).strip().lower() in {"", "none"}:
+                            value = None
+                        else:
+                            value = float(value)
+                    elif isinstance(default, bool):
+                        if isinstance(value, bool):
+                            pass
+                        elif str(value).strip().lower() in {"true", "1", "t", "y", "yes"}:
+                            value = True
+                        elif str(value).strip().lower() in {"false", "0", "f", "n", "no"}:
+                            value = False
+                        else:
+                            raise ValueError("expected true or false")
+                    elif isinstance(default, int):
+                        if isinstance(value, bool) or float(value) != int(float(value)):
+                            raise ValueError("expected an integer")
+                        value = int(float(value))
+                    elif isinstance(default, float):
+                        if isinstance(value, bool):
+                            raise ValueError("expected a number")
+                        value = float(value)
+                    else:
+                        if not isinstance(value, str):
+                            raise ValueError("expected text")
+                except (TypeError, ValueError, OverflowError) as error:
+                    raise ValueError(f"invalid value for {key}: {error}") from error
+
+                if isinstance(value, float) and not math.isfinite(value):
+                    raise ValueError(f"invalid value for {key}: expected a finite number")
+                if key in PROFILE_ENUM_VALUES and value not in PROFILE_ENUM_VALUES[key]:
+                    allowed = ", ".join(sorted(PROFILE_ENUM_VALUES[key]))
+                    raise ValueError(f"invalid value for {key}; expected one of: {allowed}")
+                if value is not None and key in PROFILE_RANGES:
+                    minimum, maximum = PROFILE_RANGES[key]
+                    if value < minimum or value > maximum:
+                        raise ValueError(
+                            f"invalid value for {key}; expected {minimum} to {maximum}"
+                        )
+                normalized[key] = value
+
+            if (
+                normalized.get("ALIGNMENT_SCORE") == "local"
+                and normalized.get("NORM_MODE") == "alignment_length"
+            ):
+                raise ValueError(
+                    "NORM_MODE alignment_length is unavailable for local alignment scores"
+                )
+
+            color_keys = {
+                "TEXT_COLOR", "INITIAL_NODE_COLOR", "HOVER_COLOR",
+                "CONNECTED_NODE_COLOR", "EDGE_COLOR", "NODE_BOUNDARY_COLOR",
+            }
+            for key in color_keys.intersection(normalized):
+                if not QColor(normalized[key]).isValid():
+                    raise ValueError(f"invalid color value for {key}: {normalized[key]}")
+            return normalized
+
+        def _custom_profile_data(self, tab_id):
+            defaults = TAB_PROFILE_SPECS[tab_id]["defaults"]
+            raw_data = {
+                key: self._custom_settings[key]
+                for key in defaults
+                if key in self._custom_settings
+            }
+            try:
+                return self._normalize_profile_data(tab_id, raw_data)
+            except ValueError as error:
+                print(f"Invalid custom settings for {tab_id}; using defaults: {error}")
+                return dict(defaults)
+
+        def _named_profile_data(self, tab_id, profile_name):
+            path = self._profile_path(tab_id, profile_name)
+            with open(path, "r", encoding="utf-8") as handle:
+                raw_data = json.load(handle)
+            return self._normalize_profile_data(tab_id, raw_data)
+
+        def _set_widget_profile_value(self, key, value):
+            widget = self.inputs[key]
+            if isinstance(widget, OptionalNoScrollDoubleSpinBox):
+                widget.setOptionalValue(value)
+            elif isinstance(widget, QComboBox):
+                if key == "LAYOUT_DEVICE_SELECTION":
+                    index = widget.findData(value)
+                    if index < 0:
+                        widget.addItem(f"Unavailable saved device [{value}]", value)
+                        index = widget.count() - 1
+                    widget.setCurrentIndex(index)
+                else:
+                    text_value = str(value)
+                    if key in {"NODE_FASTA_FILE", "MSA_FILE", "INPUT_HDF5"}:
+                        text_value = os.path.basename(text_value)
+                        if text_value and widget.findText(text_value) < 0:
+                            widget.addItem(text_value)
+                    widget.setCurrentText(text_value)
+            elif isinstance(widget, QPushButton) and widget.isCheckable():
+                widget.setChecked(bool(value))
+            elif isinstance(widget, (QSpinBox, QDoubleSpinBox)):
+                widget.setValue(value)
+            elif isinstance(widget, QLineEdit):
+                widget.setText("" if value is None else str(value))
+            elif hasattr(widget, "setChecked"):
+                widget.setChecked(bool(value))
+            else:
+                raise TypeError(f"Unsupported settings widget for {key}")
+
+        def _apply_profile_data(self, tab_id, data, *, read_only=False):
+            self._set_profile_content_enabled(tab_id, True)
+            self._profile_loading = True
+            try:
+                for key in TAB_PROFILE_SPECS[tab_id]["defaults"]:
+                    self._set_widget_profile_value(key, data[key])
+            finally:
+                self._profile_loading = False
+
+            if tab_id == "inputs_outputs":
+                self.update_norm_mode_options()
+            self._set_profile_content_enabled(tab_id, not read_only)
+            if hasattr(self, "update_live_validators"):
+                self.update_live_validators()
+
+        def _set_profile_content_enabled(self, tab_id, enabled):
+            content = self.profile_content_widgets[tab_id]
+            roots = list(content) if isinstance(content, (list, tuple)) else [content]
+            seen = set()
+            color_swatches = set(self.color_swatches.values())
+            for root in roots:
+                candidates = [root, *root.findChildren(QWidget)]
+                for widget in candidates:
+                    identity = id(widget)
+                    if identity in seen or widget in color_swatches:
+                        continue
+                    seen.add(identity)
+                    if isinstance(widget, QLabel):
+                        current_style = widget.styleSheet()
+                        if PROFILE_DISABLED_LABEL_STYLESHEET not in current_style:
+                            widget.setStyleSheet(
+                                f"{current_style.rstrip()}\n"
+                                f"{PROFILE_DISABLED_LABEL_STYLESHEET}".strip()
+                            )
+                    elif isinstance(widget, (QSpinBox, QDoubleSpinBox)):
+                        current_style = widget.styleSheet()
+                        if PROFILE_DISABLED_SPINBOX_STYLESHEET not in current_style:
+                            widget.setStyleSheet(
+                                f"{current_style.rstrip()}\n"
+                                f"{PROFILE_DISABLED_SPINBOX_STYLESHEET}".strip()
+                            )
+                    elif isinstance(widget, QPushButton) and widget.isCheckable():
+                        current_style = widget.styleSheet()
+                        if PROFILE_DISABLED_TOGGLE_STYLESHEET not in current_style:
+                            widget.setStyleSheet(
+                                f"{current_style.rstrip()}\n"
+                                f"{PROFILE_DISABLED_TOGGLE_STYLESHEET}".strip()
+                            )
+                    elif isinstance(widget, (QLineEdit, QComboBox, QPushButton)):
+                        apply_gated_input_palette(widget)
+
+            for root in roots:
+                root.setEnabled(enabled)
+
+        def _set_new_profile_field_visible(self, tab_id, visible):
+            name_input = self.profile_name_inputs[tab_id]
+            name_input.setVisible(visible)
+            if visible:
+                name_input.setFocus()
+            else:
+                name_input.clear()
+
+        def _set_profile_selection(self, tab_id, text):
+            selector = self.profile_selectors[tab_id]
+            selector.blockSignals(True)
+            try:
+                selector.setCurrentText(text)
+            finally:
+                selector.blockSignals(False)
+
+        def _profile_selection_changed(self, tab_id, text):
+            if self._initializing_profiles or self._profile_loading or not text:
+                return
+            previous = self._profile_previous_selection.get(tab_id, "(custom)")
+
+            if text == "(new)":
+                self._set_new_profile_field_visible(tab_id, True)
+                self._set_profile_content_enabled(tab_id, True)
+                self._profile_previous_selection[tab_id] = text
+                return
+
+            self._set_new_profile_field_visible(tab_id, False)
+            try:
+                if text == "(custom)":
+                    data = self._custom_profile_data(tab_id)
+                    read_only = False
+                elif text == "(default)":
+                    if not TAB_PROFILE_SPECS[tab_id]["allow_default"]:
+                        raise ValueError("this tab does not provide a default profile")
+                    data = dict(TAB_PROFILE_SPECS[tab_id]["defaults"])
+                    read_only = True
+                else:
+                    data = self._named_profile_data(tab_id, text)
+                    read_only = False
+                self._apply_profile_data(tab_id, data, read_only=read_only)
+                self._profile_previous_selection[tab_id] = text
+            except (OSError, ValueError, TypeError, json.JSONDecodeError) as error:
+                self._set_profile_selection(tab_id, previous)
+                self._set_new_profile_field_visible(tab_id, previous == "(new)")
+                QMessageBox.critical(
+                    self,
+                    "Saved Config Error",
+                    f"Could not load profile '{text}':\n{error}",
+                )
+
+        def _load_all_custom_profiles(self):
+            for tab_id in (
+                "directories", "inputs_outputs", "visual_effects", "simulation_physics"
+            ):
+                self._set_profile_selection(tab_id, "(custom)")
+                self._profile_previous_selection[tab_id] = "(custom)"
+                self._set_new_profile_field_visible(tab_id, False)
+                self._apply_profile_data(tab_id, self._custom_profile_data(tab_id))
+
+        def _saved_config_directory_committed(self):
+            if self._initializing_profiles or self._profile_loading:
+                return
+            for tab_id in TAB_PROFILE_SPECS:
+                self._set_profile_selection(tab_id, "(custom)")
+                self._profile_previous_selection[tab_id] = "(custom)"
+                self._set_new_profile_field_visible(tab_id, False)
+                self._refresh_profile_combo(tab_id)
+            self._load_all_custom_profiles()
+
+        def closeEvent(self, event):
+            self._cache_hash_request_id += 1
+            for worker in self._cache_hash_workers.values():
+                worker.requestInterruption()
+            for worker in self._cache_hash_workers.values():
+                worker.wait(5000)
+            super().closeEvent(event)
+            
+        def run_consistency_check(self):
+            import h5py
+            from utilities.Sequence_Utils import sanitize_header
+            
+            # 1. Define the file names by grabbing them from the UI dropdowns
+            fasta_file = self.cb_fasta.currentText()
+            hdf5_file = self.cb_hdf5.currentText()
+            msa_file = self.cb_msa.currentText()
+            
+            # 2. Halt if the user hasn't selected the required files
+            if not fasta_file or not hdf5_file:
+                return
+            
+            # 3. Build the paths safely
+            fasta_path = os.path.join(
+                self._resolved_directory_input("FASTA_DIR"), fasta_file
+            )
+            hdf5_path = os.path.join(
+                self._resolved_directory_input("HDF5_DIR"), hdf5_file
+            )
+            msa_path = (
+                os.path.join(self._resolved_directory_input("MSA_DIR"), msa_file)
+                if msa_file else None
+            )
+                
+            self.tip_panel.setText("Running Consistency Check...")
+            from PySide6.QtWidgets import QApplication
+            QApplication.processEvents()
+            
+            try:
+                fasta_headers = _load_consistency_fasta_headers(fasta_path)
+                
+                with h5py.File(hdf5_path, "r") as hf:
+                    raw_headers = hf['headers'][:]
+                    headers = [h.decode('utf-8') if isinstance(h, bytes) else h for h in raw_headers]
+                    
+                net_headers_set = set(headers)
+                missing_nodes = [
+                    header for header in fasta_headers
+                    if header not in net_headers_set
+                ]
+                
+                num_matched = len(fasta_headers) - len(missing_nodes)
+                num_missing = len(missing_nodes)
+                
+                msg = f"FASTA vs HDF5:\nMatched: {num_matched} of {len(fasta_headers)} | Missing: {num_missing}"
+                
+                if missing_nodes:
+                    msg = f"ERROR: FASTA is NOT a subset of HDF5.\n{msg}\nMissing examples: {', '.join(missing_nodes[:5])}"
+                else:
+                    msg = f"SUCCESS: FASTA is a strict subset of HDF5.\n{msg}"
+                
+                if msa_path and os.path.exists(msa_path):
+                    msa_headers = set(_load_consistency_msa_headers(msa_path))
+
+                    msa_missing = [
+                        header for header in fasta_headers if header not in msa_headers
+                    ]
+                    msa_matched = len(fasta_headers) - len(msa_missing)
+                    
+                    msa_msg = (
+                        f"FASTA vs MSA:\nMatched: {msa_matched} of "
+                        f"{len(fasta_headers)} network headers | Missing: {len(msa_missing)}"
+                    )
+                    
+                    if msa_missing:
+                        msg += (
+                            f"\n\nWARNING: MSA coverage is incomplete.\n{msa_msg}\n"
+                            f"Missing examples: {', '.join(msa_missing[:5])}\n"
+                            "Missing nodes remain plotted but are excluded from "
+                            "alignment-dependent analyses."
+                        )
+                    else:
+                        msg += f"\n\nSUCCESS: MSA covers all FASTA nodes.\n{msa_msg}"
+                
+                # Check Reference ID if provided
+                ref_id = self.line_ref.text().strip()
+                if ref_id:
+                    # Proceed with normal matching only (Case-Insensitive)
+                    ref_id_lower = sanitize_header(ref_id)[0].lower()
+                    matched_refs = [h for h in fasta_headers if ref_id_lower in h.lower()]
+                    if matched_refs:
+                        msg += f"\n\nSUCCESS: Reference ID '{ref_id}' matched {len(matched_refs)} header(s) in FASTA."
+                        for h in matched_refs[:5]:
+                            msg += f"\n  - {h}"
+                    else:
+                        msg += f"\n\nWARNING: Reference ID '{ref_id}' NOT found in FASTA headers."
+                
+                self.tip_panel.setText(msg)
+            
+            except Exception as e:
+                self.tip_panel.setText(f"Error during consistency check: {e}")
+            
+        def eventFilter(self, obj, event):
+            from PySide6.QtCore import QEvent
+            event_type = event.type()
+            if event_type in (
+                QEvent.Type.FocusIn,
+                QEvent.Type.MouseButtonPress,
+                QEvent.Type.ToolTip,
+            ):
+                if hasattr(self, 'tip_db'):
+                    tip = self.tip_db.get(obj, None)
+                    if not tip and isinstance(obj, QWidget):
+                        tip = obj.toolTip()
+                    if tip:
+                        self.tip_panel.setText(tip)
+                        if event_type == QEvent.Type.ToolTip:
+                            return True
+            return super().eventFilter(obj, event)
+
+        def _register_tip_targets(self, widget, tip, *, overwrite=True):
+            if widget is None:
+                return
+            targets = [widget]
+            targets.extend(widget.findChildren(QWidget))
+            for target in targets:
+                if overwrite or target not in self.tip_db:
+                    self.tip_db[target] = tip
+                    target.installEventFilter(self)
+
+        def setup_tips(self):
+            self.tip_db_keys = {
+                "SAVED_CONFIG": "Saved Config: Selects the settings profile used for this tab.\n(custom) uses the current viewer_settings.json values; (default) uses read-only built-in defaults; (new) creates a named profile; named entries load profiles from the Saved Config Directory.",
+                "NODE_FASTA_FILE": "Primary FASTA file containing sequences visualized as nodes in the SSN.\nMust match sequences present in the selected network edges and multiple alignments.",
+                "MSA_FILE": "Multiple sequence alignment file (.fasta, .h5, or _sparse.h5) for the sequence set.\nUsed to calculate positional conservation, gaps, and occupancy thresholds during analysis.",
+                "INPUT_HDF5": "Network or similarity matrix file (.h5) containing pairwise sequence similarity scores and edge coordinates.\nMust contain alignment metrics for at least all sequences present in the active sequence set.",
+                "ALIGNMENT_SCORE": "(For embedding SSNs) Specifies whether to use global (Needleman-Wunsch) or local (Smith-Waterman) scores.\nLocal alignment is recommended for multi-domain proteins; global alignment is best for full-length comparisons.",
+                "NORM_MODE": "(For embedding SSNs) Normalization strategy for pairwise sequence alignment scores.\nNormalizes by alignment length, shorter sequence, longer sequence, or average sequence length to reduce length bias.",
+                "ALIGNMENT_REFERENCE": "Substring or ID from a sequence header to identify the reference sequence in the alignment.\nUsed to anchor absolute relative residue numbering and mapping offsets across the entire network.",
+                "ALIGNMENT_OFFSET": "Integer offset added to reference-anchored alignment residue positions (e.g. +10 shifts position 1 to 11).\nApplied only when the Alignment Reference ID resolves successfully in the alignment.",
+                "SIMILARITY_THRESHOLD": "Minimum similarity score threshold (identity fraction, normalized score, or -Log10 E-Value) to retain an edge.\nEdges below this cutoff are filtered out and excluded from physics simulation and rendering.",
+                "TOP_EDGE_PERCENT": "Alternative edge filter that retains only the top N% highest-scoring edges in the network.\nMaintains consistent network connectivity and density without manually tuning raw score cutoffs (overrides threshold).",
+                "FILTER_MIN_OCCUPANCY": "Minimum percentage of non-gap characters required at an alignment column to retain it in residue analyses.\nColumns with occupancy below this percentage are excluded from logo and conservation calculations.",
+                "TARGET_CACHE": "Target Cache: Compatibility-specific folder for layout cache files matching the selected sequence set and network.\nThe status reports whether a compatible target folder is available; the folder button opens the layout-cache root.",
+                "TARGET_CACHE_FILE": "Selects a pre-computed 2D layout coordinate cache file (.h5) from the cache directory.\nInstantly restores previously computed node positions to bypass physics simulation.",
+                "NEW_CACHE_NAME": "Specifies a custom filename when saving a new layout configuration iteration.\nOnly editable when Selected Cache File is set to '(New Layout Cache)'.",
+                "NODE_SIZE": "Visual rendering diameter (in pixels) for each sequence node in the network plot.\nAdjust to optimize visual density; smaller node sizes are recommended for large networks.",
+                "EDGE_WIDTH": "Line thickness (in pixels) of connection lines drawn between related sequence nodes.\nThinner lines reduce visual clutter in dense networks; thicker lines highlight strong relationships.",
+                "EDGE_ALPHA": "Opacity of network edge lines, ranging from 0.0 (fully transparent) to 1.0 (opaque).\nLower opacity reveals underlying node clustering and density in highly connected graphs.",
+                "TEXT_SIZE": "Font size used for rendering cluster annotations, node labels, and sequence IDs in the visualizer.\nAdjust to ensure labels remain legible without obstructing structural network features.",
+                "TEXT_COLOR": "Color of viewer HUD text, slider values, and control labels. The top interaction instruction remains gray, and a nonzero Hidden Nodes count remains red.\nCan be specified as a standard color name or hex code (e.g. 'grey', '#333333').",
+                "INITIAL_NODE_COLOR": "Baseline fill color applied to all nodes when the network is first loaded.\nServes as the default background color before custom cluster or metadata coloring is applied.",
+                "HOVER_COLOR": "Highlight color applied to a node and its adjacent connections on hover or selection.\nProvides high-contrast interactive visual feedback in the viewer.",
+                "CONNECTED_NODE_COLOR": "Border highlight color applied to neighboring nodes directly connected to the currently selected node.\nSet it to the same rendered RGBA color as Node Boundary Color to disable connected-node identification, border highlighting, and render promotion.",
+                "EDGE_COLOR": "Color of connection lines (edges) drawn between similar nodes in the network.\nLighter or neutral colors reduce edge dominance in dense network clusters.",
+                "NODE_BOUNDARY_COLOR": "Color of the outer border ring outline drawn around each sequence node.\nProvides visual contrast to cleanly separate adjacent and overlapping nodes.",
+                "NODE_BOUNDARY_WIDTH": "Stroke width (in pixels) of the outer border ring outline drawn around each node.\nSetting a non-zero width helps distinguish overlapping nodes in dense clusters.",
+                "LOW_RESOURCE_MODE": "Performance mode that simplifies graphics and hides edge lines during pan/zoom/drag interactions.\nSignificantly improves responsiveness and reduces rendering latency for large networks.",
+                "LAYOUT_DEVICE_SELECTION": "Selects the compute device used for SSN layout generation (CPU, CUDA, XPU, MPS).\nAuto Benchmark measures representative workloads and may choose a different backend for each component-size class.",
+                "SPRING_K": "Attractive Hookean spring constant pulling nodes joined by retained network edges closer together.\nEvery retained edge has the same spring strength; its similarity score determines filtering, not attraction strength.",
+                "COULOMB_K": "Repulsive constant controlling the electrostatic-like force between nodes in the same connected component.\nLarger values spread nearby nodes apart; disconnected components are positioned later by component packing.",
+                "COULOMB_CUTOFF": "Maximum spatial distance threshold beyond which node repulsive forces drop to zero.\nLower cutoffs accelerate computation and prevent distant clusters from exerting unnecessary forces.",
+                "DAMPING": "Frictional resistance coefficient applied to node velocities during layout simulation.\nHigher values dissipate kinetic energy and suppress oscillatory motion more quickly.",
+                "DT": "Timestep size for each numerical integration step of the physics simulation.\nSmaller timesteps increase stability and precision; larger timesteps speed up convergence but may jitter.",
+                "MAX_STEPS": "Maximum number of physics iterations the simulation engine will run before terminating.\nEnsure this is large enough to allow node positions to settle into a stable configuration.",
+                "RMSD_THRESHOLD": "Root-Mean-Square Deviation convergence threshold for early simulation termination.\nIf average node displacement between consecutive steps falls below this value, layout halts as converged.",
+                "PERCENTAGE_DROP_THRESHOLD": "Early termination threshold based on the rate of RMSD change over the moving window.\nTerminates simulation when layout change plateaus (set to 0 to disable).",
+                "RMSD_WINDOW": "Number of simulation steps over which moving-average RMSD is calculated for plateau detection.\nSmoothes transient velocity spikes to ensure early termination triggers only on true convergence.",
+                "ENABLE_PROGRESSIVE_SIMULATION": "Progressively lowers the similarity threshold in stages for massive connected components.\nHelps resolve fine-grained sub-clusters and prevents gridlock in large, dense components.",
+                "PACKING_GEOMETRY": "Macro-level boundary packing geometry (Square or Circle) used to arrange disconnected components.\nControls how independent clusters are organized in the overall visualization window.",
+                "PACKING_GRID_SIZE": "Base grid square unit size used for macro-grid component packing.\nControls spacing and separation between packed independent clusters in the final layout.",
+                "UMAP_MODE": "Uses UMAP manifold learning to compute 2D coordinates directly from sequence distances.\nProvides fast non-linear dimensionality reduction as an alternative to iterative physics simulations.",
+                "UMAP_NEIGHBORS": "Maximum number of other nodes in each UMAP neighborhood (K excludes self).\nK=15 supplies up to 15 neighbors plus self to UMAP.\nSmaller values emphasize local sub-clusters; larger values preserve broad global relationships.",
+                "UMAP_MIN_DIST": "Minimum distance between points in low-dimensional UMAP space (0.0 to 1.0).\nLower values produce tight, dense point clusters; larger values distribute nodes more evenly.",
+                "FASTA_DIR": "Directory containing input FASTA files for sequence sets and subsets.\nPopulates the Sequence Set dropdown in the Inputs tab.",
+                "MSA_DIR": "Directory containing multiple sequence alignment files (.fasta, .h5, or _sparse.h5).\nPopulates the MSA dropdown in the Inputs tab.",
+                "HDF5_DIR": "Directory containing HDF5 pairwise sequence similarity scores and network edge files.\nPopulates the Network Edges dropdown in the Inputs tab.",
+                "SAVED_LAYOUT_DIR": "Directory where calculated 2D layout coordinate files and network metadata (.h5) are saved and loaded.\nServes as the layout cache to avoid recalculating layouts when reopening networks.",
+                "SETTING_EXPORT_DIR": "Directory where command-line layout generation JSON settings are exported.",
+                "METADATA_DIR": "Directory where uploaded node metadata spreadsheets and CSV files are stored and loaded.\nUsed for custom node coloring, categorization, and annotation in the visualizer.",
+                "HEADER_LIST_DIR": "Directory containing text files with lists of sequence headers matching network query criteria.\nUsed to store and track sequence cohorts identified in the visualizer.",
+                "INPUT_FILE_DIR": "Base directory represented by $input_file$.\nRelative paths are resolved from the project root; absolute paths remain absolute.",
+                "CACHE_FILE_DIR": "Base directory represented by $cache_file$.\nRelative paths are resolved from the project root; absolute paths remain absolute.",
+                "ANALYSIS_RESULT_DIR": "Base directory represented by $analysis_result$.\nViewer commands place their output subdirectories beneath this location.",
+                "SAVED_CONFIG_DIR": "Directory containing named per-tab configuration profiles.\nThe default uses $cache_file$ and follows the Cache File Directory; custom relative and absolute paths remain supported."
+            }
+            
+            self.tip_db = {}
+            for key, tip in self.tip_db_keys.items():
+                if key in self.labels:
+                    self._register_tip_targets(self.labels[key], tip)
+                
+                if key in self.inputs:
+                    self._register_tip_targets(self.inputs[key], tip)
+                    
+            for key, tip in self.tip_db_keys.items():
+                if key in self.inputs:
+                    widget = self.inputs[key]
+                    parent = widget.parentWidget()
+                    if parent and parent.objectName() == "wrapper":
+                        self._register_tip_targets(parent, tip, overwrite=False)
+
+            saved_config_tip = self.tip_db_keys["SAVED_CONFIG"]
+            for tab_id, selector in self.profile_selectors.items():
+                self._register_tip_targets(
+                    self.profile_labels.get(tab_id), saved_config_tip
+                )
+                self._register_tip_targets(
+                    selector.parentWidget(), saved_config_tip
+                )
+
+            target_cache_tip = self.tip_db_keys["TARGET_CACHE"]
+            self._register_tip_targets(
+                self.labels.get("TARGET_CACHE"), target_cache_tip
+            )
+            self._register_tip_targets(
+                self.lbl_cache_tracker.parentWidget(), target_cache_tip
+            )
+
+            # Any remaining native Qt tooltip is also displayed in the shared
+            # panel, and its native popup is suppressed by eventFilter().
+            for widget in self.findChildren(QWidget):
+                if widget.toolTip():
+                    self._register_tip_targets(
+                        widget, widget.toolTip(), overwrite=False
+                    )
+        
+        def _toggle_new_cache_input(self, text):
+            is_new_layout = text == "(New Layout Cache)"
+            self.line_new_cache.setVisible(is_new_layout)
+            self.line_new_cache.setEnabled(is_new_layout)
+            self.btn_export_layout.setEnabled(
+                is_new_layout and self._cache_launch_allowed
+            )
+            if not is_new_layout:
+                self.line_new_cache.clear()
+
+        def _cache_file_activated(self, text):
+            if text == "(New Layout Cache)":
+                self.line_new_cache.setFocus()
+
+        def _directory_base_values(self):
+            return {
+                key: (
+                    self.inputs[key].text()
+                    if key in self.inputs
+                    else globals().get(key, DIRECTORY_PROFILE_DEFAULTS[key])
+                )
+                for key in (
+                    "INPUT_FILE_DIR",
+                    "CACHE_FILE_DIR",
+                    "ANALYSIS_RESULT_DIR",
+                )
+            }
+
+        def _resolved_directory_value(self, value):
+            return resolve_directory_path(
+                value,
+                base_directories=self._directory_base_values(),
+            )
+
+        def _resolved_directory_input(self, key):
+            widget = self.inputs.get(key)
+            value = widget.text() if widget is not None else globals().get(key, "")
+            return self._resolved_directory_value(value)
+
+        def _base_directory_changed(self, base_key):
+            if base_key == "INPUT_FILE_DIR":
+                for combo, key, extensions in (
+                    (self.cb_fasta, "FASTA_DIR", [".fasta"]),
+                    (self.cb_msa, "MSA_DIR", [".fasta", ".h5"]),
+                    (self.cb_hdf5, "HDF5_DIR", [".h5"]),
+                ):
+                    self.refresh_combo(combo, key, extensions)
+            elif base_key == "CACHE_FILE_DIR":
+                self.update_live_validators()
+
+        def _absolute_project_path(self, value):
+            path = Path(self._resolved_directory_value(value)).expanduser()
+            if not path.is_absolute():
+                path = PROJECT_ROOT / path
+            return path.resolve()
+
+        def _refresh_cache_file_combo(self):
+            folder_path = self.current_cache_folder
+            if not folder_path or not os.path.isdir(folder_path):
+                return
+
+            try:
+                cache_files = [
+                    (entry.name, entry.stat().st_mtime)
+                    for entry in os.scandir(folder_path)
+                    if entry.is_file() and entry.name.lower().endswith(".h5")
+                ]
+                cache_files.sort(key=lambda item: item[1], reverse=True)
+                saved_layout_dir = os.path.abspath(
+                    self._resolved_directory_input("SAVED_LAYOUT_DIR")
+                )
+                cache_items = [
+                    (
+                        filename,
+                        cache_manifest.relative_cache_path(
+                            saved_layout_dir, folder_path, filename
+                        ),
+                    )
+                    for filename, _mtime in cache_files
+                ]
+            except (OSError, cache_manifest.CacheManifestError):
+                return
+
+            current_text = self.cb_cache_file.currentText()
+            current_data = self.cb_cache_file.currentData()
+            self.cb_cache_file.blockSignals(True)
+            try:
+                self.cb_cache_file.clear()
+                for filename, relative_path in cache_items:
+                    self.cb_cache_file.addItem(filename, relative_path)
+                self.cb_cache_file.addItem("(New Layout Cache)", None)
+
+                if current_text == "(New Layout Cache)":
+                    selected_index = self.cb_cache_file.count() - 1
+                else:
+                    selected_index = self.cb_cache_file.findData(current_data)
+                    if selected_index < 0:
+                        selected_index = 0
+                self.cb_cache_file.setCurrentIndex(selected_index)
+            finally:
+                self.cb_cache_file.blockSignals(False)
+
+            self.line_new_cache.setPlaceholderText(
+                self._default_new_cache_name(folder_path)
+            )
+            self._toggle_new_cache_input(self.cb_cache_file.currentText())
+
+        def refresh_combo(self, combo, dir_key, ext_list):
+            import os  # Moved here to ensure it's loaded before use
+            if dir_key not in self.inputs: 
+                return
+            combo.blockSignals(True)
+            current = combo.currentText()
+            combo.clear()
+            combo.addItem("")
+            dir_path = self._resolved_directory_input(dir_key)
+            
+            if os.path.exists(dir_path):
+                files = [f for f in os.listdir(dir_path) if any(f.endswith(ext) for ext in ext_list)]
+                combo.addItems(files)
+                if current in files:
+                    combo.setCurrentText(current)
+            combo.blockSignals(False)
+            self.update_live_validators()
+
+        def _set_cache_unavailable(self, message, color="gray"):
+            self._cache_launch_allowed = False
+            self.btn_save_run.setEnabled(False)
+            self.current_cache_folder = None
+            self.lbl_cache_tracker.setText(message)
+            self.lbl_cache_tracker.setStyleSheet(f"color: {color};")
+            self.cb_cache_file.blockSignals(True)
+            self.cb_cache_file.clear()
+            self.cb_cache_file.setEnabled(False)
+            self.cb_cache_file.blockSignals(False)
+            self._toggle_new_cache_input("")
+            self.btn_open_target_folder.setEnabled(False)
+
+        def _cache_paths_from_inputs(self):
+            fasta_name = self.cb_fasta.currentText().strip()
+            network_name = self.cb_hdf5.currentText().strip()
+            if not fasta_name or not network_name:
+                return None, None
+            fasta_path = os.path.join(
+                self._resolved_directory_input("FASTA_DIR"), fasta_name
+            )
+            network_path = os.path.join(
+                self._resolved_directory_input("HDF5_DIR"), network_name
+            )
+            return os.path.abspath(fasta_path), os.path.abspath(network_path)
+
+        def _cache_setting_values(self):
+            top_value = self.spin_top.optionalValue()
+            threshold_value = self.spin_thresh.optionalValue()
+            return {
+                "alignment_score": self.cb_score_mode.currentText() or None,
+                "normalization": self.cb_norm_mode.currentText() or None,
+                "umap_mode": self.check_umap.isChecked(),
+                "umap_neighbors": self.spin_umap_k.value(),
+                "top_edge_percent": top_value,
+                "similarity_threshold": threshold_value,
+                # The VR viewer is three dimensional by definition, so this is
+                # a property of which viewer is being configured rather than a
+                # setting. Passing it here is what keeps a 3D cache in its own
+                # _3D folder with its own manifest identity, instead of
+                # colliding with the desktop program's 2D cache.
+                "layout_dimensions": LAYOUT_DIMENSIONS,
+            }
+
+        def _set_network_type_controls(self, network_type):
+            is_blast = network_type == "blast"
+            self.cb_score_mode.blockSignals(True)
+            self.cb_norm_mode.blockSignals(True)
+            self.cb_score_mode.setEnabled(not is_blast)
+            self.cb_norm_mode.setEnabled(not is_blast)
+            if is_blast:
+                self.cb_score_mode.setCurrentIndex(-1)
+                self.cb_norm_mode.setCurrentIndex(-1)
+            else:
+                if self.cb_score_mode.currentIndex() == -1:
+                    self.cb_score_mode.setCurrentText("global")
+                # Signals are blocked above, so the currentTextChanged-driven
+                # refresh of cb_norm_mode's item list never fires here. Refresh
+                # it explicitly or a stale item list (e.g. left over from
+                # "local" mode) can silently reject the default below.
+                self.update_norm_mode_options()
+                if self.cb_norm_mode.currentIndex() == -1:
+                    self.cb_norm_mode.setCurrentText("alignment_length")
+            self.cb_score_mode.blockSignals(False)
+            self.cb_norm_mode.blockSignals(False)
+
+        def _default_new_cache_name(self, folder_path):
+            return cache_manifest.next_cache_version_filename(folder_path)
+
+        def _apply_cache_discovery(self, records):
+            sequence_path, network_path = self._cache_paths_from_inputs()
+            if not sequence_path or not network_path:
+                self._set_cache_unavailable("Target Cache: Missing input files")
+                return
+
+            network_type = records["network_type"]
+            self._set_network_type_controls(network_type)
+            settings = self._cache_setting_values()
+            try:
+                compatibility = cache_manifest.build_compatibility(
+                    records["sequence"]["sha256"],
+                    records["network"]["sha256"],
+                    network_type,
+                    **settings,
+                )
+                saved_layout_dir = os.path.abspath(
+                    self._resolved_directory_input("SAVED_LAYOUT_DIR")
+                )
+                canonical_name = cache_manifest.build_canonical_cache_name(
+                    sequence_path,
+                    network_path,
+                    network_type,
+                    **settings,
+                )
+                default_folder = cache_manifest.resolve_default_cache_folder(
+                    saved_layout_dir, canonical_name, compatibility
+                )
+                matches = cache_manifest.find_matching_manifest_folders(
+                    saved_layout_dir, compatibility
+                )
+            except Exception as error:
+                self._set_cache_unavailable(
+                    f"Cache compatibility error: {error}", "#d32f2f"
+                )
+                return
+
+            self.cb_cache_file.blockSignals(True)
+            self.cb_cache_file.clear()
+            self.line_new_cache.clear()
+
+            if len(matches) > 1:
+                folders = tuple(item["folder"] for item in matches)
+                self.current_cache_folder = None
+                self._cache_launch_allowed = False
+                self.btn_save_run.setEnabled(False)
+                self.cb_cache_file.setEnabled(False)
+                self._toggle_new_cache_input("")
+                self.btn_open_target_folder.setEnabled(False)
+                self.lbl_cache_tracker.setText(
+                    f"Error: {len(folders)} compatible cache folders found"
+                )
+                self.lbl_cache_tracker.setStyleSheet(
+                    "color: #d32f2f; font-weight: bold;"
+                )
+                if folders != self._last_duplicate_signature:
+                    print("ERROR: Multiple compatible cache folders were found:")
+                    for folder in folders:
+                        print(f"  - {folder}")
+                self._last_duplicate_signature = folders
+                self.cb_cache_file.blockSignals(False)
+                return
+
+            self._last_duplicate_signature = None
+            if matches:
+                active_folder = matches[0]["folder"]
+                self.current_cache_folder = active_folder
+                cache_files = [
+                    entry.name
+                    for entry in os.scandir(active_folder)
+                    if entry.is_file() and entry.name.lower().endswith(".h5")
+                ]
+                cache_files.sort(
+                    key=lambda name: os.path.getmtime(os.path.join(active_folder, name)),
+                    reverse=True,
+                )
+                for filename in cache_files:
+                    relative_path = cache_manifest.relative_cache_path(
+                        saved_layout_dir, active_folder, filename
+                    )
+                    self.cb_cache_file.addItem(filename, relative_path)
+                self.lbl_cache_tracker.setText(
+                    f"Compatible Folder: {os.path.basename(active_folder)}"
+                )
+                self.lbl_cache_tracker.setStyleSheet(
+                    "color: green; font-weight: bold;"
+                )
+                self.btn_open_target_folder.setEnabled(True)
+            else:
+                active_folder = default_folder
+                default_name = os.path.basename(default_folder)
+                self.current_cache_folder = active_folder
+                self.lbl_cache_tracker.setText(
+                    f"Target Folder: {default_name} [Needs Computing]"
+                )
+                self.lbl_cache_tracker.setStyleSheet("color: #d32f2f;")
+                self.btn_open_target_folder.setEnabled(False)
+
+            self.line_new_cache.setPlaceholderText(
+                self._default_new_cache_name(active_folder)
+            )
+            self.cb_cache_file.addItem("(New Layout Cache)", None)
+            self.cb_cache_file.setEnabled(True)
+            self.cb_cache_file.setCurrentIndex(0)
+            self.cb_cache_file.blockSignals(False)
+            self._cache_launch_allowed = True
+            self.btn_save_run.setEnabled(True)
+            self._toggle_new_cache_input(self.cb_cache_file.currentText())
+
+        def _cache_hash_completed(self, request_id, records, error):
+            worker = self._cache_hash_workers.pop(request_id, None)
+            if worker is not None:
+                worker.deleteLater()
+            if request_id != self._cache_hash_request_id:
+                return
+            self._cache_hash_pending_keys = None
+            if error:
+                self._set_cache_unavailable(f"Cache hashing failed: {error}", "#d32f2f")
+                return
+            sequence_path, network_path = self._cache_paths_from_inputs()
+            try:
+                self._cache_hash_cache[cache_manifest.file_cache_key(sequence_path)] = records["sequence"]
+                self._cache_hash_cache[cache_manifest.file_cache_key(network_path)] = records["network"]
+            except (OSError, TypeError):
+                self.update_live_validators()
+                return
+            self._apply_cache_discovery(records)
+
+        def _request_cache_discovery(self):
+            sequence_path, network_path = self._cache_paths_from_inputs()
+            if not sequence_path or not network_path:
+                self._cache_hash_request_id += 1
+                self._cache_hash_pending_keys = None
+                self._set_cache_unavailable("Target Cache: Missing FASTA or HDF5")
+                return
+            if not os.path.isfile(sequence_path) or not os.path.isfile(network_path):
+                self._cache_hash_request_id += 1
+                self._cache_hash_pending_keys = None
+                self._set_cache_unavailable("Target Cache: Selected input file is missing", "#d32f2f")
+                return
+
+            try:
+                sequence_key = cache_manifest.file_cache_key(sequence_path)
+                network_key = cache_manifest.file_cache_key(network_path)
+            except OSError as error:
+                self._cache_hash_request_id += 1
+                self._cache_hash_pending_keys = None
+                self._set_cache_unavailable(f"Cache input error: {error}", "#d32f2f")
+                return
+
+            cached_records = {
+                "sequence": self._cache_hash_cache.get(sequence_key),
+                "network": self._cache_hash_cache.get(network_key),
+            }
+            if all(cached_records.values()):
+                try:
+                    cached_records["network_type"] = (
+                        cache_manifest.validate_network_schema(network_path).network_type
+                    )
+                    self._apply_cache_discovery(cached_records)
+                except Exception as error:
+                    self._set_cache_unavailable(
+                        f"Cache compatibility error: {error}", "#d32f2f"
+                    )
+                return
+
+            pending_keys = (sequence_key, network_key)
+            if self._cache_hash_pending_keys == pending_keys:
+                return
+
+            for active_worker in self._cache_hash_workers.values():
+                active_worker.requestInterruption()
+            self._cache_hash_request_id += 1
+            request_id = self._cache_hash_request_id
+            self._cache_hash_pending_keys = pending_keys
+            self._set_cache_unavailable("Checking input files…")
+            worker = CacheHashWorker(
+                request_id,
+                sequence_path,
+                network_path,
+                cached_records=cached_records,
+            )
+            self._cache_hash_workers[request_id] = worker
+            worker.completed.connect(self._cache_hash_completed)
+            worker.start()
+
+        def create_inputs_tab(self):
+            tab = QWidget()
+            layout = QFormLayout(tab)
+            layout.setContentsMargins(
+                CONFIG_TAB_CONTENT_MARGIN,
+                CONFIG_TAB_CONTENT_MARGIN,
+                CONFIG_TAB_CONTENT_MARGIN,
+                CONFIG_TAB_CONTENT_MARGIN,
+            )
+            layout.setHorizontalSpacing(CONFIG_FIELD_HORIZONTAL_SPACING)
+            layout.setVerticalSpacing(CONFIG_TAB_ROW_SPACING)
+            self._add_profile_selector("inputs_outputs", layout)
+            self._add_profile_separator("inputs_outputs", layout)
+            self.profile_content_widgets["inputs_outputs"] = []
+            
+            def add_row(key, label_text, widget):
+                lbl = QLabel(label_text)
+                lbl.setFixedWidth(CONFIG_FIELD_LABEL_WIDTH)
+                layout.addRow(lbl, widget)
+                self.labels[key] = lbl
+                self.inputs[key] = widget
+
+            # Helper for adding a combobox + dynamic folder button
+            def add_row_with_dynamic_btn(key, label_text, combo, dir_key, default_dir):
+                container = QWidget()
+                container.setObjectName("wrapper")
+                h_lay = QHBoxLayout(container)
+                h_lay.setContentsMargins(0, 0, 0, 0)
+                
+                btn = QPushButton("📂")
+                btn.setFixedWidth(30)
+                btn.setToolTip("Open Folder")
+                
+                def open_folder(checked):
+                    import os
+                    # Read from the directory input if it exists, otherwise use the default global
+                    path = self.inputs[dir_key].text() if dir_key in self.inputs else globals().get(dir_key, default_dir)
+                    abs_path = str(self._absolute_project_path(path))
+                    os.makedirs(abs_path, exist_ok=True)
+                    from PySide6.QtGui import QDesktopServices
+                    from PySide6.QtCore import QUrl
+                    QDesktopServices.openUrl(QUrl.fromLocalFile(abs_path))
+                    
+                btn.clicked.connect(open_folder)
+                
+                h_lay.addWidget(combo)
+                h_lay.addWidget(btn)
+                
+                lbl = QLabel(label_text)
+                lbl.setFixedWidth(CONFIG_FIELD_LABEL_WIDTH)
+                layout.addRow(lbl, container)
+                self.labels[key] = lbl
+                self.inputs[key] = combo 
+            
+            # --- Sequence Set Input ---
+            # Use DynamicComboBox and bind the refresh function directly to the click event!
+            self.cb_fasta = DynamicComboBox(lambda: self.refresh_combo(self.cb_fasta, "FASTA_DIR", ['.fasta']))
+            seq_dir = globals().get("FASTA_DIR", os.path.join("Input_Files", "Sequence_Sets"))
+            fasta_files = [f for f in os.listdir(seq_dir) if f.endswith('.fasta')] if os.path.exists(seq_dir) else []
+            self.cb_fasta.addItems([""] + fasta_files)
+            fasta_val = globals().get("NODE_FASTA_FILE") or ""
+            if os.path.basename(fasta_val) in fasta_files:
+                self.cb_fasta.setCurrentText(os.path.basename(fasta_val))
+            add_row_with_dynamic_btn("NODE_FASTA_FILE", "Sequence Set / Subset (.fasta):", self.cb_fasta, "FASTA_DIR", seq_dir)
+            
+            # --- HDF5 Input ---
+            self.cb_hdf5 = DynamicComboBox(lambda: self.refresh_combo(self.cb_hdf5, "HDF5_DIR", ['.h5']))
+            hdf5_dir = globals().get("HDF5_DIR", os.path.join("Input_Files", "Networks_EValues"))
+            hdf5_files = [f for f in os.listdir(hdf5_dir) if f.endswith('.h5')] if os.path.exists(hdf5_dir) else []
+            self.cb_hdf5.addItems([""] + hdf5_files)
+            hdf5_val = globals().get("INPUT_HDF5") or ""
+            if os.path.basename(hdf5_val) in hdf5_files:
+                self.cb_hdf5.setCurrentText(os.path.basename(hdf5_val))
+            add_row_with_dynamic_btn("INPUT_HDF5", "Network Edges Input (.h5):", self.cb_hdf5, "HDF5_DIR", hdf5_dir)
+            
+            # --- MSA Input ---
+            self.cb_msa = DynamicComboBox(lambda: self.refresh_combo(self.cb_msa, "MSA_DIR", ['.fasta', '.h5']))
+            msa_dir_path = globals().get("MSA_DIR", os.path.join("Input_Files", "Multiple_Alignments"))
+            msa_files = [f for f in os.listdir(msa_dir_path) if f.endswith('.fasta') or f.endswith('.h5')] if os.path.exists(msa_dir_path) else []
+            self.cb_msa.addItems([""] + msa_files)
+            msa_val = globals().get("MSA_FILE") or ""
+            if os.path.basename(msa_val) in msa_files:
+                self.cb_msa.setCurrentText(os.path.basename(msa_val))
+            add_row_with_dynamic_btn("MSA_FILE", "MSA Input (.fasta / _sparse.h5):", self.cb_msa, "MSA_DIR", msa_dir_path)
+
+            # --- Rest of Inputs ---
+            # Use NoScrollComboBox here to prevent accidental scroll wheel changes
+            self.cb_score_mode = NoScrollComboBox()
+            self.cb_score_mode.addItems(["global", "local"])
+            self.cb_score_mode.setCurrentText(str(globals().get("ALIGNMENT_SCORE", "global")))
+            
+            self.cb_norm_mode = NoScrollComboBox()
+            score_label = QLabel("Alignment Score Mode:")
+            norm_label = QLabel("Normalization Mode:")
+            mode_container = self._make_field_group(
+                [(score_label, self.cb_score_mode), (norm_label, self.cb_norm_mode)],
+                name="alignmentModeRow", equal_fields=True,
+            )
+            layout.addRow(mode_container)
+            self.labels["ALIGNMENT_SCORE"] = score_label
+            self.inputs["ALIGNMENT_SCORE"] = self.cb_score_mode
+            self.labels["NORM_MODE"] = norm_label
+            self.inputs["NORM_MODE"] = self.cb_norm_mode
+            
+            self.cb_score_mode.currentTextChanged.connect(self.update_norm_mode_options)
+            self.update_norm_mode_options()
+            
+            initial_norm = str(globals().get("NORM_MODE", "alignment_length"))
+            if self.cb_score_mode.currentText() == "local" and initial_norm == "alignment_length":
+                initial_norm = "longer_sequence"
+            self.cb_norm_mode.setCurrentText(initial_norm)
+            
+            ref_val = globals().get("ALIGNMENT_REFERENCE", "")
+            self.line_ref = QLineEdit("" if ref_val in [None, "None"] else str(ref_val))
+
+            ref_container = QWidget()
+            ref_container.setObjectName("alignment_reference_wrapper")
+
+            self.lbl_alignment_offset = QLabel("Alignment Offset:")
+            self.spin_alignment_offset = NoScrollSpinBox()
+            self.spin_alignment_offset.setRange(-1000000, 1000000)
+            try:
+                offset_value = int(globals().get("ALIGNMENT_OFFSET", 0) or 0)
+            except (TypeError, ValueError):
+                offset_value = 0
+            self.spin_alignment_offset.setValue(offset_value)
+            self.spin_alignment_offset.setAccelerated(True)
+            self.spin_alignment_offset.setFixedWidth(100)
+            self.spin_alignment_offset.setStyleSheet(
+                "QSpinBox:disabled { background-color: #f0f0f0; color: #888; }"
+            )
+
+            self.spin_min_occ = NoScrollDoubleSpinBox()
+            self.spin_min_occ.setDecimals(2)
+            self.spin_min_occ.setRange(0.0, 100.0)
+            self.spin_min_occ.setSingleStep(1.0)
+            self.spin_min_occ.setValue(float(globals().get("FILTER_MIN_OCCUPANCY") or 10.0))
+
+            lbl_min_occ = QLabel("Min Occupancy %:")
+
+            ref_label = QLabel("Alignment Reference ID:")
+            ref_label.setFixedWidth(CONFIG_FIELD_LABEL_WIDTH)
+            self._make_field_group(
+                [(ref_label, self.line_ref), (lbl_min_occ, self.spin_min_occ),
+                 (self.lbl_alignment_offset, self.spin_alignment_offset)],
+                parent=ref_container, name="alignmentReferenceRow",
+                trailing=True, control_stretches=(3, 2, 0),
+            )
+            layout.addRow(ref_container)
+            self.labels["ALIGNMENT_REFERENCE"] = ref_label
+            self.inputs["ALIGNMENT_REFERENCE"] = self.line_ref
+            self.labels["ALIGNMENT_OFFSET"] = self.lbl_alignment_offset
+            self.inputs["ALIGNMENT_OFFSET"] = self.spin_alignment_offset
+            
+            # --- UMAP Controls ---
+            
+            self.check_umap = QPushButton()
+            self.check_umap.setCheckable(True)
+            self.check_umap.setFixedSize(60, 28)
+            def switch_umap_style(checked, btn=self.check_umap):
+                if checked:
+                    btn.setText("ON")
+                    btn.setStyleSheet("QPushButton { background-color: #4CAF50; color: white; border-radius: 14px; font-weight: bold; border: 1px solid #388E3C; }")
+                else:
+                    btn.setText("OFF")
+                    btn.setStyleSheet("QPushButton { background-color: #e0e0e0; color: #333; border-radius: 14px; font-weight: bold; border: 1px solid #bdbdbd; }")
+            self.check_umap.toggled.connect(switch_umap_style)
+            
+            umap_mode_val = globals().get("UMAP_MODE", False)
+            if isinstance(umap_mode_val, str):
+                umap_mode_val = umap_mode_val.lower() in ['true', '1', 't', 'y', 'yes']
+            self.check_umap.setChecked(bool(umap_mode_val))
+            switch_umap_style(bool(umap_mode_val))
+            
+            lbl_k = QLabel("UMAP Nearest Neighbors:")
+            lbl_md = QLabel("UMAP Min Distance:")
+            
+            self.spin_umap_k = NoScrollSpinBox()
+            self.spin_umap_k.setRange(2, 500)
+            self.spin_umap_k.setValue(int(globals().get("UMAP_NEIGHBORS") or 15))
+            self.spin_umap_k.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+            
+            self.spin_umap_md = NoScrollDoubleSpinBox()
+            self.spin_umap_md.setRange(0.0, 1.0)
+            self.spin_umap_md.setSingleStep(0.1)
+            self.spin_umap_md.setDecimals(2)
+            self.spin_umap_md.setValue(float(globals().get("UMAP_MIN_DIST") or 0.1))
+            self.spin_umap_md.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+
+            # Match the taller spinboxes used beside sliders on the Visuals/Physics tabs.
+            input_spinbox_height = max(
+                self.spin_umap_k.sizeHint().height(),
+                self.spin_umap_md.sizeHint().height(),
+            )
+            for spinbox in (
+                self.spin_alignment_offset,
+                self.spin_umap_k,
+                self.spin_umap_md,
+            ):
+                spinbox.setFixedHeight(input_spinbox_height)
+            
+            # Apply styling for disabled states (grayed out)
+            disabled_spinbox_style = "QSpinBox:disabled, QDoubleSpinBox:disabled { background-color: #f0f0f0; color: #888; }"
+            disabled_label_style = "QLabel:disabled { color: #888; }"
+            self.spin_umap_k.setStyleSheet(disabled_spinbox_style)
+            self.spin_umap_md.setStyleSheet(disabled_spinbox_style)
+            lbl_k.setStyleSheet(disabled_label_style)
+            lbl_md.setStyleSheet(disabled_label_style)
+            
+            self.check_umap.toggled.connect(self.update_live_validators)
+            self.spin_umap_k.valueChanged.connect(self.update_live_validators)
+            self.labels["UMAP_MODE"] = QLabel("Plot UMAP Instead:")
+
+            self.inputs["UMAP_MODE"] = self.check_umap
+            self.inputs["UMAP_NEIGHBORS"] = self.spin_umap_k
+            self.inputs["UMAP_MIN_DIST"] = self.spin_umap_md
+            self.labels["UMAP_NEIGHBORS"] = lbl_k
+            self.labels["UMAP_MIN_DIST"] = lbl_md
+            
+            self.spin_thresh = OptionalNoScrollDoubleSpinBox(-1000000000.0, 0.0)
+            self.spin_thresh.setDecimals(5)
+            self.spin_thresh.setRange(-1000000000.0, 1000000000.0)
+            self.spin_thresh.setSingleStep(0.1)
+            self.spin_thresh.setSpecialValueText(" ")
+            self.spin_thresh.setOptionalValue(globals().get("SIMILARITY_THRESHOLD"))
+
+            self.spin_top = OptionalNoScrollDoubleSpinBox(-0.01, 1.0)
+            self.spin_top.setDecimals(2)
+            self.spin_top.setRange(-0.01, 100.0)
+            self.spin_top.setSingleStep(0.1)
+            self.spin_top.setSpecialValueText(" ")
+            self.spin_top.setOptionalValue(globals().get("TOP_EDGE_PERCENT"))
+
+
+            for spinbox in (
+                self.spin_thresh,
+                self.spin_top,
+                self.spin_min_occ,
+            ):
+                spinbox.setSizePolicy(
+                    QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed
+                )
+                spinbox.setFixedHeight(input_spinbox_height)
+
+            top_edge_control = QWidget()
+            top_edge_control.setObjectName("topEdgeControl")
+            top_edge_layout = QHBoxLayout(top_edge_control)
+            top_edge_layout.setContentsMargins(0, 0, 0, 0)
+            top_edge_layout.setSpacing(6)
+            self.btn_clear_top_edge = QPushButton("Clear")
+            self.btn_clear_top_edge.setObjectName("clearTopEdgeButton")
+            self.btn_clear_top_edge.setToolTip(
+                "Unset Top Edge % to use Similarity Threshold when UMAP is off."
+            )
+            self.btn_clear_top_edge.clicked.connect(
+                lambda: self.spin_top.setOptionalValue(None)
+            )
+            top_edge_layout.addWidget(self.spin_top, 1)
+            top_edge_layout.addWidget(self.btn_clear_top_edge)
+
+            filter_container = QWidget()
+            filter_container.setObjectName("wrapper")
+
+            lbl_thresh = QLabel("Similarity Threshold:")
+            lbl_thresh.setStyleSheet("QLabel:disabled { color: #888; }")
+            lbl_top = QLabel("Top Edge %:")
+            lbl_top.setStyleSheet("QLabel:disabled { color: #888; }")
+
+            # Keep separate widgets and settings for each mode while sharing two slots.
+            self._input_mode_stacks = []
+            def mode_stack(ssn_widget, umap_widget):
+                stack = QStackedWidget()
+                stack.addWidget(ssn_widget)
+                stack.addWidget(umap_widget)
+                self._input_mode_stacks.append(stack)
+                return stack
+
+            threshold_label = mode_stack(lbl_thresh, lbl_k)
+            threshold_label.setMinimumWidth(max(CONFIG_FIELD_LABEL_WIDTH, lbl_k.sizeHint().width()))
+            threshold_control = mode_stack(self.spin_thresh, self.spin_umap_k)
+            top_label = mode_stack(lbl_top, lbl_md)
+            top_control = mode_stack(top_edge_control, self.spin_umap_md)
+            self._make_field_group(
+                [(threshold_label, threshold_control), (top_label, top_control),
+                 (self.labels["UMAP_MODE"], self.check_umap)],
+                parent=filter_container, name="filterRow",
+                trailing=True, control_stretches=(1, 1, 0),
+            )
+            layout.addRow(filter_container)
+
+            # Coordinate all three rows. Normalization spans columns two and
+            # three; the two other rows retain a compact, right-aligned last field.
+            aligned_rows = [mode_container.layout(), ref_container.layout(),
+                            filter_container.layout()]
+            for column in (0, 1):
+                label_width = max(row._label_width(row.pairs[column][0])
+                                  for row in aligned_rows)
+                for row in aligned_rows:
+                    row.pairs[column][0].setFixedWidth(label_width)
+            last_width = max(row._column_minima()[2] for row in aligned_rows[1:])
+            for row in aligned_rows[1:]:
+                label, control = row.pairs[2]
+                label.setFixedWidth(last_width - row.spacing() - control.width())
+
+            def aligned_column_widths(width, *, spanning=False):
+                gap = CONFIG_FIELD_HORIZONTAL_SPACING
+                first_min = max(row._column_minima()[0] for row in aligned_rows)
+                middle_min = max(row._column_minima()[1] for row in aligned_rows[1:])
+                last = max(row._column_minima()[2] for row in aligned_rows[1:])
+                # Give the reference half the usable width, and the remaining
+                # space to occupancy after reserving the fixed final column.
+                half_min = max(first_min, middle_min + gap + last,
+                               aligned_rows[0]._column_minima()[1])
+                if width is None:
+                    return 2 * half_min + gap
+                first = (width - gap) // 2
+                remainder = width - gap - first
+                return ([first, remainder] if spanning else
+                        [first, remainder - gap - last, last])
+
+            for index, row in enumerate(aligned_rows):
+                row.column_width_provider = (
+                    lambda width, spanning=index == 0:
+                    aligned_column_widths(width, spanning=spanning)
+                )
+                row.invalidate()
+
+            self.labels["SIMILARITY_THRESHOLD"] = lbl_thresh
+            self.inputs["SIMILARITY_THRESHOLD"] = self.spin_thresh
+            self.labels["TOP_EDGE_PERCENT"] = lbl_top
+            self.inputs["TOP_EDGE_PERCENT"] = self.spin_top
+            self.labels["FILTER_MIN_OCCUPANCY"] = lbl_min_occ
+            self.inputs["FILTER_MIN_OCCUPANCY"] = self.spin_min_occ
+
+            # Retain the previous internal attribute names for compatibility.
+            self.line_thresh = self.spin_thresh
+            self.line_top = self.spin_top
+            self.line_min_occ = self.spin_min_occ
+            
+            # Horizontal layout for both statistics and histogram buttons
+            btn_container = QWidget()
+            btn_lay = ResponsiveFlowLayout(btn_container)
+            btn_lay.setContentsMargins(0, 0, 0, 0)
+            
+            self.btn_stats = QPushButton("Compute Network Statistics")
+            self.btn_stats.setStyleSheet("background-color: #2196F3; color: white;")
+            self.btn_stats.clicked.connect(self.run_statistics)
+
+            self.btn_hist = QPushButton("Histogram")
+            self.btn_hist.setStyleSheet("background-color: #9C27B0; color: white;")
+            self.btn_hist.clicked.connect(self.run_histogram)
+            
+            btn_lay.addWidget(self.btn_stats, 3)
+            btn_lay.addWidget(self.btn_hist, 1)
+            layout.addRow("", btn_container)
+
+            self.cache_file_separator = self._add_padded_separator(
+                layout, "cache_file_separator"
+            )
+
+            # --- Target Cache Tracker & Folder Button ---
+            cache_container = QWidget()
+            cache_lay = QHBoxLayout(cache_container)
+            cache_lay.setContentsMargins(0, 0, 0, 0)
+            
+            self.lbl_cache_tracker = QLabel("Target Folder: None")
+            self.lbl_cache_tracker.setStyleSheet("color: gray;")
+            self.lbl_cache_tracker.setWordWrap(False)
+            self.lbl_cache_tracker.setMinimumWidth(0)
+            self.lbl_cache_tracker.setSizePolicy(
+                QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed
+            )
+            
+            self.btn_open_cache = QPushButton("📂")
+            self.btn_open_cache.setFixedWidth(30)
+            self.btn_open_cache.setToolTip("Open Target Cache Folder")
+            
+            def open_cache_folder(checked):
+                import os
+                from PySide6.QtGui import QDesktopServices
+                from PySide6.QtCore import QUrl
+                
+                # Exclusively open the parent directory
+                dir_input = self.inputs.get("SAVED_LAYOUT_DIR")
+                path = dir_input.text() if dir_input else globals().get("SAVED_LAYOUT_DIR", os.path.join("Cache_Files", "Saved_Layouts"))
+
+                abs_path = str(self._absolute_project_path(path))
+                os.makedirs(abs_path, exist_ok=True)
+                QDesktopServices.openUrl(QUrl.fromLocalFile(abs_path))
+                
+            self.btn_open_cache.clicked.connect(open_cache_folder)
+            
+            cache_lay.addWidget(self.lbl_cache_tracker, 1)
+            cache_lay.addWidget(self.btn_open_cache)
+            target_cache_label = QLabel("Target Cache:")
+            target_cache_label.setFixedWidth(CONFIG_FIELD_LABEL_WIDTH)
+            layout.addRow(target_cache_label, cache_container)
+            self.labels["TARGET_CACHE"] = target_cache_label
+
+            # Cache dropdown, conditional new-cache name, and folder button.
+            target_container = QWidget()
+            target_container.setObjectName("wrapper")
+            target_lay = ResponsiveSelectorLayout(target_container)
+            target_lay.setContentsMargins(0, 0, 0, 0)
+
+            self.cb_cache_file = DynamicComboBox(self._refresh_cache_file_combo)
+            self.cb_cache_file.setEnabled(False)
+
+            self.line_new_cache = QLineEdit()
+            self.line_new_cache.setVisible(False)
+            self.line_new_cache.setEnabled(False)
+            
+            self.btn_open_target_folder = QPushButton("📂")
+            self.btn_open_target_folder.setFixedWidth(30)
+            self.btn_open_target_folder.setToolTip("Open Specific Target Folder")
+            self.btn_open_target_folder.setEnabled(False)  # Greyed out by default
+            
+            def open_target_folder(checked):
+                import os
+                from PySide6.QtGui import QDesktopServices
+                from PySide6.QtCore import QUrl
+                
+                path = getattr(self, 'current_cache_folder', None)
+                if path and os.path.exists(path):
+                    abs_path = os.path.abspath(path)
+                    QDesktopServices.openUrl(QUrl.fromLocalFile(abs_path))
+                    
+            self.btn_open_target_folder.clicked.connect(open_target_folder)
+
+            target_lay.addWidget(self.cb_cache_file, 1)
+            target_lay.addWidget(self.line_new_cache, 1)
+            target_lay.addWidget(self.btn_open_target_folder)
+            
+            layout.addRow("Selected Cache File:", target_container)
+            self.labels["TARGET_CACHE_FILE"] = layout.labelForField(target_container)
+            self.labels["TARGET_CACHE_FILE"].setFixedWidth(CONFIG_FIELD_LABEL_WIDTH)
+            self.inputs["TARGET_CACHE_FILE"] = self.cb_cache_file
+            self.inputs["NEW_CACHE_NAME"] = self.line_new_cache
+            
+            # Hook up the toggle switch
+            self.cb_cache_file.currentTextChanged.connect(self._toggle_new_cache_input)
+            self.cb_cache_file.textActivated.connect(self._cache_file_activated)
+
+            self._add_scroll_tab(tab, "Inputs && Outputs")
+            
+        def update_norm_mode_options(self):
+            if not hasattr(self, 'cb_score_mode') or not hasattr(self, 'cb_norm_mode'):
+                return
+            current_norm = self.cb_norm_mode.currentText()
+            self.cb_norm_mode.blockSignals(True)
+            self.cb_norm_mode.clear()
+            
+            is_local = self.cb_score_mode.currentText() == "local"
+            if is_local:
+                self.cb_norm_mode.addItems(["shorter_sequence", "longer_sequence", "average_sequence"])
+                if current_norm == "alignment_length":
+                    current_norm = "longer_sequence"
+            else:
+                self.cb_norm_mode.addItems(["alignment_length", "shorter_sequence", "longer_sequence", "average_sequence"])
+                
+            self.cb_norm_mode.setCurrentText(current_norm)
+            self.cb_norm_mode.blockSignals(False)
+
+        def _update_reference_controls(self, text=None):
+            reference_text = self.line_ref.text() if text is None else text
+            has_reference = bool(reference_text.strip())
+            if hasattr(self, 'spin_alignment_offset'):
+                self.spin_alignment_offset.setEnabled(has_reference)
+            if hasattr(self, 'lbl_alignment_offset'):
+                self.lbl_alignment_offset.setEnabled(has_reference)
+
+        def update_live_validators(self):
+            has_fasta = bool(self.cb_fasta.currentText().strip())
+            has_hdf5 = bool(self.cb_hdf5.currentText().strip())
+            self._update_reference_controls()
+            self.btn_stats.setEnabled(has_fasta and has_hdf5)
+            if hasattr(self, 'btn_hist'):
+                self.btn_hist.setEnabled(has_fasta and has_hdf5)
+            
+            is_umap = hasattr(self, 'check_umap') and self.check_umap.isChecked()
+            for stack in getattr(self, "_input_mode_stacks", ()):
+                stack.setCurrentIndex(int(is_umap))
+            if hasattr(self, "spin_umap_k"):
+                for key in ("UMAP_NEIGHBORS", "UMAP_MIN_DIST"):
+                    self.inputs[key].setEnabled(is_umap)
+                    self.labels[key].setEnabled(is_umap)
+            physics_selector = self.profile_selectors.get("simulation_physics")
+            physics_profile_editable = (
+                physics_selector is None
+                or physics_selector.currentText() != "(default)"
+            )
+            if hasattr(self, 'cb_layout_device'):
+                self.cb_layout_device.setEnabled(
+                    physics_profile_editable
+                    and not is_umap
+                )
+            if "LAYOUT_DEVICE_SELECTION" in self.labels:
+                self.labels["LAYOUT_DEVICE_SELECTION"].setEnabled(
+                    physics_profile_editable
+                    and not is_umap
+                )
+            
+            if hasattr(self, 'spin_thresh') and hasattr(self, 'spin_top'):
+                has_top_edge = self.spin_top.optionalValue() is not None
+                top_edge_enabled = not is_umap
+                thresh_enabled = not is_umap and not has_top_edge
+
+                self.spin_top.setEnabled(top_edge_enabled)
+                self.spin_thresh.setEnabled(thresh_enabled)
+
+                if hasattr(self, 'btn_clear_top_edge'):
+                    self.btn_clear_top_edge.setEnabled(
+                        top_edge_enabled and has_top_edge
+                    )
+
+                if "SIMILARITY_THRESHOLD" in self.labels:
+                    self.labels["SIMILARITY_THRESHOLD"].setEnabled(thresh_enabled)
+                if "TOP_EDGE_PERCENT" in self.labels:
+                    self.labels["TOP_EDGE_PERCENT"].setEnabled(top_edge_enabled)
+
+                disabled_spinbox_style = "QDoubleSpinBox:disabled { background-color: #f0f0f0; color: #888; }"
+                self.spin_thresh.setStyleSheet(
+                    disabled_spinbox_style if not thresh_enabled else ""
+                )
+                self.spin_top.setStyleSheet(
+                    disabled_spinbox_style if not top_edge_enabled else ""
+                )
+
+            if hasattr(self, 'tabs') and self.tabs.count() > 2:
+                if is_umap and self.tabs.currentIndex() == 2:
+                    self.tabs.setCurrentIndex(0)
+                self.tabs.setTabVisible(2, not is_umap)
+                self.tabs.setTabEnabled(2, True)
+            
+            if hasattr(self, 'btn_check'):
+                self.btn_check.setEnabled(has_fasta and has_hdf5)
+            
+            # Keep cache status on one compact line and refresh manifest discovery.
+            self.lbl_cache_tracker.setWordWrap(False) 
+            self.lbl_cache_tracker.setMinimumHeight(0)
+            self.lbl_cache_tracker.setMaximumHeight(30)
+            self._request_cache_discovery()
+
+        def run_statistics(self):
+            import h5py
+            import numpy as np
+            import math
+            import sys
+            
+            fasta_path = os.path.join(
+                self._resolved_directory_input("FASTA_DIR"),
+                self.cb_fasta.currentText(),
+            )
+            hdf5_path = os.path.join(
+                self._resolved_directory_input("HDF5_DIR"),
+                self.cb_hdf5.currentText(),
+            )
+            
+            self.tip_panel.setText("Computing network statistics... This may take a moment for large HDF5 networks.")
+            QApplication.processEvents()
+            
+            try:
+                score_mode = self.cb_score_mode.currentText()
+                norm_mode = self.cb_norm_mode.currentText()
+                
+                with h5py.File(hdf5_path, "r") as hf:
+                    metadata = cache_manifest.validate_network_schema(hf)
+                    is_blast = metadata.network_type == "blast"
+                    from Bio import SeqIO
+                    kept_mask = None
+                    if fasta_path and os.path.exists(fasta_path):
+                        fasta_ids = set()
+                        fasta_headers = set()
+                        for rec in SeqIO.parse(fasta_path, "fasta"):
+                            fasta_ids.add(rec.id)
+                            fasta_headers.add(rec.description)
+                            
+                        raw_headers = hf['headers'][:]
+                        headers = [h.decode('utf-8') if isinstance(h, bytes) else h for h in raw_headers]
+                        
+                        net_headers_set = set(headers)
+                        net_id_set = {h.split()[0] for h in headers}
+                        missing_nodes = [hid for hid in fasta_ids if hid not in net_id_set and hid not in net_headers_set]
+                        if missing_nodes:
+                            raise ValueError(f"FASTA file is NOT a strict subset of the network file. {len(missing_nodes)} sequences are missing from the network.")
+                        
+                        valid_indices = []
+                        for i, h in enumerate(headers):
+                            rec_id = h.split()[0]
+                            if h in fasta_headers or rec_id in fasta_ids:
+                                valid_indices.append(i)
+                                
+                        if len(valid_indices) < len(headers):
+                            kept_mask = np.zeros(len(headers), dtype=bool)
+                            kept_mask[valid_indices] = True
+                    
+                    if is_blast:
+                        raw_scores = hf['score'][:]
+                        sources = hf['i'][:]
+                        targets = hf['j'][:]
+                    else:
+                        sources = hf['i'][:].astype(np.int64)
+                        targets = hf['j'][:].astype(np.int64)
+                        if score_mode == "local":
+                            raw_scores = hf['l_score'][:].astype(np.float32)
+                            align_lens = hf['l_len'][:].astype(np.float32)
+                        else:
+                            raw_scores = hf['g_score'][:].astype(np.float32)
+                            align_lens = hf['g_len'][:].astype(np.float32)
+                            
+                        if 'seq_lens' in hf:
+                            seq_lens = hf['seq_lens'][:]
+                        else:
+                            seq_lens = np.ones(np.max([np.max(sources), np.max(targets)]) + 1)
+                        
+                    if kept_mask is not None:
+                        valid_edges_mask = kept_mask[sources] & kept_mask[targets]
+                        raw_scores = raw_scores[valid_edges_mask]
+                        sources = sources[valid_edges_mask]
+                        targets = targets[valid_edges_mask]
+                        if not is_blast:
+                            align_lens = align_lens[valid_edges_mask]
+                            
+                    if is_blast:
+                        scores = raw_scores.astype(np.float32)
+                    else:
+                        epsilon = 1e-6
+                        if norm_mode == "alignment_length":
+                            denom = align_lens
+                        else:
+                            len_src = seq_lens[sources].astype(np.float32)
+                            len_dst = seq_lens[targets].astype(np.float32)
+                            if norm_mode == "shorter_sequence": denom = np.minimum(len_src, len_dst)
+                            elif norm_mode == "longer_sequence": denom = np.maximum(len_src, len_dst)
+                            elif norm_mode == "average_sequence": denom = (len_src + len_dst) / 2.0
+                            else: denom = align_lens
+                            
+                        denom = np.maximum(denom, epsilon)
+                        scores = (raw_scores / denom).astype(np.float32)
+                
+                if len(scores) == 0:
+                    self.tip_panel.setText("Warning: No valid edges were found in the selected FASTA subset.")
+                    return
+                    
+                max_score = np.max(scores)
+                min_score = np.min(scores)
+                avg_score = np.mean(scores)
+                
+                sorted_scores = np.sort(scores)
+                stored_edges = len(sorted_scores)
+                
+                total_nodes = np.sum(kept_mask) if kept_mask is not None else len(headers)
+                theoretical_max_edges = (total_nodes * (total_nodes - 1)) / 2.0
+                
+                if is_blast:
+                    start_val = int(math.floor(min_score))
+                    limit_step_1 = min(100, int(math.ceil(max_score)))
+                    thresh_low = np.arange(start_val, limit_step_1 + 1, 1)
+                    if max_score > 100:
+                        thresh_high = np.arange(105, int(math.ceil(max_score)) + 5, 5)
+                        thresholds = np.concatenate([thresh_low, thresh_high])
+                    else:
+                        thresholds = thresh_low
+                else:
+                    start_val = math.floor(min_score * 10) / 10.0
+                    thresholds = np.arange(start_val, max_score + 0.1, 0.1)
+                    
+                indices = np.searchsorted(sorted_scores, thresholds, side='left')
+                counts = stored_edges - indices
+                
+                model_name = metadata.model_name
+                
+                lines = []
+                lines.append(f"====== Network Statistics ======")
+                lines.append(f"Network Model: {model_name}")
+                lines.append(f"Fasta Node Subset: {os.path.basename(fasta_path)}")
+                lines.append(f"Total Nodes Processed: {total_nodes}")
+                display_norm = norm_mode.replace('_', ' ').title()
+                lines.append(f"Metric: {'Log10(E-Value)' if is_blast else f'{score_mode.title()} Alignment Score with {display_norm} Normalization'}")
+                lines.append(f"Stored Edges: {stored_edges} (Max possible: {int(theoretical_max_edges)})")
+                lines.append(f"Max: {max_score:.4f} | Min: {min_score:.4f} | Avg: {avg_score:.4f}")
+                lines.append("-" * 40)
+                lines.append(f"{'Threshold':<10} | {'Count':<10} | {'Percentage':<10}")
+                lines.append("-" * 40)
+                
+                for thresh, count in zip(thresholds, counts):
+                    pct = (count / theoretical_max_edges) * 100.0 if theoretical_max_edges > 0 else 0
+                    if is_blast:
+                         lines.append(f"{int(thresh):<10} | {count:<10} | {pct:<9.2f}%")
+                    else:
+                         lines.append(f"{thresh:<10.1f} | {count:<10} | {pct:<9.2f}%")
+                         
+                self.stat_display.setText("\n".join(lines))
+                self.tip_panel.setText("Network statistics computed successfully.")
+
+            except Exception as e:
+                self.tip_panel.setText(f"Error during network statistics calculation: {e}")
+
+        def run_histogram(self):
+            import h5py
+            import numpy as np
+            import math
+            
+            fasta_path = os.path.join(
+                self._resolved_directory_input("FASTA_DIR"),
+                self.cb_fasta.currentText(),
+            )
+            hdf5_path = os.path.join(
+                self._resolved_directory_input("HDF5_DIR"),
+                self.cb_hdf5.currentText(),
+            )
+            
+            self.tip_panel.setText("Computing score distribution... This may take a moment.")
+            QApplication.processEvents()
+            
+            try:
+                score_mode = self.cb_score_mode.currentText()
+                norm_mode = self.cb_norm_mode.currentText()
+                
+                with h5py.File(hdf5_path, "r") as hf:
+                    metadata = cache_manifest.validate_network_schema(hf)
+                    is_blast = metadata.network_type == "blast"
+                    from Bio import SeqIO
+                    kept_mask = None
+                    if fasta_path and os.path.exists(fasta_path):
+                        fasta_ids = set()
+                        fasta_headers = set()
+                        for rec in SeqIO.parse(fasta_path, "fasta"):
+                            fasta_ids.add(rec.id)
+                            fasta_headers.add(rec.description)
+                            
+                        raw_headers = hf['headers'][:]
+                        headers = [h.decode('utf-8') if isinstance(h, bytes) else h for h in raw_headers]
+                        
+                        net_headers_set = set(headers)
+                        net_id_set = {h.split()[0] for h in headers}
+                        missing_nodes = [hid for hid in fasta_ids if hid not in net_id_set and hid not in net_headers_set]
+                        if missing_nodes:
+                            raise ValueError(f"FASTA file is NOT a strict subset of the network file. {len(missing_nodes)} sequences are missing from the network.")
+                        
+                        valid_indices = []
+                        for i, h in enumerate(headers):
+                            rec_id = h.split()[0]
+                            if h in fasta_headers or rec_id in fasta_ids:
+                                valid_indices.append(i)
+                                
+                        if len(valid_indices) < len(headers):
+                            kept_mask = np.zeros(len(headers), dtype=bool)
+                            kept_mask[valid_indices] = True
+                    
+                    if is_blast:
+                        raw_scores = hf['score'][:]
+                        sources = hf['i'][:]
+                        targets = hf['j'][:]
+                    else:
+                        sources = hf['i'][:].astype(np.int64)
+                        targets = hf['j'][:].astype(np.int64)
+                        if score_mode == "local":
+                            raw_scores = hf['l_score'][:].astype(np.float32)
+                            align_lens = hf['l_len'][:].astype(np.float32)
+                        else:
+                            raw_scores = hf['g_score'][:].astype(np.float32)
+                            align_lens = hf['g_len'][:].astype(np.float32)
+                            
+                        if 'seq_lens' in hf:
+                            seq_lens = hf['seq_lens'][:]
+                        else:
+                            seq_lens = np.ones(np.max([np.max(sources), np.max(targets)]) + 1)
+                        
+                    if kept_mask is not None:
+                        valid_edges_mask = kept_mask[sources] & kept_mask[targets]
+                        raw_scores = raw_scores[valid_edges_mask]
+                        sources = sources[valid_edges_mask]
+                        targets = targets[valid_edges_mask]
+                        if not is_blast:
+                            align_lens = align_lens[valid_edges_mask]
+                            
+                    if is_blast:
+                        scores = raw_scores.astype(np.float32)
+                    else:
+                        epsilon = 1e-6
+                        if norm_mode == "alignment_length":
+                            denom = align_lens
+                        else:
+                            len_src = seq_lens[sources].astype(np.float32)
+                            len_dst = seq_lens[targets].astype(np.float32)
+                            if norm_mode == "shorter_sequence": denom = np.minimum(len_src, len_dst)
+                            elif norm_mode == "longer_sequence": denom = np.maximum(len_src, len_dst)
+                            elif norm_mode == "average_sequence": denom = (len_src + len_dst) / 2.0
+                            else: denom = align_lens
+                            
+                        denom = np.maximum(denom, epsilon)
+                        scores = (raw_scores / denom).astype(np.float32)
+                
+                if len(scores) == 0:
+                    self.tip_panel.setText("Warning: No valid edges were found in the selected FASTA subset.")
+                    return
+                
+                # Determine threshold based on top edge % override
+                is_umap = hasattr(self, 'check_umap') and self.check_umap.isChecked()
+                top_percent = self.spin_top.optionalValue()
+                    
+                if top_percent is not None and not is_umap:
+                    total_active_nodes = np.sum(kept_mask) if kept_mask is not None else len(headers)
+                    theoretical_max_edges = (total_active_nodes * (total_active_nodes - 1)) / 2.0
+                    k = int(theoretical_max_edges * (top_percent / 100.0))
+                    if len(scores) == 0:
+                        threshold = 0.0
+                    else:
+                        k = max(1, min(k, len(scores)))
+                        sorted_all = np.sort(scores)[::-1]
+                        threshold = sorted_all[k - 1]
+                else:
+                    threshold = self.spin_thresh.optionalValue()
+                    if threshold is None:
+                        threshold = 0.0
+                
+                self.tip_panel.setText("Displaying score histogram...")
+                QApplication.processEvents()
+                
+                print("Displaying Score Histogram... (Close histogram to continue)")
+                figure = build_score_histogram_figure(
+                    scores,
+                    threshold,
+                    is_evalue=is_blast,
+                    norm_mode=norm_mode,
+                )
+                dialog = ScoreHistogramDialog(figure, self)
+                try:
+                    dialog.exec()
+                finally:
+                    dialog.release_figure()
+                    dialog.deleteLater()
+                
+                self.tip_panel.setText("Histogram displayed successfully.")
+
+            except Exception as e:
+                self.tip_panel.setText(f"Error during histogram generation: {e}")
+
+        def create_visuals_tab(self):
+            tab = QWidget()
+            tab_layout = QVBoxLayout(tab)
+            tab_layout.setContentsMargins(
+                CONFIG_TAB_CONTENT_MARGIN,
+                CONFIG_TAB_CONTENT_MARGIN,
+                CONFIG_TAB_CONTENT_MARGIN,
+                CONFIG_TAB_CONTENT_MARGIN,
+            )
+            tab_layout.setSpacing(CONFIG_TAB_ROW_SPACING)
+            profile_widget = QWidget()
+            profile_widget.setSizePolicy(
+                QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum
+            )
+            profile_layout = QFormLayout(profile_widget)
+            profile_layout.setContentsMargins(0, 0, 0, 0)
+            profile_layout.setHorizontalSpacing(CONFIG_FIELD_HORIZONTAL_SPACING)
+            self._add_profile_selector("visual_effects", profile_layout)
+            tab_layout.addWidget(profile_widget)
+            self._add_profile_separator("visual_effects", tab_layout)
+            content = QWidget()
+            main_layout = QVBoxLayout(content)
+            main_layout.setContentsMargins(0, 0, 0, 0)
+            tab_layout.addWidget(content, 1)
+            self.profile_content_widgets["visual_effects"] = content
+            visual_grid = QGridLayout()
+            visual_grid.setHorizontalSpacing(CONFIG_FIELD_HORIZONTAL_SPACING)
+            visual_grid.setVerticalSpacing(12)
+            visual_grid.setColumnMinimumWidth(0, CONFIG_FIELD_LABEL_WIDTH)
+            visual_grid.setColumnStretch(1, 1)
+            visual_grid.setColumnMinimumWidth(2, 16)
+            visual_grid.setColumnStretch(4, 1)
+            visual_row = 0
+            
+            # 1. Sliders Setup
+            slider_settings = [
+                {"key": "NODE_SIZE", "type": "int", "min": 1, "max": 20, "default": 10},
+                {"key": "EDGE_WIDTH", "type": "float", "min": 0.1, "max": 3.0, "scale": 10.0, "decimals": 1, "default": 1.0},
+                {"key": "NODE_BOUNDARY_WIDTH", "type": "float", "min": 0.0, "max": 2.0, "scale": 10.0, "decimals": 1, "default": 0.5},
+                {"key": "EDGE_ALPHA", "type": "float", "min": 0.0, "max": 1.0, "scale": 100.0, "decimals": 2, "default": 0.1},
+            ]
+            
+            for s in slider_settings:
+                key = s["key"]
+                display_name = key.replace('_', ' ').title()
+                if key == "EDGE_ALPHA": display_name = "Edge Opacity"
+                
+                val_raw = globals().get(key, s["default"])
+                
+                ui_element = QWidget()
+                ui_element.setObjectName("wrapper")
+                h_lay = QHBoxLayout(ui_element)
+                h_lay.setContentsMargins(0, 0, 0, 0)
+                
+                sl = NoScrollSlider(Qt.Orientation.Horizontal)
+                
+                if s["type"] == "int":
+                    try: val = int(val_raw)
+                    except: val = s["default"]
+                    
+                    sl.setMinimum(s["min"])
+                    sl.setMaximum(s["max"])
+                    
+                    box = NoScrollSpinBox()
+                    box.setRange(-999999, 999999)
+                    # Match the double spinbox width so every slider row lines up.
+                    box.setFixedWidth(70)
+                    
+                    sl.setValue(val)
+                    box.setValue(val)
+                    
+                    sl.valueChanged.connect(box.setValue)
+                    box.valueChanged.connect(sl.setValue)
+                    
+                else: 
+                    try: val = float(val_raw)
+                    except: val = s["default"]
+                    
+                    sc = s["scale"]
+                    sl.setMinimum(int(s["min"] * sc))
+                    sl.setMaximum(int(s["max"] * sc))
+                    
+                    box = NoScrollDoubleSpinBox()
+                    box.setRange(-999999.0, 999999.0)
+                    box.setDecimals(s["decimals"])
+                    box.setFixedWidth(70)
+                    
+                    sl.setValue(int(val * sc))
+                    box.setValue(val)
+                    
+                    sl.valueChanged.connect(lambda v, b=box, scale=sc: b.setValue(v / scale))
+                    box.valueChanged.connect(lambda v, s=sl, scale=sc: s.setValue(int(v * scale)))
+
+                sl.setTickPosition(QSlider.TickPosition.TicksBelow)
+                sl.setTickInterval(1 if s["type"] == "int" else 10)
+
+                h_lay.addWidget(sl)
+                h_lay.addWidget(box)
+
+                lbl = QLabel(f"{display_name}:")
+                visual_grid.addWidget(lbl, visual_row, 0)
+                visual_grid.addWidget(ui_element, visual_row, 1, 1, 4)
+                visual_row += 1
+                self.labels[key] = lbl
+                self.inputs[key] = box
+
+            # 2. Colors Setup
+            # TEXT_COLOR is gone with the HUD text it coloured. INITIAL_NODE_COLOR
+            # stays: Settings republishes it as NEIGHBOR_COLOR, which is the key
+            # the Unity client actually reads.
+            color_keys = ["INITIAL_NODE_COLOR", "HOVER_COLOR", "CONNECTED_NODE_COLOR", "EDGE_COLOR", "NODE_BOUNDARY_COLOR"]
+            self.visual_defaults = VISUAL_PROFILE_DEFAULTS
+
+            color_row_start = visual_row
+
+            for index, key in enumerate(color_keys):
+                if key == "HOVER_COLOR": display_name = "Highlight Color"
+                else: display_name = key.replace('_', ' ').title()
+                
+                color_container = QWidget()
+                color_container.setObjectName("wrapper")
+                h_layout = QHBoxLayout(color_container)
+                h_layout.setContentsMargins(0, 0, 0, 0)
+                
+                val = globals().get(key, self.visual_defaults[key])
+                
+                swatch = QLabel()
+                swatch.setFixedSize(20, 20)
+                swatch.setStyleSheet(f"background-color: {val}; border: 1px solid gray; border-radius: 3px;")
+                
+                le = QLineEdit("" if val in [None, "None"] else str(val))
+
+                def update_color_swatch(value, color_swatch=swatch):
+                    color = QColor(str(value).strip())
+                    if color.isValid():
+                        color_swatch.setStyleSheet(
+                            f"background-color: {color.name()}; border: 1px solid gray; border-radius: 3px;"
+                        )
+
+                le.textChanged.connect(update_color_swatch)
+                
+                btn = QPushButton("Pick")
+                btn.setFixedWidth(50)
+                
+                def pick_color(checked, line_edit=le, color_swatch=swatch):
+                    initial = line_edit.text()
+                    color = QColorDialog.getColor(QColor(initial) if initial else QColor("white"), self, "Select Color")
+                    if color.isValid():
+                        hex_val = color.name()
+                        line_edit.setText(hex_val)
+                        color_swatch.setStyleSheet(f"background-color: {hex_val}; border: 1px solid gray; border-radius: 3px;")
+                
+                btn.clicked.connect(pick_color)
+                
+                h_layout.addWidget(swatch)
+                h_layout.addWidget(le)
+                h_layout.addWidget(btn)
+                
+                lbl = QLabel(f"{display_name}:")
+                row = color_row_start + index // 2
+                column = 0 if index % 2 == 0 else 3
+                visual_grid.addWidget(lbl, row, column)
+                visual_grid.addWidget(color_container, row, column + 1)
+                self.labels[key] = lbl
+                self.inputs[key] = le
+                self.color_swatches[key] = swatch
+
+            visual_row = color_row_start + (len(color_keys) + 1) // 2
+
+            # --- Low Resource Mode Toggle ---
+            main_layout.addLayout(self._responsive_grid_rows(visual_grid, "visual"))
+
+            # --- Unity bridge -------------------------------------------------
+            # These have no desktop counterpart, but they are display settings
+            # like the ones above, so they live here rather than on a tab of
+            # their own.
+            self._add_padded_separator(main_layout, "vrBridgeSeparator")
+            bridge_heading = QLabel("Unity Bridge")
+            bridge_heading.setStyleSheet("font-weight: bold;")
+            main_layout.addWidget(bridge_heading)
+            bridge_note = QLabel(
+                "The shipped Unity build has 127.0.0.1:5005 baked into its "
+                "scene, so changing the endpoint also means rebuilding the client."
+            )
+            bridge_note.setWordWrap(True)
+            bridge_note.setStyleSheet("color: #555; font-style: italic;")
+            main_layout.addWidget(bridge_note)
+            main_layout.addWidget(self._build_bridge_fields())
+
+            main_layout.addStretch()
+
+            self.profile_labels["visual_effects"].setFixedWidth(
+                CONFIG_FIELD_LABEL_WIDTH
+            )
+            
+            self._add_scroll_tab(tab, "Visual Effects")
+            
+        def create_physics_tab(self):
+            tab = QWidget()
+            tab_layout = QVBoxLayout(tab)
+            tab_layout.setContentsMargins(
+                CONFIG_TAB_CONTENT_MARGIN,
+                CONFIG_TAB_CONTENT_MARGIN,
+                CONFIG_TAB_CONTENT_MARGIN,
+                CONFIG_TAB_CONTENT_MARGIN,
+            )
+            tab_layout.setSpacing(CONFIG_TAB_ROW_SPACING)
+            profile_widget = QWidget()
+            profile_widget.setSizePolicy(
+                QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Maximum
+            )
+            profile_layout = QFormLayout(profile_widget)
+            profile_layout.setContentsMargins(0, 0, 0, 0)
+            profile_layout.setHorizontalSpacing(CONFIG_FIELD_HORIZONTAL_SPACING)
+            self._add_profile_selector("simulation_physics", profile_layout)
+            tab_layout.addWidget(profile_widget)
+            self._add_profile_separator("simulation_physics", tab_layout)
+            content = QWidget()
+            main_layout = QVBoxLayout(content)
+            main_layout.setContentsMargins(0, 0, 0, 0)
+            tab_layout.addWidget(content, 1)
+            self.profile_content_widgets["simulation_physics"] = content
+            form_layout = QFormLayout()
+            field_label_gap = CONFIG_FIELD_HORIZONTAL_SPACING
+            paired_group_padding = 24
+            form_layout.setHorizontalSpacing(field_label_gap)
+            form_layout.setVerticalSpacing(12)
+            
+            self.physics_defaults = PHYSICS_PROFILE_DEFAULTS
+            
+            cb_layout_device = NoScrollComboBox()
+            for display_name, specification in Hardware_Utils.device_selection_options():
+                cb_layout_device.addItem(display_name, specification)
+            saved_device = Hardware_Utils.normalize_device_selection(
+                globals().get("LAYOUT_DEVICE_SELECTION", "auto")
+            )
+            saved_index = cb_layout_device.findData(saved_device)
+            if saved_index < 0:
+                cb_layout_device.addItem(
+                    f"Unavailable saved device [{saved_device}]", saved_device
+                )
+                saved_index = cb_layout_device.count() - 1
+            cb_layout_device.setCurrentIndex(saved_index)
+            lbl_layout_device = QLabel("Layout Device:")
+            lbl_layout_device.setFixedWidth(CONFIG_FIELD_LABEL_WIDTH)
+            form_layout.addRow(lbl_layout_device, cb_layout_device)
+            self.inputs["LAYOUT_DEVICE_SELECTION"] = cb_layout_device
+            self.labels["LAYOUT_DEVICE_SELECTION"] = lbl_layout_device
+            self.cb_layout_device = cb_layout_device
+            
+            # --- Physics sliders ---
+            slider_settings = [
+                {"key": "SPRING_K", "type": "float", "min": 1.0, "max": 20.0, "scale": 10.0, "decimals": 1, "default": 5.0, "tick": 10},
+                {"key": "COULOMB_K", "type": "float", "min": 1.0, "max": 30.0, "scale": 10.0, "decimals": 1, "default": 10.0, "tick": 10},
+                {"key": "COULOMB_CUTOFF", "type": "float", "min": 1.0, "max": 100.0, "scale": 10.0, "decimals": 1, "default": 30.0, "tick": 100},
+                {"key": "DAMPING", "type": "float", "min": 0.1, "max": 2.0, "scale": 100.0, "decimals": 2, "default": 0.9, "tick": 10}
+            ]
+
+            physics_slider_controls = {}
+            for s in slider_settings:
+                key = s["key"]
+                display_name = key.replace('_', ' ').title()
+                if key == "COULOMB_K": display_name = "Repulsion Constant"
+                elif key == "COULOMB_CUTOFF": display_name = "Max Repulsion Cutoff"
+                elif key == "SPRING_K": display_name = "Spring Constant"
+                elif key == "DAMPING": display_name = "Damping Coefficient"
+                    
+                val_raw = globals().get(key, s["default"])
+                
+                ui_element = QWidget()
+                ui_element.setObjectName("wrapper")
+                h_lay = QHBoxLayout(ui_element)
+                h_lay.setContentsMargins(0, 0, 0, 0)
+                
+                sl = NoScrollSlider(Qt.Orientation.Horizontal)
+                
+                try: val = float(val_raw)
+                except: val = s["default"]
+                
+                sc = s["scale"]
+                sl.setMinimum(int(s["min"] * sc))
+                sl.setMaximum(int(s["max"] * sc))
+                
+                box = NoScrollDoubleSpinBox()
+                box.setRange(-999999.0, 999999.0)
+                box.setDecimals(s["decimals"])
+                box.setFixedWidth(70)
+                
+                sl.setValue(int(val * sc))
+                box.setValue(val)
+                
+                sl.valueChanged.connect(lambda v, b=box, scale=sc: b.setValue(v / scale))
+                box.valueChanged.connect(lambda v, s=sl, scale=sc: s.setValue(int(v * scale)))
+
+                sl.setTickPosition(QSlider.TickPosition.TicksBelow)
+                sl.setTickInterval(s["tick"])
+
+                h_lay.addWidget(sl)
+                h_lay.addWidget(box)
+
+                lbl = QLabel(f"{display_name}:")
+                physics_slider_controls[key] = (lbl, ui_element)
+                self.labels[key] = lbl
+                self.inputs[key] = box
+
+            # All paired slider rows share one grid. A grid per row sizes its columns
+            # independently, so rows whose right-hand labels differ in width end up a
+            # few pixels out of step with each other.
+            slider_pair_grid = QGridLayout()
+            slider_pair_grid.setHorizontalSpacing(0)
+            slider_pair_grid.setVerticalSpacing(12)
+            slider_pair_grid.setColumnMinimumWidth(0, CONFIG_FIELD_LABEL_WIDTH)
+            slider_pair_grid.setColumnMinimumWidth(1, field_label_gap)
+            slider_pair_grid.setColumnMinimumWidth(3, paired_group_padding)
+            slider_pair_grid.setColumnMinimumWidth(5, field_label_gap)
+            slider_pair_grid.setColumnStretch(2, 1)
+            slider_pair_grid.setColumnStretch(6, 1)
+
+            def add_paired_slider_row(left_key, right_key):
+                row = slider_pair_grid.rowCount()
+                left_label, left_control = physics_slider_controls[left_key]
+                right_label, right_control = physics_slider_controls[right_key]
+                left_label.setFixedWidth(CONFIG_FIELD_LABEL_WIDTH)
+
+                slider_pair_grid.addWidget(left_label, row, 0)
+                slider_pair_grid.addWidget(left_control, row, 2)
+                slider_pair_grid.addWidget(right_label, row, 4)
+                slider_pair_grid.addWidget(right_control, row, 6)
+
+            add_paired_slider_row("SPRING_K", "COULOMB_K")
+            add_paired_slider_row("COULOMB_CUTOFF", "DAMPING")
+            form_layout.addRow(self._responsive_grid_rows(slider_pair_grid, "physicsSliders"))
+
+            # --- 3. Integration and convergence settings (two columns) ---
+            convergence_grid = QGridLayout()
+            convergence_grid.setHorizontalSpacing(0)
+            convergence_grid.setVerticalSpacing(12)
+            convergence_grid.setColumnMinimumWidth(0, CONFIG_FIELD_LABEL_WIDTH)
+            convergence_grid.setColumnMinimumWidth(1, field_label_gap)
+            convergence_grid.setColumnMinimumWidth(3, paired_group_padding)
+            convergence_grid.setColumnMinimumWidth(5, field_label_gap)
+            convergence_grid.setColumnStretch(2, 1)
+            convergence_grid.setColumnStretch(6, 1)
+
+            lbl_dt = QLabel("Step Size:")
+            le_dt = QLineEdit(str(globals().get("DT", 0.005)))
+            self.inputs["DT"] = le_dt
+            self.labels["DT"] = lbl_dt
+
+            lbl_steps = QLabel("Max Steps:")
+            le_steps = QLineEdit(str(globals().get("MAX_STEPS", 10000)))
+            self.inputs["MAX_STEPS"] = le_steps
+            self.labels["MAX_STEPS"] = lbl_steps
+
+            convergence_grid.addWidget(lbl_dt, 0, 0)
+            convergence_grid.addWidget(le_dt, 0, 2)
+            convergence_grid.addWidget(lbl_steps, 0, 4)
+            convergence_grid.addWidget(le_steps, 0, 6)
+
+            lbl_rmsd = QLabel("RMSD Threshold:")
+            le_rmsd = QLineEdit(str(globals().get("RMSD_THRESHOLD", 0.005)))
+            self.inputs["RMSD_THRESHOLD"] = le_rmsd
+            self.labels["RMSD_THRESHOLD"] = lbl_rmsd
+
+            lbl_drop = QLabel("Min % Drop Threshold:")
+            le_drop = QLineEdit(str(globals().get("PERCENTAGE_DROP_THRESHOLD", 0.1)))
+            self.inputs["PERCENTAGE_DROP_THRESHOLD"] = le_drop
+            self.labels["PERCENTAGE_DROP_THRESHOLD"] = lbl_drop
+
+            convergence_grid.addWidget(lbl_rmsd, 1, 0)
+            convergence_grid.addWidget(le_rmsd, 1, 2)
+            convergence_grid.addWidget(lbl_drop, 1, 4)
+            convergence_grid.addWidget(le_drop, 1, 6)
+            form_layout.addRow(self._responsive_grid_rows(convergence_grid, "convergence"))
+
+            # --- 4. RMSD Window logscale slider + spinbox (10 to 1000) ---
+            import math
+            sl_window = NoScrollSlider(Qt.Orientation.Horizontal)
+            sl_window.setMinimum(0)
+            sl_window.setMaximum(100)
+            sl_window.setTickPosition(QSlider.TickPosition.TicksBelow)
+            sl_window.setTickInterval(10)
+
+            box_window = NoScrollSpinBox()
+            box_window.setRange(10, 1000)
+            box_window.setFixedWidth(70)
+            
+            # Mapping functions
+            def slider_to_val(x):
+                return int(round(10.0 ** (1.0 + 2.0 * x / 100.0)))
+                
+            def val_to_slider(v):
+                if v < 10: v = 10
+                if v > 1000: v = 1000
+                return int(round(100.0 * (math.log10(v) - 1.0) / 2.0))
+                
+            def on_slider_changed(x):
+                val = slider_to_val(x)
+                box_window.blockSignals(True)
+                box_window.setValue(val)
+                box_window.blockSignals(False)
+                
+            def on_box_changed(val):
+                x = val_to_slider(val)
+                sl_window.blockSignals(True)
+                sl_window.setValue(x)
+                sl_window.blockSignals(False)
+                
+            sl_window.valueChanged.connect(on_slider_changed)
+            box_window.valueChanged.connect(on_box_changed)
+            
+            initial_window = int(globals().get("RMSD_WINDOW", 50))
+            box_window.setValue(initial_window)
+            sl_window.setValue(val_to_slider(initial_window))
+            
+            ui_window = QWidget()
+            ui_window.setObjectName("wrapper")
+            h_lay_window = QHBoxLayout(ui_window)
+            h_lay_window.setContentsMargins(0, 0, 0, 0)
+            h_lay_window.addWidget(sl_window)
+            h_lay_window.addWidget(box_window)
+            
+            lbl_window = QLabel("RMSD Window:")
+            lbl_window.setFixedWidth(CONFIG_FIELD_LABEL_WIDTH)
+            form_layout.addRow(lbl_window, ui_window)
+            self.inputs["RMSD_WINDOW"] = box_window
+            self.labels["RMSD_WINDOW"] = lbl_window
+            
+            # --- 5. Packing controls ---
+            lbl_prog = QLabel("Progressive Annealing:")
+            lbl_prog.setFixedWidth(CONFIG_FIELD_LABEL_WIDTH)
+            cb_prog = QPushButton()
+            cb_prog.setCheckable(True)
+            cb_prog.setFixedSize(60, 28)
+            prog_field = QWidget()
+            prog_field.setObjectName("wrapper")
+            prog_field.setMinimumHeight(cb_prog.height())
+            prog_field_layout = QHBoxLayout(prog_field)
+            prog_field_layout.setContentsMargins(0, 0, 0, 0)
+            prog_field_layout.addWidget(cb_prog)
+            prog_field_layout.addStretch()
+            prog_field.setFixedWidth(cb_prog.width())
+            self.inputs["ENABLE_PROGRESSIVE_SIMULATION"] = cb_prog
+            self.labels["ENABLE_PROGRESSIVE_SIMULATION"] = lbl_prog
+            
+            def switch_toggle_style(checked, btn=cb_prog):
+                if checked:
+                    btn.setText("ON")
+                    btn.setStyleSheet("QPushButton { background-color: #4CAF50; color: white; border-radius: 14px; font-weight: bold; border: 1px solid #388E3C; }")
+                else:
+                    btn.setText("OFF")
+                    btn.setStyleSheet("QPushButton { background-color: #e0e0e0; color: #333; border-radius: 14px; font-weight: bold; border: 1px solid #bdbdbd; }")
+            
+            cb_prog.toggled.connect(switch_toggle_style)
+            initial_state = bool(globals().get("ENABLE_PROGRESSIVE_SIMULATION", False))
+            cb_prog.setChecked(initial_state)
+            switch_toggle_style(initial_state)
+            
+            # Packing Geometry is deliberately absent. Square/Circle tiles a
+            # flat poster; in three dimensions calculate_layout branches to
+            # pack_components_to_shells, which arranges components on
+            # concentric spherical shells and takes no geometry argument.
+            # Packing Grid Size Slider (Logarithmic Scale)
+            pgs_widget = QWidget()
+            pgs_widget.setObjectName("wrapper")
+            pgs_layout = QHBoxLayout(pgs_widget)
+            pgs_layout.setContentsMargins(0, 0, 0, 0)
+            
+            sl_pgs = NoScrollSlider(Qt.Orientation.Horizontal)
+            sl_pgs.setMinimum(0)
+            sl_pgs.setMaximum(1000)
+            sl_pgs.setTickPosition(QSlider.TickPosition.TicksBelow)
+            sl_pgs.setTickInterval(100)
+
+            box_pgs = NoScrollDoubleSpinBox()
+            box_pgs.setRange(1.0, 200.0)
+            box_pgs.setDecimals(1)
+            box_pgs.setFixedWidth(70)
+            pgs_widget.setMinimumHeight(box_pgs.minimumHeight())
+            
+            import math
+            val_pgs = globals().get("PACKING_GRID_SIZE", 20.0)
+            try: val_pgs = float(val_pgs)
+            except: val_pgs = 20.0
+            
+            box_pgs.setValue(val_pgs)
+            pct = math.log(max(1.0, min(val_pgs, 200.0))) / math.log(200.0)
+            sl_pgs.setValue(int(pct * 1000.0))
+            
+            def update_from_slider(x):
+                box_pgs.blockSignals(True)
+                pct_val = x / 1000.0
+                val = math.exp(pct_val * math.log(200.0))
+                box_pgs.setValue(round(val, 1))
+                box_pgs.blockSignals(False)
+                
+            def update_from_box(v):
+                sl_pgs.blockSignals(True)
+                v_clamped = max(1.0, min(v, 200.0))
+                pct_val = math.log(v_clamped) / math.log(200.0)
+                sl_pgs.setValue(int(pct_val * 1000.0))
+                sl_pgs.blockSignals(False)
+                
+            sl_pgs.valueChanged.connect(update_from_slider)
+            box_pgs.valueChanged.connect(update_from_box)
+            
+            pgs_layout.addWidget(sl_pgs)
+            pgs_layout.addWidget(box_pgs)
+            
+            lbl_pgs = QLabel("Packing Grid Size:")
+            self.inputs["PACKING_GRID_SIZE"] = box_pgs
+            self.labels["PACKING_GRID_SIZE"] = lbl_pgs
+
+            packing_controls_grid = QGridLayout()
+            packing_controls_grid.setHorizontalSpacing(0)
+            packing_controls_grid.setVerticalSpacing(12)
+            packing_controls_grid.setColumnMinimumWidth(1, field_label_gap)
+            packing_controls_grid.setColumnMinimumWidth(3, paired_group_padding)
+            packing_controls_grid.setColumnMinimumWidth(5, field_label_gap)
+            packing_controls_grid.setColumnMinimumWidth(7, paired_group_padding)
+            packing_controls_grid.setColumnMinimumWidth(9, field_label_gap)
+            packing_controls_grid.setColumnStretch(10, 1)
+            packing_controls_grid.addWidget(lbl_prog, 0, 0)
+            packing_controls_grid.addWidget(prog_field, 0, 2)
+            packing_controls_grid.addWidget(lbl_pgs, 0, 8)
+            packing_controls_grid.addWidget(pgs_widget, 0, 10)
+            packing_controls_grid.setRowMinimumHeight(0, cb_prog.height())
+            form_layout.addRow(self._responsive_grid_rows(
+                packing_controls_grid, "packing", trailing=True
+            ))
+
+            paired_left_labels = (lbl_dt, lbl_rmsd)
+            paired_right_labels = (
+                physics_slider_controls["COULOMB_K"][0],
+                physics_slider_controls["DAMPING"][0],
+                lbl_steps,
+                lbl_drop,
+            )
+            for paired_label in paired_left_labels:
+                paired_label.setFixedWidth(CONFIG_FIELD_LABEL_WIDTH)
+            right_label_width = max(
+                label.fontMetrics().horizontalAdvance(label.text())
+                for label in paired_right_labels
+            )
+            for paired_label in paired_right_labels:
+                paired_label.setFixedWidth(right_label_width)
+            
+            main_layout.addLayout(form_layout)
+            main_layout.addStretch()
+ 
+            self._add_scroll_tab(tab, "Simulation && Physics")
+            
+        def _build_bridge_fields(self):
+            """Host, port, scale, edge budget and the Unity build location."""
+            content = QWidget()
+            form = QFormLayout(content)
+            form.setContentsMargins(0, 0, 0, 0)
+            form.setHorizontalSpacing(CONFIG_FIELD_HORIZONTAL_SPACING)
+            form.setSpacing(CONFIG_TAB_ROW_SPACING)
+
+            def register(key, label_text, widget, row_widget=None):
+                label = QLabel(label_text)
+                label.setFixedWidth(CONFIG_FIELD_LABEL_WIDTH)
+                self.labels[key] = label
+                self.inputs[key] = widget
+                form.addRow(label, row_widget if row_widget is not None else widget)
+                return widget
+
+            host = QLineEdit(str(globals().get("VR_HOST", "127.0.0.1")))
+            register("VR_HOST", "Unity Host:", host)
+
+            port = NoScrollSpinBox()
+            port.setRange(1, 65535)
+            port.setValue(int(globals().get("VR_PORT", 5005) or 5005))
+            register("VR_PORT", "Unity Port:", port)
+
+            scale = NoScrollDoubleSpinBox()
+            scale.setDecimals(3)
+            scale.setRange(0.001, 1000.0)
+            scale.setSingleStep(0.1)
+            scale.setValue(float(globals().get("DISTANCE_SCALE", 1.0) or 1.0))
+            register("DISTANCE_SCALE", "Distance Scale:", scale)
+
+            filtering = QCheckBox()
+            filtering.setChecked(bool(globals().get("ENABLE_EDGE_FILTERING", True)))
+            register("ENABLE_EDGE_FILTERING", "Limit Rendered Edges:", filtering)
+
+            budget = NoScrollSpinBox()
+            budget.setRange(0, 100_000_000)
+            budget.setValue(int(globals().get("MAX_RENDER_EDGES", 500000) or 0))
+            register("MAX_RENDER_EDGES", "Max Rendered Edges:", budget)
+
+            def gate_budget(enabled, field=budget, label=self.labels["MAX_RENDER_EDGES"]):
+                field.setEnabled(enabled)
+                label.setEnabled(enabled)
+
+            filtering.toggled.connect(gate_budget)
+            gate_budget(filtering.isChecked())
+
+            app_row = QWidget()
+            app_layout = QHBoxLayout(app_row)
+            app_layout.setContentsMargins(0, 0, 0, 0)
+            app_dir = QLineEdit(str(globals().get("VR_APP_DIR", "VR_App")))
+            browse = QPushButton("...")
+            browse.setFixedWidth(36)
+
+            def choose_app_dir(_checked=False, field=app_dir):
+                start = field.text().strip() or str(PROJECT_ROOT)
+                if not os.path.isabs(start):
+                    start = os.path.join(str(PROJECT_ROOT), start)
+                chosen = QFileDialog.getExistingDirectory(
+                    self, "Unity Build Directory", start
+                )
+                if chosen:
+                    try:
+                        relative = os.path.relpath(chosen, str(PROJECT_ROOT))
+                    except ValueError:
+                        relative = chosen
+                    field.setText(chosen if relative.startswith("..") else relative)
+
+            browse.clicked.connect(choose_app_dir)
+            app_layout.addWidget(app_dir, 1)
+            app_layout.addWidget(browse)
+            register("VR_APP_DIR", "Unity Build:", app_dir, row_widget=app_row)
+
+            return content
+
+        def create_directories_tab(self):
+            tab = QWidget()
+            layout = QFormLayout(tab)
+            layout.setContentsMargins(
+                CONFIG_TAB_CONTENT_MARGIN,
+                CONFIG_TAB_CONTENT_MARGIN,
+                CONFIG_TAB_CONTENT_MARGIN,
+                CONFIG_TAB_CONTENT_MARGIN,
+            )
+            layout.setHorizontalSpacing(CONFIG_FIELD_HORIZONTAL_SPACING)
+            layout.setVerticalSpacing(CONFIG_TAB_ROW_SPACING)
+            self._add_profile_selector("directories", layout)
+
+            self.directory_open_buttons = {}
+
+            def add_open_folder_button(line_edit, key):
+                button = QPushButton("📂")
+                button.setFixedWidth(30)
+                button.setToolTip("Open Folder")
+                button.setEnabled(bool(line_edit.text().strip()))
+
+                def open_selected_folder(checked=False):
+                    raw_path = line_edit.text().strip()
+                    if not raw_path:
+                        return
+                    folder = self._absolute_project_path(raw_path)
+                    folder.mkdir(parents=True, exist_ok=True)
+                    QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder)))
+
+                button.clicked.connect(open_selected_folder)
+                line_edit.textChanged.connect(
+                    lambda text, target=button: target.setEnabled(bool(text.strip()))
+                )
+                self.directory_open_buttons[key] = button
+                return button
+
+            saved_config_container = QWidget()
+            saved_config_container.setObjectName("wrapper")
+            saved_config_layout = QHBoxLayout(saved_config_container)
+            saved_config_layout.setContentsMargins(0, 0, 0, 0)
+            saved_config_input = QLineEdit(str(globals().get("SAVED_CONFIG_DIR", SAVED_CONFIG_DIR)))
+            saved_config_open_button = add_open_folder_button(
+                saved_config_input, "SAVED_CONFIG_DIR"
+            )
+            saved_config_button = QPushButton("Browse...")
+            saved_config_layout.addWidget(saved_config_input)
+            saved_config_layout.addWidget(saved_config_open_button)
+            saved_config_layout.addWidget(saved_config_button)
+            layout.addRow("Saved Config Directory:", saved_config_container)
+            self.inputs["SAVED_CONFIG_DIR"] = saved_config_input
+            self.labels["SAVED_CONFIG_DIR"] = layout.labelForField(saved_config_container)
+            self.labels["SAVED_CONFIG_DIR"].setFixedWidth(CONFIG_FIELD_LABEL_WIDTH)
+
+            def browse_saved_config_directory(checked=False):
+                folder = QFileDialog.getExistingDirectory(
+                    self,
+                    "Select Saved Config Directory",
+                    str(self._saved_config_root()),
+                )
+                if folder:
+                    saved_config_input.setText(os.path.normpath(folder))
+                    self._saved_config_directory_committed()
+
+            saved_config_button.clicked.connect(browse_saved_config_directory)
+            saved_config_input.editingFinished.connect(self._saved_config_directory_committed)
+            self._add_profile_separator("directories", layout)
+
+            directory_profile_controls = []
+            self.profile_content_widgets["directories"] = directory_profile_controls
+            
+            keys = [
+                # Reusable roots
+                "INPUT_FILE_DIR", "CACHE_FILE_DIR", "ANALYSIS_RESULT_DIR",
+                # Input files
+                "FASTA_DIR", "MSA_DIR", "HDF5_DIR", "METADATA_DIR",
+                "HEADER_LIST_DIR",
+                # Cache files
+                "SAVED_LAYOUT_DIR", "SETTING_EXPORT_DIR",
+            ]
+            
+            for key in keys:
+                container = QWidget()
+                container.setObjectName("wrapper")
+                h_lay = QHBoxLayout(container)
+                h_lay.setContentsMargins(0, 0, 0, 0)
+                
+                val = DIRECTORY_PROFILE_DEFAULTS.get(key, globals().get(key, ""))
+                le = QLineEdit("" if val in [None, "None"] else str(val))
+                open_button = add_open_folder_button(le, key)
+                btn = QPushButton("Browse...")
+                
+                def browse_dir(checked, line_edit=le):
+                    starting_path = (
+                        str(self._absolute_project_path(line_edit.text()))
+                        if line_edit.text().strip() else ""
+                    )
+                    folder = QFileDialog.getExistingDirectory(
+                        self, "Select Directory", starting_path
+                    )
+                    if folder:
+                        import os
+                        line_edit.setText(os.path.normpath(folder))
+                        
+                btn.clicked.connect(browse_dir)
+                
+                h_lay.addWidget(le)
+                h_lay.addWidget(open_button)
+                h_lay.addWidget(btn)
+                
+                display_name = DIRECTORY_DISPLAY_NAMES.get(key)
+                if display_name is None:
+                    display_name = key.replace('_', ' ').title()
+                    display_name = display_name.replace('Msa', 'MSA')
+                    display_name = display_name.replace('Hdf5', 'Network')
+                    display_name = display_name.replace('Dir', 'Directory')
+                
+                lbl = QLabel(f"{display_name}:")
+                lbl.setFixedWidth(CONFIG_FIELD_LABEL_WIDTH)
+                layout.addRow(lbl, container)
+                directory_profile_controls.extend((lbl, container))
+                self.labels[key] = lbl
+                self.inputs[key] = le
+                if key == "ANALYSIS_RESULT_DIR":
+                    self.directory_base_separator = self._add_padded_separator(
+                        layout, "directory_base_separator"
+                    )
+
+            # Bind the text changes to dynamically refresh the dropdowns in Tab 1
+            self.inputs["FASTA_DIR"].textChanged.connect(lambda: self.refresh_combo(self.cb_fasta, "FASTA_DIR", ['.fasta']))
+            self.inputs["MSA_DIR"].textChanged.connect(lambda: self.refresh_combo(self.cb_msa, "MSA_DIR", ['.fasta', '.h5']))
+            self.inputs["HDF5_DIR"].textChanged.connect(lambda: self.refresh_combo(self.cb_hdf5, "HDF5_DIR", ['.h5']))
+            self.inputs["SAVED_LAYOUT_DIR"].textChanged.connect(self.update_live_validators)
+            for base_key in (
+                "INPUT_FILE_DIR",
+                "CACHE_FILE_DIR",
+                "ANALYSIS_RESULT_DIR",
+            ):
+                self.inputs[base_key].textChanged.connect(
+                    lambda _text, key=base_key: self._base_directory_changed(key)
+                )
+                
+            self._add_scroll_tab(tab, "Directories")
+
+        def collect_data(self):
+            data = {}
+            from PySide6.QtWidgets import QComboBox, QPushButton, QLineEdit
+            for key, widget in self.inputs.items():
+                
+                # ---> NEW: Completely skip saving the target cache selection to JSON
+                if key in {"TARGET_CACHE_FILE", "NEW_CACHE_NAME"}:
+                    continue
+                    
+                if isinstance(widget, QComboBox):
+                    if key == "LAYOUT_DEVICE_SELECTION":
+                        val = widget.currentData()
+                    else:
+                        val = widget.currentText()
+                elif isinstance(widget, OptionalNoScrollDoubleSpinBox):
+                    optional_value = widget.optionalValue()
+                    val = "" if optional_value is None else str(optional_value)
+                elif hasattr(widget, 'value'): 
+                    val = str(widget.value())
+                elif isinstance(widget, QPushButton) and widget.isCheckable(): 
+                    val = widget.isChecked()                                   
+                elif hasattr(widget, 'isChecked'): 
+                    val = widget.isChecked()
+                elif isinstance(widget, QLineEdit):
+                    val = widget.text()
+                else: 
+                    val = str(widget)
+                
+                if not str(val).strip(): 
+                    if key == "TOP_EDGE_PERCENT": val = "None"
+                    elif key in ["MSA_FILE", "ALIGNMENT_REFERENCE"]: val = ""
+                    else: continue
+                
+                if key == "NODE_FASTA_FILE": val = os.path.join(self.inputs["FASTA_DIR"].text(), val).replace("\\", "/") if val else ""
+                elif key == "MSA_FILE": val = os.path.join(self.inputs["MSA_DIR"].text(), val).replace("\\", "/") if val else ""
+                elif key == "INPUT_HDF5": val = os.path.join(self.inputs["HDF5_DIR"].text(), val).replace("\\", "/") if val else ""
+                
+                data[key] = val
+            return data
+
+        def _widget_profile_value(self, key):
+            widget = self.inputs[key]
+            if isinstance(widget, QComboBox):
+                value = (
+                    widget.currentData()
+                    if key == "LAYOUT_DEVICE_SELECTION"
+                    else widget.currentText()
+                )
+            elif isinstance(widget, OptionalNoScrollDoubleSpinBox):
+                optional_value = widget.optionalValue()
+                value = "None" if optional_value is None else str(optional_value)
+            elif isinstance(widget, QPushButton) and widget.isCheckable():
+                value = widget.isChecked()
+            elif isinstance(widget, (QSpinBox, QDoubleSpinBox)):
+                value = str(widget.value())
+            elif isinstance(widget, QLineEdit):
+                value = widget.text()
+            elif hasattr(widget, "isChecked"):
+                value = widget.isChecked()
+            else:
+                value = str(widget)
+
+            if key == "NODE_FASTA_FILE":
+                value = (
+                    os.path.join(self.inputs["FASTA_DIR"].text(), value).replace("\\", "/")
+                    if value else ""
+                )
+            elif key == "MSA_FILE":
+                value = (
+                    os.path.join(self.inputs["MSA_DIR"].text(), value).replace("\\", "/")
+                    if value else ""
+                )
+            elif key == "INPUT_HDF5":
+                value = (
+                    os.path.join(self.inputs["HDF5_DIR"].text(), value).replace("\\", "/")
+                    if value else ""
+                )
+            return value
+
+        def _collect_tab_profile_data(self, tab_id):
+            data = {
+                key: self._widget_profile_value(key)
+                for key in TAB_PROFILE_SPECS[tab_id]["defaults"]
+            }
+            self._normalize_profile_data(tab_id, data)
+            return data
+
+        def _prepare_profile_writes(self):
+            tab_data = {
+                tab_id: self._collect_tab_profile_data(tab_id)
+                for tab_id in TAB_PROFILE_SPECS
+            }
+            custom_settings = dict(self._custom_settings)
+            custom_settings["SAVED_CONFIG_DIR"] = self.inputs["SAVED_CONFIG_DIR"].text()
+            writes = []
+            created_profiles = []
+            default_tabs = []
+
+            for tab_id in TAB_PROFILE_SPECS:
+                selection = self.profile_selectors[tab_id].currentText()
+                if selection == "(custom)":
+                    custom_settings.update(tab_data[tab_id])
+                elif selection == "(default)":
+                    default_tabs.append(tab_id)
+                    continue
+                elif selection == "(new)":
+                    existing = _discover_profile_names(self._saved_config_root(), tab_id)
+                    name = _validate_profile_name(
+                        self.profile_name_inputs[tab_id].text(), existing
+                    )
+                    writes.append((self._profile_path(tab_id, name), tab_data[tab_id]))
+                    created_profiles.append((tab_id, name))
+                else:
+                    writes.append(
+                        (self._profile_path(tab_id, selection), tab_data[tab_id])
+                    )
+
+            writes.append((Path(DEFAULT_SETTINGS_FILE), custom_settings))
+            return writes, custom_settings, created_profiles, default_tabs
+
+        def _save_success_message(self, created_profiles, default_tabs):
+            messages = ["Settings saved successfully."]
+            if created_profiles:
+                created = ", ".join(
+                    f"{PROFILE_TAB_DISPLAY_NAMES[tab_id]}: '{name}'"
+                    for tab_id, name in created_profiles
+                )
+                messages.append(f"Created profile(s): {created}.")
+            if default_tabs:
+                unchanged = ", ".join(
+                    PROFILE_TAB_DISPLAY_NAMES[tab_id] for tab_id in default_tabs
+                )
+                messages.append(
+                    "Built-in default settings were left unchanged for: "
+                    f"{unchanged}."
+                )
+            return " ".join(messages)
+
+        def save_settings(self):
+            try:
+                (
+                    writes,
+                    custom_settings,
+                    created_profiles,
+                    default_tabs,
+                ) = self._prepare_profile_writes()
+                for path, profile_data in writes:
+                    _atomic_write_json(path, profile_data)
+                self._custom_settings = custom_settings
+                for tab_id, name in created_profiles:
+                    self._refresh_profile_combo(tab_id)
+                    self._set_profile_selection(tab_id, name)
+                    self._profile_previous_selection[tab_id] = name
+                    self._set_new_profile_field_visible(tab_id, False)
+                self.tip_panel.setText(
+                    self._save_success_message(created_profiles, default_tabs)
+                )
+                return True
+            except Exception as e:
+                self.tip_panel.setText(f"Failed to save settings: {e}")
+                return False
+
+        def _selected_new_cache_filename(self):
+            if self.cb_cache_file.currentText() != "(New Layout Cache)":
+                raise ValueError(
+                    "Layout settings can only be exported for (New Layout Cache)."
+                )
+            cache_name = self.line_new_cache.text().strip()
+            if not cache_name:
+                cache_name = self.line_new_cache.placeholderText()
+            if not cache_name.lower().endswith(".h5"):
+                cache_name += ".h5"
+            cache_manifest.validate_cache_filename(cache_name)
+            return cache_name
+
+        def _collect_layout_generation_settings(self):
+            if not self._cache_launch_allowed or not self.current_cache_folder:
+                raise ValueError("A unique compatible cache folder has not been resolved.")
+
+            cache_name = self._selected_new_cache_filename()
+            collected = self.collect_data()
+            collected["ALIGNMENT_SCORE"] = self.cb_score_mode.currentText() or None
+            collected["NORM_MODE"] = self.cb_norm_mode.currentText() or None
+            collected["SIMILARITY_THRESHOLD"] = self.spin_thresh.optionalValue()
+            collected["LAYOUT_DIMENSIONS"] = LAYOUT_DIMENSIONS
+            collected["TOP_EDGE_PERCENT"] = self.spin_top.optionalValue()
+            collected["LAYOUT_DEVICE_SELECTION"] = self.cb_layout_device.currentData()
+            collected["SAVED_LAYOUT_DIR"] = self.inputs["SAVED_LAYOUT_DIR"].text()
+            for path_key in (
+                "NODE_FASTA_FILE",
+                "INPUT_HDF5",
+                "SAVED_LAYOUT_DIR",
+            ):
+                collected[path_key] = self._resolved_directory_value(
+                    collected.get(path_key, "")
+                )
+            for hidden_key in (
+                "BOX_SCALE",
+                "PACKING_PADDING",
+                "MAX_FORCE_LIMIT",
+                "MAX_TOTAL_REPULSION_FORCE",
+            ):
+                collected[hidden_key] = globals()[hidden_key]
+
+            from utilities.Headless_Settings import build_layout_export
+            document = build_layout_export(
+                collected, PROJECT_ROOT,
+                cache_filename=cache_name,
+                target_cache_path=os.path.join(self.current_cache_folder, cache_name),
+                automatic=not self.line_new_cache.text().strip(), selection_resolved=True,
+            )
+            return LayoutGenerationSettings.from_document(document, project_root=PROJECT_ROOT)
+
+        def export_layout_settings(self):
+            try:
+                settings = self._collect_layout_generation_settings()
+                export_directory = Path(
+                    self._resolved_directory_value(
+                        self.inputs["SETTING_EXPORT_DIR"].text().strip()
+                        or DIRECTORY_PROFILE_DEFAULTS["SETTING_EXPORT_DIR"]
+                    )
+                ).expanduser()
+                if not export_directory.is_absolute():
+                    export_directory = PROJECT_ROOT / export_directory
+                export_directory = Path(
+                    os.path.abspath(os.path.normpath(export_directory))
+                )
+                export_directory.mkdir(parents=True, exist_ok=True)
+                suggested_name = f"{Path(settings.CACHE_FILENAME).stem}_layout.json"
+                selected_path, _selected_filter = QFileDialog.getSaveFileName(
+                    self,
+                    "Export Layout Settings",
+                    str(export_directory / suggested_name),
+                    "JSON Files (*.json)",
+                )
+                if not selected_path:
+                    return
+                if not selected_path.lower().endswith(".json"):
+                    selected_path += ".json"
+                target_path = Path(selected_path)
+                _atomic_write_json(
+                    target_path,
+                    settings.to_document(project_root=PROJECT_ROOT),
+                )
+                command = (
+                    f'"{sys.executable}" -u '
+                    f'"{SRC_DIR / "Layout_Cache_Generator.py"}" '
+                    f'"{target_path.resolve()}"'
+                )
+                QMessageBox.information(
+                    self,
+                    "Layout Settings Exported",
+                    f"Settings exported to:\n{target_path.resolve()}\n\n"
+                    f"Command-line usage:\n{command}",
+                )
+            except Exception as error:
+                QMessageBox.critical(
+                    self, "Export Layout Settings Error", str(error)
+                )
+
+        def save_and_run(self):
+            if not self.check_umap.isChecked():
+                try:
+                    Hardware_Utils.resolve_device_selection(
+                        self.cb_layout_device.currentData()
+                    )
+                except ValueError as error:
+                    QMessageBox.critical(
+                        self, "Layout Device Unavailable", str(error)
+                    )
+                    return
+
+            if not self._cache_launch_allowed or not self.current_cache_folder:
+                QMessageBox.critical(
+                    self,
+                    "Cache Selection Error",
+                    "A unique compatible cache folder has not been resolved.",
+                )
+                return
+
+            selected_cache = self.cb_cache_file.currentText()
+            saved_layout_dir = os.path.abspath(
+                self._resolved_directory_input("SAVED_LAYOUT_DIR")
+            )
+            try:
+                if selected_cache == "(New Layout Cache)":
+                    cache_name = self._selected_new_cache_filename()
+                    relative_path = cache_manifest.relative_cache_path(
+                        saved_layout_dir, self.current_cache_folder, cache_name
+                    )
+                    cache_mode = "new"
+                else:
+                    relative_path = self.cb_cache_file.currentData()
+                    cache_manifest.resolve_relative_cache_path(
+                        saved_layout_dir, relative_path
+                    )
+                    cache_mode = "existing"
+            except Exception as error:
+                QMessageBox.critical(self, "Cache Selection Error", str(error))
+                return
+
+            settings_data = self.collect_data()
+            settings_data["TARGET_CACHE_PATH"] = cache_manifest.resolve_relative_cache_path(saved_layout_dir, relative_path)
+            settings_data["TARGET_CACHE_MODE"] = "existing"
+            settings_data["SIMILARITY_THRESHOLD"] = self.spin_thresh.optionalValue()
+            settings_data["TOP_EDGE_PERCENT"] = self.spin_top.optionalValue()
+            if self.check_umap.isChecked():
+                settings_data["SIMILARITY_THRESHOLD"] = None
+                settings_data["TOP_EDGE_PERCENT"] = None
+            elif settings_data["TOP_EDGE_PERCENT"] is not None:
+                settings_data["SIMILARITY_THRESHOLD"] = None
+            if not self.save_settings():
+                return
+
+            try:
+                settings_snapshot = _create_viewer_settings_snapshot(settings_data)
+            except OSError as error:
+                QMessageBox.critical(
+                    self,
+                    "Viewer Launch Error",
+                    f"Failed to create the per-launch settings snapshot:\n{error}",
+                )
+                return
+
+            env = os.environ.copy()
+            env.pop("SSN_TARGET_CACHE", None)
+            env["SSN_TARGET_CACHE_PATH"] = relative_path.replace("\\", "/")
+            env["SSN_TARGET_CACHE_MODE"] = cache_mode
+            env["SSN_VIEWER_SETTINGS_PATH"] = settings_snapshot
+
+            # Use the project root (parent of src/) as cwd so all relative data paths resolve correctly
+            script_dir = str(MAIN_PROJECT_ROOT)
+
+            if cache_mode == "new":
+                try:
+                    layout_settings = self._collect_layout_generation_settings()
+                    layout_doc = layout_settings.to_document(project_root=PROJECT_ROOT)
+                    layout_snapshot = _create_layout_settings_snapshot(layout_doc)
+                except Exception as error:
+                    try:
+                        os.unlink(settings_snapshot)
+                    except OSError:
+                        pass
+                    QMessageBox.critical(
+                        self,
+                        "Layout Settings Error",
+                        f"Failed to prepare layout generation settings:\n{error}",
+                    )
+                    return
+
+                print("Launching Layout_Cache_Generator.py...")
+                try:
+                    _handoff_to_layout_generator(
+                        script_dir, layout_snapshot, env, launch_viewer=True
+                    )
+                except (OSError, RuntimeError) as error:
+                    try:
+                        os.unlink(settings_snapshot)
+                    except OSError:
+                        pass
+                    try:
+                        os.unlink(layout_snapshot)
+                    except OSError:
+                        pass
+                    QMessageBox.critical(
+                        self,
+                        "Layout Generator Launch Error",
+                        f"Failed to launch Layout_Cache_Generator.py:\n{error}",
+                    )
+                    return
+            else:
+                print("Launching EMAPSSN_Viewer.py...")
+                try:
+                    _handoff_to_viewer(
+                        script_dir,
+                        env,
+                        settings_path=settings_snapshot,
+                    )
+                except (OSError, RuntimeError) as error:
+                    try:
+                        os.unlink(settings_snapshot)
+                    except OSError:
+                        pass
+                    QMessageBox.critical(
+                        self,
+                        "Viewer Launch Error",
+                        f"Failed to launch EMAPSSN_Viewer.py:\n{error}",
+                    )
+                    return
+
+        def save_only(self):
+            self.save_settings()
+
+    existing_qt_application = QApplication.instance()
+    app = existing_qt_application or QApplication(sys.argv)
+    app.setApplicationVersion(APPLICATION_VERSION)
+    single_instance = None
+    if existing_qt_application is None:
+        # A distinct key from the desktop config, so the two windows can be
+        # open at once instead of one raising the other.
+        single_instance = SingleInstanceController("SSN_VR_Config", app)
+        try:
+            is_primary_instance = single_instance.acquire_or_notify()
+        except RuntimeError as error:
+            QMessageBox.critical(
+                None, f"{VR_CONFIG_DISPLAY_NAME} Startup Error", str(error)
+            )
+            raise SystemExit(1)
+        if not is_primary_instance:
+            raise SystemExit(0)
+        app.aboutToQuit.connect(single_instance.close)
+
+    configure_linux_qt_desktop_identity(app, VIEWER_DESKTOP_FILE_NAME)
+    def _exit_on_uncaught_exception(exc_type, exc_value, exc_traceback):
+        traceback.print_exception(exc_type, exc_value, exc_traceback)
+        app.exit(1)
+
+    sys.excepthook = _exit_on_uncaught_exception
+    try:
+        configure_qt_application_fonts(app)
+    except Exception as e:
+        print(f"Warning: Could not configure bundled application fonts: {e}")
+    
+    # Set Application-wide Icon
+    icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bin", "logos", "viewer_logo.ico")
+    if not os.path.exists(icon_path):
+        icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bin", "logos", "viewer_logo.png")
+    if os.path.exists(icon_path):
+        app.setWindowIcon(QIcon(icon_path))
+        
+    try:
+        force_light_palette(app)
+    except Exception as e:
+        print(f"Warning: Could not force light palette: {e}")
+        app.setStyle("Fusion")
+    window = ConfigGUI()
+    if single_instance is not None:
+        single_instance.set_activation_callback(
+            lambda active_window=window: show_window_in_front(active_window)
+        )
+    show_window_in_front(window)
+    sys.exit(app.exec())

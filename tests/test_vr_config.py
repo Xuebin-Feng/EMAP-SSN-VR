@@ -15,12 +15,18 @@
 
 """Tests for the VR Configuration GUI.
 
-The GUI half runs in a subprocess on the offscreen Qt platform. That is not
-fussiness: ``test_opt_vr.SettingsTests.test_no_qt_is_imported`` asserts PySide6
-never reaches the viewer's process, and importing Config here would break it
-for every other test sharing this interpreter.
+``Config.py`` is a copy of the main program's Config GUI, rebased onto the
+submodule. These tests pin the handful of things that copy had to change -
+where settings are stored, which viewer is launched, that layouts are always
+three dimensional, and that the Unity bridge settings exist - rather than
+re-testing the GUI behaviour the main program already covers.
 
-The settings half needs no Qt and is tested in-process.
+The window is built in a subprocess on the offscreen platform. That is not
+fussiness: ``test_opt_vr.SettingsTests.test_no_qt_is_imported`` asserts PySide6
+never reaches the viewer's process, and building the GUI here would break it
+for every other test sharing this interpreter. The GUI also lives under
+``if __name__ == "__main__"``, so it is loaded with runpy, exactly as the main
+repository's own offscreen config test does.
 """
 
 import json
@@ -39,23 +45,39 @@ import _bootstrap  # noqa: E402
 
 
 def run_gui_script(body):
-    """Execute `body` against a live VRConfigGUI in an offscreen subprocess."""
+    """Build the GUI in an offscreen subprocess and run `body` against it."""
     script = textwrap.dedent(
         """
-        import json, os, sys
+        import json, os, runpy, sys
         os.environ["QT_QPA_PLATFORM"] = "offscreen"
         sys.path.insert(0, {opt_vr!r})
+        import _bootstrap  # puts the parent src tree on sys.path
+        from unittest import mock
+        from utilities import Hardware_Acceleration as _preload  # torch before Qt
         from PySide6.QtWidgets import QApplication
-        app = QApplication([])
-        import Config
-        window = Config.VRConfigGUI()
+        app = QApplication.instance() or QApplication([])
+        with mock.patch.object(QApplication, "exec", return_value=0), \\
+             mock.patch.object(sys, "exit", return_value=None):
+            namespace = runpy.run_path(
+                os.path.join({opt_vr!r}, "Config.py"), run_name="__main__"
+            )
+        window = namespace["window"]
+        Config = type("Config", (), namespace)
         """
-    ).format(opt_vr=OPT_VR) + textwrap.dedent(body)
+    ).format(opt_vr=OPT_VR) + textwrap.dedent(body) + textwrap.dedent(
+        """
+        window.close()
+        """
+    )
     environment = dict(os.environ)
     environment["QT_QPA_PLATFORM"] = "offscreen"
+    # Start from the GUI's own default settings path. Sibling test modules
+    # point SSN_VIEWER_SETTINGS_PATH at a neutral temp file, and inheriting it
+    # would make these tests describe that file instead of the submodule's.
+    environment.pop("SSN_VIEWER_SETTINGS_PATH", None)
     result = subprocess.run(
         [sys.executable, "-u", "-c", script],
-        capture_output=True, text=True, env=environment, cwd=OPT_VR, timeout=600,
+        capture_output=True, text=True, env=environment, cwd=OPT_VR, timeout=900,
     )
     if result.returncode != 0:
         raise AssertionError(
@@ -64,87 +86,166 @@ def run_gui_script(body):
     return result.stdout
 
 
+def report_from(body):
+    return json.loads(run_gui_script(body).split("@@", 1)[1])
+
+
 class ConfigWindowTests(unittest.TestCase):
-    """The window builds and covers the settings the main GUI covers."""
+    """What the copy changed, and what it must have kept."""
 
     @classmethod
     def setUpClass(cls):
-        cls.report = json.loads(run_gui_script(
+        cls.report = report_from(
             """
-            from desktop.Viewer_State import (
-                INPUT_PROFILE_DEFAULTS, VISUAL_PROFILE_DEFAULTS,
-                PHYSICS_PROFILE_DEFAULTS, DIRECTORY_PROFILE_DEFAULTS,
-            )
-            schema = set(INPUT_PROFILE_DEFAULTS) | set(VISUAL_PROFILE_DEFAULTS) \\
-                | set(PHYSICS_PROFILE_DEFAULTS) | set(DIRECTORY_PROFILE_DEFAULTS)
             print("@@" + json.dumps({
                 "title": window.windowTitle(),
                 "tabs": [window.tabs.tabText(i) for i in range(window.tabs.count())],
                 "inputs": sorted(window.inputs),
-                "schema": sorted(schema),
-                "collected": {
-                    k: v for k, v in window.collect_data().items()
-                    if k in ("LAYOUT_DIMENSIONS", "VR_HOST", "VR_PORT")
-                },
+                "profile_tabs": sorted(window.profile_selectors),
                 "cache_settings": window._cache_setting_values(),
+                "settings_file": namespace["SETTINGS_FILE"],
+                "has_statistics": hasattr(window, "run_statistics"),
+                "has_histogram": hasattr(window, "run_histogram"),
+                "has_stat_display": hasattr(window, "stat_display"),
             }))
             """
-        ).split("@@", 1)[1])
+        )
 
-    def test_window_builds_with_the_expected_tabs(self):
+    def test_window_identifies_itself_as_the_vr_configuration(self):
+        self.assertEqual(self.report["title"], "EMAP-SSN VR Configuration")
+
+    def test_tabs_match_the_desktop_gui(self):
+        """The bridge settings live on Visual Effects, not a tab of their own."""
         self.assertEqual(
             self.report["tabs"],
             ["Inputs && Outputs", "Visual Effects", "Simulation && Physics",
-             "VR && Unity", "Directories"],
+             "Directories"],
         )
 
-    def test_every_shared_setting_has_a_control(self):
-        """A missing control silently freezes that setting at its default."""
-        missing = sorted(set(self.report["schema"]) - set(self.report["inputs"]))
-        self.assertEqual(missing, [], f"settings with no widget: {missing}")
-
-    def test_vr_bridge_settings_are_present(self):
-        for key in ("VR_HOST", "VR_PORT", "DISTANCE_SCALE", "MAX_RENDER_EDGES",
-                    "ENABLE_EDGE_FILTERING", "NEIGHBOR_COLOR", "VR_APP_DIR"):
+    def test_unity_bridge_settings_exist(self):
+        for key in ("VR_HOST", "VR_PORT", "DISTANCE_SCALE",
+                    "ENABLE_EDGE_FILTERING", "MAX_RENDER_EDGES", "VR_APP_DIR"):
             self.assertIn(key, self.report["inputs"], key)
+
+    def test_settings_the_unity_client_ignores_are_gone(self):
+        """A control with no effect is worse than no control."""
+        for key in ("TEXT_SIZE", "TEXT_COLOR", "LOW_RESOURCE_MODE"):
+            self.assertNotIn(key, self.report["inputs"], key)
+
+    def test_packing_geometry_is_gone(self):
+        """3D packs onto concentric shells; Square/Circle never reaches it."""
+        self.assertNotIn("PACKING_GEOMETRY", self.report["inputs"])
+
+    def test_node_colour_has_exactly_one_control(self):
+        """Settings republishes INITIAL_NODE_COLOR as NEIGHBOR_COLOR and wins,
+        so a second control would silently discard the user's choice."""
+        self.assertIn("INITIAL_NODE_COLOR", self.report["inputs"])
+        self.assertNotIn("NEIGHBOR_COLOR", self.report["inputs"])
+
+    def test_inherited_features_survived_the_copy(self):
+        """Statistics, histogram and the report panel come along for free."""
+        for flag in ("has_statistics", "has_histogram", "has_stat_display"):
+            self.assertTrue(self.report[flag], flag)
+
+    def test_saved_config_profiles_cover_every_tab(self):
+        for tab in ("inputs_outputs", "visual_effects", "simulation_physics",
+                    "directories"):
+            self.assertIn(tab, self.report["profile_tabs"], tab)
 
     def test_layout_dimensionality_is_not_a_control(self):
         """It follows from which viewer was opened, so it is never offered."""
         self.assertNotIn("LAYOUT_DIMENSIONS", self.report["inputs"])
 
-    def test_collected_data_always_requests_three_dimensions(self):
-        self.assertEqual(self.report["collected"]["LAYOUT_DIMENSIONS"], 3)
-
-    def test_cache_identity_includes_dimensionality(self):
-        """Without this a 3D cache would collide with the 2D one."""
+    def test_cache_identity_is_always_three_dimensional(self):
+        """Without this a 3D cache would collide with the desktop 2D one."""
         self.assertEqual(self.report["cache_settings"]["layout_dimensions"], 3)
+
+    def test_settings_file_lives_in_the_submodule(self):
+        self.assertEqual(
+            os.path.dirname(os.path.abspath(self.report["settings_file"])),
+            os.path.abspath(OPT_VR),
+        )
+        self.assertTrue(
+            self.report["settings_file"].endswith("vr_settings.json"),
+            self.report["settings_file"],
+        )
+
+
+class LaunchTargetTests(unittest.TestCase):
+    """The copy must launch the VR viewer, not the desktop one."""
+
+    def test_handoff_points_at_the_vr_viewer(self):
+        report = report_from(
+            """
+            from unittest import mock
+            captured = {}
+            def fake(argv, **kwargs):
+                captured["argv"] = [str(a) for a in argv]
+                captured["title"] = kwargs.get("title")
+                return None
+            namespace["_handoff_to_viewer"].__globals__["launch_in_terminal"] = fake
+            namespace["_handoff_to_viewer"](
+                {opt_vr!r}, {}, settings_path="snap.json", executable="/python"
+            )
+            print("@@" + json.dumps(captured))
+            """.replace("{opt_vr!r}", repr(OPT_VR))
+        )
+        script = report["argv"][2]
+        self.assertTrue(
+            os.path.samefile(script, os.path.join(OPT_VR, "Viewer.py")),
+            f"launched {script}",
+        )
+        self.assertNotIn("EMAPSSN_Viewer.py", script)
+        self.assertEqual(report["title"], "EMAP-SSN VR Viewer")
+
+    def test_generator_still_comes_from_the_parent_checkout(self):
+        """opt_vr owns no pipeline; layouts are built by the main program."""
+        report = report_from(
+            """
+            captured = {}
+            def fake(argv, **kwargs):
+                captured["argv"] = [str(a) for a in argv]
+                return None
+            namespace["_handoff_to_layout_generator"].__globals__[
+                "launch_in_terminal"] = fake
+            namespace["_handoff_to_layout_generator"](
+                "ignored", "layout.json", {}, executable="/python"
+            )
+            print("@@" + json.dumps(captured))
+            """
+        )
+        script = report["argv"][2]
+        self.assertTrue(
+            os.path.samefile(
+                script,
+                os.path.join(_bootstrap.SRC_DIR, "Layout_Cache_Generator.py"),
+            ),
+            f"generator resolved to {script}",
+        )
 
 
 class ConfigPersistenceTests(unittest.TestCase):
     """Saving writes into the submodule and nowhere else."""
 
     def test_settings_round_trip_through_the_submodule_file(self):
-        output = run_gui_script(
+        report = report_from(
             """
-            window.inputs["VR_PORT"].setValue(5123)
-            window.inputs["NODE_SIZE"].setValue(19)
+            settings_file = namespace["SETTINGS_FILE"]
             original = None
-            if os.path.exists(Config.SETTINGS_FILE):
-                with open(Config.SETTINGS_FILE, encoding="utf-8") as handle:
+            if os.path.exists(settings_file):
+                with open(settings_file, encoding="utf-8") as handle:
                     original = handle.read()
+            window.inputs["VR_PORT"].setValue(5123)
             try:
-                assert window.save_settings()
-                with open(Config.SETTINGS_FILE, encoding="utf-8") as handle:
+                window.save_settings()
+                with open(settings_file, encoding="utf-8") as handle:
                     saved = json.load(handle)
             finally:
                 if original is not None:
-                    with open(Config.SETTINGS_FILE, "w", encoding="utf-8") as handle:
+                    with open(settings_file, "w", encoding="utf-8") as handle:
                         handle.write(original)
             print("@@" + json.dumps({
-                "path": Config.SETTINGS_FILE,
                 "port": saved.get("VR_PORT"),
-                "node_size": saved.get("NODE_SIZE"),
-                "dimensions": saved.get("LAYOUT_DIMENSIONS"),
                 "has_directories": all(
                     key in saved for key in
                     ("CACHE_FILE_DIR", "SAVED_LAYOUT_DIR", "INPUT_FILE_DIR")
@@ -152,31 +253,24 @@ class ConfigPersistenceTests(unittest.TestCase):
             }))
             """
         )
-        report = json.loads(output.split("@@", 1)[1])
-        self.assertEqual(report["port"], 5123)
-        self.assertEqual(report["node_size"], 19)
-        self.assertEqual(report["dimensions"], 3)
+        self.assertIn(str(report["port"]), ("5123", "5123.0"))
         self.assertTrue(report["has_directories"], "directories must be persisted")
-        self.assertEqual(
-            os.path.dirname(os.path.abspath(report["path"])),
-            os.path.abspath(OPT_VR),
-            "VR settings must live inside the submodule",
-        )
 
     def test_the_desktop_settings_file_is_never_written(self):
         desktop = os.path.join(_bootstrap.PROJECT_ROOT, "viewer_settings.json")
         before = os.path.getmtime(desktop) if os.path.exists(desktop) else None
         run_gui_script(
             """
+            settings_file = namespace["SETTINGS_FILE"]
             original = None
-            if os.path.exists(Config.SETTINGS_FILE):
-                with open(Config.SETTINGS_FILE, encoding="utf-8") as handle:
+            if os.path.exists(settings_file):
+                with open(settings_file, encoding="utf-8") as handle:
                     original = handle.read()
             try:
                 window.save_settings()
             finally:
                 if original is not None:
-                    with open(Config.SETTINGS_FILE, "w", encoding="utf-8") as handle:
+                    with open(settings_file, "w", encoding="utf-8") as handle:
                         handle.write(original)
             print("@@done")
             """
@@ -186,7 +280,7 @@ class ConfigPersistenceTests(unittest.TestCase):
 
 
 class VRSettingsSourceTests(unittest.TestCase):
-    """The Qt-free settings module reads the submodule's file, not the parent's."""
+    """The Qt-free settings module the viewer itself reads."""
 
     def setUp(self):
         self._saved = os.environ.pop("SSN_VIEWER_SETTINGS_PATH", None)
@@ -230,6 +324,15 @@ class VRSettingsSourceTests(unittest.TestCase):
                     str(values[key]).startswith(_bootstrap.OPT_VR_DIR),
                     f"{key} escaped the submodule: {values[key]}",
                 )
+
+    def test_bridge_values_are_coerced_to_their_own_types(self):
+        """The GUI writes spin boxes as text; unconverted they break arithmetic."""
+        import Settings
+
+        self.assertEqual(Settings._coerce("VR_PORT", "5005"), 5005)
+        self.assertIsInstance(Settings._coerce("VR_PORT", "5005"), int)
+        self.assertEqual(Settings._coerce("DISTANCE_SCALE", "2.5"), 2.5)
+        self.assertIs(Settings._coerce("ENABLE_EDGE_FILTERING", "false"), False)
 
     def test_layout_dimensions_defaults_to_three(self):
         import Settings

@@ -54,18 +54,23 @@ _NULL_TOKENS = {"", "none", "null"}
 PROJECT_ROOT = _bootstrap.PROJECT_ROOT
 OPT_VR_DIR = _bootstrap.OPT_VR_DIR
 
-#: Keys with no upstream counterpart. Everything else comes from DEFAULTS.
-VR_DEFAULTS = {
-    # --- Unity bridge -------------------------------------------------
+#: The Unity bridge settings, grouped so the VR Config GUI can offer saved
+#: profiles for them the way the desktop GUI does for its own tabs.
+VR_BRIDGE_DEFAULTS = {
     "VR_HOST": "127.0.0.1",
     "VR_PORT": 5005,
-    "VR_APP_DIR": "VR_App",
     "DISTANCE_SCALE": 1.0,
     # --- Edge rendering budget ---------------------------------------
     "ENABLE_EDGE_FILTERING": True,
     "MAX_RENDER_EDGES": 500000,
     # --- Visual keys the Unity client reads from globalSettings -------
     "NEIGHBOR_COLOR": "#4488ff",
+}
+
+#: Keys with no upstream counterpart. Everything else comes from DEFAULTS.
+VR_DEFAULTS = {
+    **VR_BRIDGE_DEFAULTS,
+    "VR_APP_DIR": "VR_App",
     # --- Alignment ----------------------------------------------------
     "GAP_CHARS": ["-", "."],
     # --- Directories without an upstream profile entry ----------------
@@ -206,7 +211,12 @@ def _coerce(key, value):
         except (TypeError, ValueError):
             return value
 
+    # Fall back to the VR defaults for keys the shared schema does not know:
+    # the GUI writes spin-box values as text, so without a reference type
+    # VR_PORT would stay the string "5005" and DISTANCE_SCALE the string "1.0".
     reference = DEFAULTS.get(key)
+    if reference is None:
+        reference = VR_DEFAULTS.get(key)
     if reference is None or value is None:
         return value
     if isinstance(value, str) and not value.strip() and not isinstance(reference, str):

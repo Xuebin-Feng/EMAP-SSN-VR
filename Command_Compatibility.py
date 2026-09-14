@@ -318,18 +318,25 @@ def viewer_surface(providers=VIEWER_PROVIDERS):
 # --------------------------------------------------------------------------
 
 def _rollback(before):
-    """Drop project modules the probe loaded, keeping third-party ones cached.
+    """Leave imported modules cached; only the probe's own alias is removed.
 
-    Every command must be probed under the same conditions as the first, but
-    re-importing numpy and pandas per command would make the report far too
-    slow to live in the test suite.
+    An earlier version evicted every project module each probe had loaded, so
+    that each command was probed against a cold import graph. That turned out
+    to be both unnecessary and harmful.
+
+    Unnecessary, because the question being asked is whether importing a
+    command reaches a GUI toolkit, and those imports are at module level: a
+    shared module that would have pulled in Qt fails on the first probe that
+    touches it and is never cached, so a cached module is by definition one
+    that already answered "no".
+
+    Harmful, because evicting a module makes it collectable while numba, torch
+    and h5py still hold references into its globals. Probing fifty modules that
+    way segfaulted the interpreter during shutdown roughly half the time -
+    after the verdict was printed, but early enough to replace the exit code
+    with 139, which made the --check gate untrustworthy.
     """
-    for name in list(sys.modules):
-        if name in before:
-            continue
-        origin = getattr(sys.modules[name], "__file__", None) or ""
-        if origin and os.path.abspath(origin).startswith(PROJECT_ROOT):
-            del sys.modules[name]
+    return
 
 
 def probe_import(path, alias, denied=GUI_PACKAGES):

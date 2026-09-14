@@ -48,11 +48,41 @@ directory resolves inside the submodule, so a VR configuration never disturbs
 the desktop program's `viewer_settings.json`. The file is git-ignored, like its
 desktop counterpart, because it holds local paths.
 
-What the GUI does *not* reimplement is anything scientific: cache identity,
-manifest matching and canonical folder naming come from `Cache_Manifest`;
-layout generation is handed to `Layout_Cache_Generator`; fonts, palette and the
-responsive field layout come from `desktop/Desktop_App.py`. Only the window is
-local, because that was the part the main GUI could not share.
+`Config.py` is a **copy of `src/EMAPSSN_Config.py`**, rebased onto the
+submodule. That is deliberate: reimplementing it by hand produced a window that
+merely resembled the original and kept turning out to be missing things. A copy
+is identical by construction, so every feature — saved-config profiles, network
+statistics, the score histogram, colour pickers, live field gating, input
+consistency checks — behaves exactly as it does in the main program.
+
+The copy diverges from its source by about **220 of 4,200 lines**, most of them
+the new VR tab. The rest is small and deliberate:
+
+| Change | Why |
+|---|---|
+| `PROJECT_ROOT` → `opt_vr` | every relative directory resolves in the submodule |
+| `vr_settings.json` | the desktop program's settings are never touched |
+| launches `opt_vr/Viewer.py` | the VR viewer, not the desktop one |
+| `layout_dimensions=3` forced | into cache identity and layout generation |
+| Unity bridge block on **Visual Effects** | host, port, distance scale, edge budget, Unity build |
+| removed controls | see below |
+| distinct single-instance key | both windows can be open at once |
+
+Four settings the desktop GUI offers are deliberately absent, because nothing
+in the VR runtime reads them and no shared command does either:
+
+| Removed | Why |
+|---|---|
+| `TEXT_SIZE`, `TEXT_COLOR` | no HUD text is drawn in the headset |
+| `LOW_RESOURCE_MODE` | a VisPy canvas optimisation; Unity does the drawing |
+| `PACKING_GEOMETRY` | in 3D `calculate_layout` branches to `pack_components_to_shells`, which arranges components on concentric spherical shells and takes no geometry argument — Square/Circle never reaches it |
+
+`NEIGHBOR_COLOR` has no control of its own either: `Settings` republishes
+`INITIAL_NODE_COLOR` under that name and it wins, so a second control would
+silently discard whatever was picked in it.
+
+Keeping it in sync with upstream is a `diff` against `src/EMAPSSN_Config.py`,
+and that table is the list of hunks that are meant to differ.
 
 The viewer never computes a layout. If you need a cache without the GUI:
 
