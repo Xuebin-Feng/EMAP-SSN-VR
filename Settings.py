@@ -15,15 +15,15 @@
 
 """Qt-free settings for the VR viewer.
 
-Replaces the forked ``SSN_VR_Config.py`` GUI. The single source of truth for
-every shared key is ``src/desktop/Viewer_State.py``; this module layers the
-project's ``viewer_settings.json`` on top of those defaults and adds the
-handful of keys that only the VR bridge needs.
+The schema for every shared key comes from ``src/desktop/Viewer_State.py``;
+this module layers ``opt_vr/vr_settings.json`` on top of those defaults and
+adds the handful of keys only the VR bridge needs.
 
-The division of labour is deliberate: **the EMAP-SSN Config GUI writes
-settings, the VR runtime only reads them.** Nothing here imports PySide6, so
-the VR process stays headless while still honouring whatever the shared GUI
-last saved.
+The division of labour is deliberate: **opt_vr's Config GUI writes settings,
+the VR runtime only reads them.** Nothing here imports PySide6, so the viewer
+process stays headless. The two front ends are configured independently - the
+VR side never reads or writes the desktop program's ``viewer_settings.json``,
+and every relative path resolves inside the submodule.
 
 Values are exposed as module attributes so existing ``cfg.NODE_SIZE`` style
 access keeps working unchanged.
@@ -89,17 +89,20 @@ _DIRECTORY_SUFFIX = "_DIR"
 #: File-valued settings that are stored with an alias and/or relative.
 _PATH_KEYS = ("NODE_FASTA_FILE", "INPUT_HDF5", "MSA_FILE", "TARGET_CACHE_PATH")
 
-#: Directories belonging to the submodule rather than the parent project. The
-#: Unity build ships inside opt_vr, so anchoring it to the project root would
-#: point one level too high.
-_OPT_VR_RELATIVE_KEYS = ("VR_APP_DIR",)
-
 
 def _settings_path() -> str:
+    """The VR settings file, which lives inside the submodule.
+
+    opt_vr is configured by its own GUI and does not read the desktop
+    program's ``viewer_settings.json``: the two front ends are configured
+    independently, so a VR session can never disturb a desktop one. The
+    environment override is how the VR Config GUI hands a per-launch snapshot
+    to the viewer.
+    """
     override = os.environ.get("SSN_VIEWER_SETTINGS_PATH")
     if override:
         return override
-    return os.path.join(PROJECT_ROOT, "viewer_settings.json")
+    return os.path.join(OPT_VR_DIR, "vr_settings.json")
 
 
 def _read_json(path):
@@ -237,9 +240,10 @@ def load_settings() -> dict:
     values = dict(DEFAULTS)
     values.update(VR_DEFAULTS)
 
+    # One file only. Reading vr_settings.json again after this would override
+    # the per-launch snapshot the VR Config GUI hands the viewer, which is
+    # exactly the choice the user just made in the GUI.
     for key, value in _read_json(_settings_path()).items():
-        values[key] = _coerce(key, value)
-    for key, value in _read_json(os.path.join(OPT_VR_DIR, "vr_settings.json")).items():
         values[key] = _coerce(key, value)
 
     # Publish renamed upstream keys under the spellings the VR code uses.
@@ -255,10 +259,12 @@ def load_settings() -> dict:
         if isinstance(value, str) and value.startswith(tuple(ALIASES)):
             values[key] = _resolve_alias(value, values)
 
+    # Relative paths resolve inside the submodule. opt_vr keeps its own inputs,
+    # caches and analysis outputs, so a VR configuration never writes into the
+    # desktop program's directories.
     for key, value in list(values.items()):
         if key.endswith(_DIRECTORY_SUFFIX) or key in _PATH_KEYS:
-            base = OPT_VR_DIR if key in _OPT_VR_RELATIVE_KEYS else PROJECT_ROOT
-            values[key] = _absolute(values[key], base)
+            values[key] = _absolute(values[key], OPT_VR_DIR)
 
     # The launcher pins one cache folder for this session.
     target = os.environ.get("SSN_TARGET_CACHE") or values.get("TARGET_CACHE_PATH")

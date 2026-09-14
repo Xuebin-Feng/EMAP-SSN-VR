@@ -2,10 +2,13 @@
 REM =========================================================================
 REM Startup script for the EMAP-SSN VR viewer (opt_vr).
 REM
-REM This opens the main program's Config GUI, which is where the dataset,
-REM network, threshold and layout cache are chosen - opt_vr has no settings UI
-REM of its own. The GUI's Launch button then starts the VR viewer instead of
-REM the desktop viewer. Set LAYOUT_DIMENSIONS to 3 there for a true 3D layout.
+REM This opens the VR Configuration GUI, where the dataset, network, threshold
+REM and layout cache are chosen. Its Save & Run button launches the VR viewer.
+REM
+REM The VR viewer always solves three dimensional layouts, so there is no 2D/3D
+REM option: dimensionality follows from which viewer you opened. Settings are
+REM written to opt_vr\vr_settings.json and every directory resolves inside this
+REM submodule, so the desktop program's configuration is never touched.
 REM
 REM To skip the GUI and open the viewer directly against the saved settings,
 REM run Viewer.py instead.
@@ -24,20 +27,10 @@ if not exist "..\.venv" (
 )
 
 set "PYTHON_EXE=..\.venv\Scripts\python.exe"
-set "CONFIG_GUI=..\src\EMAPSSN_Config.py"
+set "CONFIG_GUI=Config.py"
 
-REM The submodule locates the GUI, not the other way round: the main
-REM program knows nothing about opt_vr and is simply told which viewer to
-REM start via --viewer.
-if not exist "%CONFIG_GUI%" (
-    echo Error: the EMAP-SSN Config GUI was not found at "%CONFIG_GUI%".
-    echo opt_vr is a submodule and expects to sit inside an EMAP-SSN checkout.
-    pause
-    exit /b 1
-)
-
-echo Opening EMAP-SSN Config (Launch starts the VR viewer)...
-"%PYTHON_EXE%" "%CONFIG_GUI%" --viewer "%~dp0Viewer.py"
+echo Opening EMAP-SSN VR Configuration...
+"%PYTHON_EXE%" "%CONFIG_GUI%"
 
 REM Keeps the command window open so you can see any error messages
 pause

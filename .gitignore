@@ -179,3 +179,7 @@ cython_debug/
 #  refer to https://docs.cursor.com/context/ignore-files
 .cursorignore
 .cursorindexingignore
+
+# Per-user VR configuration, written by Config.py. The parent project
+# ignores viewer_settings.json for the same reason: it holds local paths.
+vr_settings.json

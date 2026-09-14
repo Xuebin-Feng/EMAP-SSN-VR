@@ -34,24 +34,25 @@ two programs cannot drift apart the way they did before.
 opt_vr/Viewer.bat
 ```
 
-That opens the **main program's Config GUI** — opt_vr has no settings UI of its
-own. Choose the dataset, network, threshold and layout cache exactly as you
-would for the desktop viewer; the Launch button then starts the VR viewer
-instead. Set **Layout Dimensions** to `3` for a true 3D layout.
+That opens `Config.py`, the **VR Configuration GUI**. Choose the sequence set,
+network, threshold and layout cache, then press **Save & Run**. The main
+program's Config GUI is a separate window for the desktop viewer and is never
+involved.
 
-The batch file runs the main program's GUI with `--viewer`, pointing it at
-`opt_vr/Viewer.py`:
+There is no 2D/3D control. The VR viewer is three dimensional by definition, so
+dimensionality follows from which viewer you opened — exactly as the desktop
+GUI has no such control. Every cache this GUI resolves or generates is 3D.
 
-```bash
-.venv/Scripts/python.exe src/EMAPSSN_Config.py --viewer opt_vr/Viewer.py
-```
+Settings are written to **`opt_vr/vr_settings.json`**, and every relative
+directory resolves inside the submodule, so a VR configuration never disturbs
+the desktop program's `viewer_settings.json`. The file is git-ignored, like its
+desktop counterpart, because it holds local paths.
 
-That option is the whole integration. `EMAPSSN_Config` launches whichever
-viewer path it is given and otherwise behaves identically, so the per-launch
-settings snapshot, the selected cache and the `(New Layout Cache)` handoff to
-`Layout_Cache_Generator.py` all work unchanged. `Viewer.py` accepts the same
-`--settings PATH [--delete-settings]` contract as the desktop viewer, which is
-what lets one GUI drive either front end without special-casing.
+What the GUI does *not* reimplement is anything scientific: cache identity,
+manifest matching and canonical folder naming come from `Cache_Manifest`;
+layout generation is handed to `Layout_Cache_Generator`; fonts, palette and the
+responsive field layout come from `desktop/Desktop_App.py`. Only the window is
+local, because that was the part the main GUI could not share.
 
 The viewer never computes a layout. If you need a cache without the GUI:
 
