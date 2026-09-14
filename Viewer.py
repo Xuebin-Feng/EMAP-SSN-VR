@@ -422,7 +422,9 @@ def _resolve_cache_path():
             "variable - at the published folder."
         )
     if os.path.isdir(cache_path):
-        candidates = sorted(glob.glob(os.path.join(cache_path, "*.h5")))
+        # Escape the directory: cache folder names carry the model tag in square
+        # brackets (..._[E1_RA]_...), which glob reads as a character class.
+        candidates = sorted(glob.glob(os.path.join(glob.escape(cache_path), "*.h5")))
         if not candidates:
             sys.exit(f"No .h5 layout cache found inside {cache_path!r}.")
         cache_path = candidates[-1]
@@ -688,30 +690,42 @@ def unity_server_loop(server_socket, viewer, pos, edges_to_send, n_nodes, n_edge
     except Exception as e:
         print(f"Server loop shutting down: {e}")
 
-def find_vr_app():
-    """Search for the built VR application executable.
-    Searches in order:
-      1. ../VR_App/ relative to this script
-      2. ./VR_App/ relative to the current working directory
-      3. Any .exe in ../VR_App/ matching *SSN*VR* or *My?project*
-    Returns the absolute path to the .exe, or None if not found.
-    """
+#: Unity ships these alongside the player; neither is the application.
+_NOT_THE_PLAYER = ("unitycrashhandler",)
+
+
+def vr_app_search_dirs():
+    """Directories that may hold the built Unity player, most specific first."""
     script_dir = os.path.dirname(os.path.abspath(__file__))
-    search_dirs = [
-        os.path.join(script_dir, '..', 'VR_App'),
-        os.path.join(os.getcwd(), 'VR_App'),
+    configured = getattr(cfg, "VR_APP_DIR", "VR_App")
+    return [
+        # The setting wins, resolved against opt_vr when it is relative.
+        configured if os.path.isabs(configured)
+        else os.path.join(script_dir, configured),
+        # The build lives inside opt_vr, not beside it. Looking one level up
+        # only worked back when the viewer sat in a subdirectory of the old
+        # standalone repository.
+        os.path.join(script_dir, "VR_App"),
+        os.path.join(os.getcwd(), "VR_App"),
     ]
-    
-    for search_dir in search_dirs:
+
+
+def find_vr_app():
+    """Return the built VR player executable, or None if there is no build."""
+    for search_dir in vr_app_search_dirs():
         search_dir = os.path.normpath(search_dir)
         if not os.path.isdir(search_dir):
             continue
-        # Look for any .exe in the directory (Unity builds produce exactly one)
-        exe_files = glob.glob(os.path.join(search_dir, '*.exe'))
-        if exe_files:
-            # Return the first .exe found
-            return os.path.abspath(exe_files[0])
-    
+        candidates = sorted(
+            path
+            for path in glob.glob(os.path.join(glob.escape(search_dir), "*.exe"))
+            # A Unity build directory also contains the crash handler, so the
+            # first .exe found is not necessarily the player.
+            if not os.path.basename(path).lower().startswith(_NOT_THE_PLAYER)
+        )
+        if candidates:
+            return os.path.abspath(candidates[0])
+
     return None
 
 def launch_vr_app():
@@ -722,7 +736,9 @@ def launch_vr_app():
     if exe_path is None:
         print("VR application not found. Falling back to manual Unity Editor mode.")
         print("  To build: Unity Editor > File > Build Settings > Build")
-        print(f"  Expected location: ../VR_App/*.exe (relative to this script)")
+        print("  Searched:")
+        for search_dir in vr_app_search_dirs():
+            print(f"    {os.path.normpath(search_dir)}")
         return None
     
     print(f"Launching VR application: {exe_path}")

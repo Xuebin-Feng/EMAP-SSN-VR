@@ -84,6 +84,11 @@ _DIRECTORY_SUFFIX = "_DIR"
 #: File-valued settings that are stored with an alias and/or relative.
 _PATH_KEYS = ("NODE_FASTA_FILE", "INPUT_HDF5", "MSA_FILE", "TARGET_CACHE_PATH")
 
+#: Directories belonging to the submodule rather than the parent project. The
+#: Unity build ships inside opt_vr, so anchoring it to the project root would
+#: point one level too high.
+_OPT_VR_RELATIVE_KEYS = ("VR_APP_DIR",)
+
 
 def _settings_path() -> str:
     override = os.environ.get("SSN_VIEWER_SETTINGS_PATH")
@@ -119,10 +124,12 @@ def _resolve_alias(value, values, seen=()):
     return value
 
 
-def _absolute(value):
+def _absolute(value, base=None):
     if not isinstance(value, str) or not value.strip():
         return value
-    return value if os.path.isabs(value) else os.path.join(PROJECT_ROOT, value)
+    if os.path.isabs(value):
+        return value
+    return os.path.join(base or PROJECT_ROOT, value)
 
 
 def resolve_directory_path(value, base_directories=None):
@@ -233,7 +240,8 @@ def load_settings() -> dict:
 
     for key, value in list(values.items()):
         if key.endswith(_DIRECTORY_SUFFIX) or key in _PATH_KEYS:
-            values[key] = _absolute(values[key])
+            base = OPT_VR_DIR if key in _OPT_VR_RELATIVE_KEYS else PROJECT_ROOT
+            values[key] = _absolute(values[key], base)
 
     # The launcher pins one cache folder for this session.
     target = os.environ.get("SSN_TARGET_CACHE") or values.get("TARGET_CACHE_PATH")

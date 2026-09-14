@@ -43,7 +43,7 @@ same inputs. Point `TARGET_CACHE_PATH` in `viewer_settings.json` — or the
 `SSN_TARGET_CACHE` environment variable — at the published folder, then run:
 
 ```bash
-opt_vr/SSN_VR_Viewer.bat
+opt_vr/Viewer.bat
 ```
 
 A 2D cache will still open; its coordinates are lifted onto the `z = 0` plane

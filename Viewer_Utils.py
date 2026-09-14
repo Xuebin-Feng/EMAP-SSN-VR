@@ -74,7 +74,10 @@ def get_cache_filename():
     """
     cache_path = getattr(cfg, "TARGET_CACHE_FILE", None)
     if cache_path and os.path.isdir(cache_path):
-        candidates = sorted(glob.glob(os.path.join(cache_path, "*.h5")))
+        # glob.escape the directory: cache folder names embed the model tag in
+        # square brackets (..._[E1_RA]_...), which glob would otherwise read as
+        # a character class and never match.
+        candidates = sorted(glob.glob(os.path.join(glob.escape(cache_path), "*.h5")))
         if candidates:
             cache_path = candidates[-1]
     reference = getattr(cfg, "ALIGNMENT_REFERENCE", "") or None

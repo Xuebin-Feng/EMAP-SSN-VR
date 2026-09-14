@@ -21,7 +21,7 @@ if not exist "..\.venv" (
 )
 
 set "PYTHON_EXE=..\.venv\Scripts\python.exe"
-set "SCRIPT_NAME=SSN_VR_Viewer.py"
+set "SCRIPT_NAME=Viewer.py"
 
 echo Starting EMAP-SSN VR viewer...
 "%PYTHON_EXE%" "%SCRIPT_NAME%"
