@@ -28,10 +28,32 @@ generation are all the main program's responsibility. This package:
 Everything scientific is imported from `../src`. Nothing is vendored, so the
 two programs cannot drift apart the way they did before.
 
-## Generating something to view
+## Opening it
 
-The viewer will not compute a layout. Produce a 3D cache with the main program
-first, setting `LAYOUT_DIMENSIONS` to `3`:
+```bash
+opt_vr/Viewer.bat
+```
+
+That opens the **main program's Config GUI** — opt_vr has no settings UI of its
+own. Choose the dataset, network, threshold and layout cache exactly as you
+would for the desktop viewer; the Launch button then starts the VR viewer
+instead. Set **Layout Dimensions** to `3` for a true 3D layout.
+
+The batch file runs the main program's GUI with `--viewer`, pointing it at
+`opt_vr/Viewer.py`:
+
+```bash
+.venv/Scripts/python.exe src/EMAPSSN_Config.py --viewer opt_vr/Viewer.py
+```
+
+That option is the whole integration. `EMAPSSN_Config` launches whichever
+viewer path it is given and otherwise behaves identically, so the per-launch
+settings snapshot, the selected cache and the `(New Layout Cache)` handoff to
+`Layout_Cache_Generator.py` all work unchanged. `Viewer.py` accepts the same
+`--settings PATH [--delete-settings]` contract as the desktop viewer, which is
+what lets one GUI drive either front end without special-casing.
+
+The viewer never computes a layout. If you need a cache without the GUI:
 
 ```bash
 python src/Layout_Cache_Generator.py <layout_settings.json>
@@ -39,15 +61,14 @@ python src/Layout_Cache_Generator.py <layout_settings.json>
 
 3D caches are published to their own folder, suffixed `_3D`, and carry a
 distinct manifest id, so they never collide with the 2D cache built from the
-same inputs. Point `TARGET_CACHE_PATH` in `viewer_settings.json` — or the
-`SSN_TARGET_CACHE` environment variable — at the published folder, then run:
+same inputs. A 2D cache still opens; its coordinates are lifted onto the
+`z = 0` plane and a warning is printed.
 
-```bash
-opt_vr/Viewer.bat
-```
-
-A 2D cache will still open; its coordinates are lifted onto the `z = 0` plane
-and a warning is printed.
+To skip the GUI and open the viewer directly against the saved settings, run
+`Viewer.py`. With nothing pinned it resolves the cache through the main
+program's own `resolve_selected_cache`, so it honours whatever the GUI last
+saved; `TARGET_CACHE_PATH`, or the `SSN_TARGET_CACHE` environment variable,
+overrides that.
 
 ## Configuration
 

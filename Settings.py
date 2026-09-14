@@ -38,7 +38,7 @@ import re
 import sys
 
 import _bootstrap
-from desktop.Viewer_State import ALIASES, DEFAULTS
+from desktop.Viewer_State import ALIASES, DEFAULTS, decode_document
 
 #: Upstream renamed some keys; the VR code and the Unity client still use the
 #: older spellings, so read the current key and publish it under both names.
@@ -73,6 +73,11 @@ VR_DEFAULTS = {
     "LOGO_DIR": os.path.join("$analysis_result$", "Sequence_Logos"),
     "CLUSTER_ALIGNMENT_DIR": os.path.join("$analysis_result$", "Cluster_Alignments"),
     "CLUSTER_LABEL_DIR": os.path.join("$analysis_result$", "Cluster_Labels"),
+    # --- Layout ---------------------------------------------------------
+    # The VR viewer is three dimensional by definition, so this is not a
+    # user choice: it is a property of which viewer was launched. The
+    # desktop program has no such setting and is always two dimensional.
+    "LAYOUT_DIMENSIONS": 3,
     # --- Runtime state, resolved at load ------------------------------
     "TARGET_CACHE_FILE": None,
     "SEQUENCE_SET": None,
@@ -106,7 +111,19 @@ def _read_json(path):
     except (OSError, ValueError) as error:
         print(f"[Settings] Ignoring unreadable settings at {path}: {error}")
         return {}
-    return stored if isinstance(stored, dict) else {}
+    if not isinstance(stored, dict):
+        return {}
+    # The Config GUI hands each launch a private snapshot written with
+    # encode_document() - sectioned, not a flat mapping - and points
+    # SSN_VIEWER_SETTINGS_PATH at it. Decode that shape so the VR viewer
+    # consumes the GUI's handoff exactly as the desktop viewer does.
+    if stored.get("schema_version") is not None:
+        try:
+            return decode_document(stored, "viewer", partial=True)
+        except ValueError as error:
+            print(f"[Settings] Ignoring unreadable settings document at {path}: {error}")
+            return {}
+    return stored
 
 
 def _resolve_alias(value, values, seen=()):

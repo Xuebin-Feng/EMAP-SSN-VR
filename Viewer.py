@@ -17,6 +17,8 @@ import glob
 # program's src/ so local command overrides win. Appending the directory
 # again here would add a second, lower-priority entry.
 
+# Importing _bootstrap also applies any --settings argument the Config GUI
+# passed, which must happen before Settings reads its file below.
 import _bootstrap
 import Settings as cfg
 
@@ -31,6 +33,7 @@ _bootstrap.install_settings_alias(cfg)
 
 import Viewer_Utils as utils
 import Alignment_Manager
+from desktop.Viewer_State import resolve_selected_cache
 
 
 
@@ -409,28 +412,85 @@ def _edges_for(cache_headers):
     )
 
 
+def _newest_cache_in(folder):
+    """Latest .h5 in a cache folder, or None.
+
+    The folder name is escaped before globbing: cache folders carry the model
+    tag in square brackets (..._[E1_RA]_...), which glob reads as a character
+    class and would never match.
+    """
+    if not folder or not os.path.isdir(folder):
+        return None
+    candidates = sorted(glob.glob(os.path.join(glob.escape(folder), "*.h5")))
+    return candidates[-1] if candidates else None
+
+
+def _available_caches():
+    """Every cache folder the configured SAVED_LAYOUT_DIR actually holds."""
+    root = getattr(cfg, "SAVED_LAYOUT_DIR", None)
+    if not root or not os.path.isdir(root):
+        return []
+    return sorted(
+        entry
+        for entry in os.listdir(root)
+        if _newest_cache_in(os.path.join(root, entry))
+    )
+
+
 def _resolve_cache_path():
-    cache_path = getattr(cfg, "TARGET_CACHE_FILE", None)
-    if not cache_path:
+    pinned = getattr(cfg, "TARGET_CACHE_FILE", None)
+    if pinned:
+        resolved = _newest_cache_in(pinned) if os.path.isdir(pinned) else pinned
+        if not resolved or not os.path.exists(resolved):
+            sys.exit(f"Layout cache not found: {pinned!r}")
+        return resolved
+
+    # Nothing pinned, so ask the main program where its cache lives rather than
+    # predicting the name here. resolve_selected_cache is what the desktop
+    # viewer calls, so opt_vr honours whatever the Config GUI last saved.
+    try:
+        selected, _reference = resolve_selected_cache(cfg)
+    except Exception as error:
         sys.exit(
-            "No layout cache selected.\n\n"
-            "opt_vr consumes a layout cache produced by the main EMAP-SSN "
-            "program; it does not generate one. Create a 3D cache with:\n"
+            f"Could not work out which layout cache these settings describe: {error}\n\n"
+            "opt_vr consumes a cache produced by the main EMAP-SSN program; it "
+            "does not generate one. Build one with:\n"
             "    python src/Layout_Cache_Generator.py <layout_settings.json>\n"
-            "with LAYOUT_DIMENSIONS set to 3, then point TARGET_CACHE_PATH in "
-            "viewer_settings.json - or the SSN_TARGET_CACHE environment "
-            "variable - at the published folder."
+            "or set TARGET_CACHE_PATH in viewer_settings.json - or the "
+            "SSN_TARGET_CACHE environment variable - to choose one explicitly."
         )
-    if os.path.isdir(cache_path):
-        # Escape the directory: cache folder names carry the model tag in square
-        # brackets (..._[E1_RA]_...), which glob reads as a character class.
-        candidates = sorted(glob.glob(os.path.join(glob.escape(cache_path), "*.h5")))
-        if not candidates:
-            sys.exit(f"No .h5 layout cache found inside {cache_path!r}.")
-        cache_path = candidates[-1]
-    if not os.path.exists(cache_path):
-        sys.exit(f"Layout cache not found: {cache_path!r}")
-    return cache_path
+
+    folders = [os.path.dirname(selected)]
+    if int(getattr(cfg, "LAYOUT_DIMENSIONS", 2) or 2) == 3:
+        # resolve_selected_cache does not forward LAYOUT_DIMENSIONS to
+        # build_canonical_cache_name, so it always names the 2D folder. The
+        # generator appends "_3D", so try that sibling first.
+        folders.insert(0, folders[0] + "_3D")
+
+    for folder in folders:
+        found = _newest_cache_in(folder)
+        if found:
+            return found
+    if os.path.exists(selected):
+        return selected
+
+    available = _available_caches()
+    listing = (
+        "\n\nCaches available in "
+        f"{getattr(cfg, 'SAVED_LAYOUT_DIR', '(unset)')}:\n"
+        + "\n".join(f"    {name}" for name in available)
+        if available
+        else ""
+    )
+    sys.exit(
+        "No layout cache matches the current settings. Looked for:\n"
+        + "\n".join(f"    {folder}" for folder in folders)
+        + "\n\nopt_vr consumes a cache produced by the main EMAP-SSN program; "
+        "it does not generate one. Build one with:\n"
+        "    python src/Layout_Cache_Generator.py <layout_settings.json>\n"
+        "or point TARGET_CACHE_PATH (or SSN_TARGET_CACHE) at an existing "
+        "folder." + listing
+    )
 
 
 def load_layout_cache():
@@ -756,7 +816,24 @@ def launch_vr_app():
         print("Falling back to manual Unity Editor mode.")
         return None
 
+def _consume_launch_snapshot():
+    """Delete the per-launch settings snapshot the Config GUI handed us.
+
+    Settings has already read the file by the time this runs, so removing it
+    here honours --delete-settings exactly as the desktop viewer does.
+    """
+    path = _bootstrap.SETTINGS_SNAPSHOT_TO_DELETE
+    _bootstrap.SETTINGS_SNAPSHOT_TO_DELETE = None
+    if not path:
+        return
+    try:
+        os.unlink(path)
+    except OSError:
+        pass
+
+
 def start_server(host=None, port=None):
+    _consume_launch_snapshot()
     # The endpoint is a setting, but the Unity build has 127.0.0.1:5005
     # baked into its scene, so changing it also means rebuilding the client.
     host = host or getattr(cfg, 'VR_HOST', '127.0.0.1')

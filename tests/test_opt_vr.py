@@ -381,6 +381,146 @@ class LayoutCacheConsumerTests(unittest.TestCase):
             cfg.TARGET_CACHE_FILE = original
         self.assertIn("Layout_Cache_Generator", str(raised.exception))
 
+    def test_unpinned_cache_is_resolved_from_the_shared_settings(self):
+        """With nothing pinned, defer to the resolver the desktop viewer uses.
+
+        opt_vr used to demand an explicit TARGET_CACHE_PATH and refuse to start
+        without one, even though the Config GUI already describes the network.
+        """
+        import tempfile
+        import unittest.mock as mock
+
+        original = cfg.TARGET_CACHE_FILE
+        with tempfile.TemporaryDirectory() as folder:
+            cache = os.path.join(folder, "version_00.h5")
+            open(cache, "w").close()
+            try:
+                cfg.TARGET_CACHE_FILE = None
+                with mock.patch.object(
+                    vr_viewer, "resolve_selected_cache", return_value=(cache, None)
+                ):
+                    self.assertEqual(vr_viewer._resolve_cache_path(), cache)
+            finally:
+                cfg.TARGET_CACHE_FILE = original
+
+    def test_three_dimensional_layouts_prefer_the_3d_folder(self):
+        """The generator appends _3D; the shared resolver does not add it."""
+        import tempfile
+        import unittest.mock as mock
+
+        original_target = cfg.TARGET_CACHE_FILE
+        original_dims = getattr(cfg, "LAYOUT_DIMENSIONS", 2)
+        with tempfile.TemporaryDirectory() as root:
+            flat = os.path.join(root, "Network_Top5.0Pct")
+            solid = flat + "_3D"
+            for folder in (flat, solid):
+                os.makedirs(folder)
+                open(os.path.join(folder, "version_00.h5"), "w").close()
+            try:
+                cfg.TARGET_CACHE_FILE = None
+                cfg.LAYOUT_DIMENSIONS = 3
+                with mock.patch.object(
+                    vr_viewer,
+                    "resolve_selected_cache",
+                    return_value=(os.path.join(flat, "version_00.h5"), None),
+                ):
+                    resolved = vr_viewer._resolve_cache_path()
+                self.assertEqual(os.path.dirname(resolved), solid)
+            finally:
+                cfg.TARGET_CACHE_FILE = original_target
+                cfg.LAYOUT_DIMENSIONS = original_dims
+
+    def test_bracketed_cache_folders_are_found(self):
+        """Cache folders embed the model tag in brackets, which glob eats."""
+        import tempfile
+
+        original = cfg.TARGET_CACHE_FILE
+        with tempfile.TemporaryDirectory() as root:
+            folder = os.path.join(root, "Network_[E1_RA]_Top5.0Pct")
+            os.makedirs(folder)
+            cache = os.path.join(folder, "version_00.h5")
+            open(cache, "w").close()
+            try:
+                cfg.TARGET_CACHE_FILE = folder
+                self.assertEqual(vr_viewer._resolve_cache_path(), cache)
+            finally:
+                cfg.TARGET_CACHE_FILE = original
+
+
+class LaunchHandoffTests(unittest.TestCase):
+    """The GUI hands each launch a private settings snapshot on the argv.
+
+    opt_vr implements the same --settings contract as the desktop viewer, which
+    is what lets EMAPSSN_Config's --viewer option point at either front end
+    without special-casing one of them.
+    """
+
+    def setUp(self):
+        self._saved = os.environ.get("SSN_VIEWER_SETTINGS_PATH")
+
+    def tearDown(self):
+        if self._saved is None:
+            os.environ.pop("SSN_VIEWER_SETTINGS_PATH", None)
+        else:
+            os.environ["SSN_VIEWER_SETTINGS_PATH"] = self._saved
+
+    def test_settings_argument_sets_the_path_settings_reads(self):
+        _bootstrap.apply_settings_argument(["Viewer.py", "--settings", "snap.json"])
+        self.assertEqual(os.environ["SSN_VIEWER_SETTINGS_PATH"], "snap.json")
+
+    def test_equals_form_is_accepted(self):
+        _bootstrap.apply_settings_argument(["Viewer.py", "--settings=snap.json"])
+        self.assertEqual(os.environ["SSN_VIEWER_SETTINGS_PATH"], "snap.json")
+
+    def test_snapshot_is_only_scheduled_for_deletion_when_asked(self):
+        kept = _bootstrap.apply_settings_argument(["Viewer.py", "--settings", "a.json"])
+        self.assertIsNone(kept)
+        doomed = _bootstrap.apply_settings_argument(
+            ["Viewer.py", "--settings", "b.json", "--delete-settings"]
+        )
+        self.assertEqual(doomed, "b.json")
+
+    def test_plain_launch_touches_nothing(self):
+        os.environ.pop("SSN_VIEWER_SETTINGS_PATH", None)
+        self.assertIsNone(_bootstrap.apply_settings_argument(["Viewer.py"]))
+        self.assertNotIn("SSN_VIEWER_SETTINGS_PATH", os.environ)
+
+    def test_snapshot_is_deleted_once(self):
+        import tempfile
+
+        handle = tempfile.NamedTemporaryFile(
+            "w", suffix=".json", delete=False, encoding="utf-8"
+        )
+        handle.close()
+        previous = _bootstrap.SETTINGS_SNAPSHOT_TO_DELETE
+        try:
+            _bootstrap.SETTINGS_SNAPSHOT_TO_DELETE = handle.name
+            vr_viewer._consume_launch_snapshot()
+            self.assertFalse(os.path.exists(handle.name))
+            # Idempotent: a second call must not raise or delete anything else.
+            vr_viewer._consume_launch_snapshot()
+        finally:
+            _bootstrap.SETTINGS_SNAPSHOT_TO_DELETE = previous
+
+    def test_gui_settings_document_is_decoded(self):
+        """The GUI snapshot is encode_document output, not a flat mapping."""
+        import tempfile
+
+        from desktop.Viewer_State import DEFAULTS, encode_document
+
+        document = encode_document("viewer", {**DEFAULTS, "NODE_SIZE": 17})
+        handle = tempfile.NamedTemporaryFile(
+            "w", suffix=".json", delete=False, encoding="utf-8"
+        )
+        json.dump(document, handle)
+        handle.close()
+        self.addCleanup(lambda: os.path.exists(handle.name) and os.unlink(handle.name))
+
+        import Settings
+
+        self.assertEqual(Settings._read_json(handle.name).get("NODE_SIZE"), 17)
+
+
 
 class ViewerStateTests(unittest.TestCase):
     def test_viewer_exposes_positions_for_commands(self):

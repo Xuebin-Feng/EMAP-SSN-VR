@@ -80,6 +80,37 @@ for _path in (SRC_DIR, UTILITIES_DIR, OPT_VR_DIR):
     sys.path.insert(0, _path)
 
 
+def apply_settings_argument(argv) -> str | None:
+    """Honour ``--settings PATH [--delete-settings]`` from the command line.
+
+    The Config GUI writes one private settings snapshot per launch and passes
+    it to the viewer this way; it is the same contract the desktop viewer
+    implements, which is what lets ``EMAPSSN_Config --viewer`` drive either
+    front end without special-casing one of them.
+
+    This lives in the bootstrap rather than in ``Viewer`` because ``Settings``
+    reads its file at import time. Doing it here means any import order works:
+    ``Settings`` imports this module before it looks the path up.
+
+    Returns the snapshot to delete once it has been read, or ``None``.
+    """
+    path = None
+    for index, token in enumerate(argv):
+        if token == "--settings" and index + 1 < len(argv):
+            path = argv[index + 1]
+        elif token.startswith("--settings="):
+            path = token.split("=", 1)[1]
+    if path:
+        os.environ["SSN_VIEWER_SETTINGS_PATH"] = path
+    if "--delete-settings" not in argv:
+        return None
+    return os.environ.get("SSN_VIEWER_SETTINGS_PATH")
+
+
+#: Snapshot the Config GUI asked the viewer to remove after reading it.
+SETTINGS_SNAPSHOT_TO_DELETE = apply_settings_argument(sys.argv)
+
+
 def install_settings_alias(module) -> None:
     """Publish ``module`` under the config names upstream modules import.
 
