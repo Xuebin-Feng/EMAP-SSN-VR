@@ -34,6 +34,7 @@ from __future__ import annotations
 import ast
 import json
 import os
+import re
 import sys
 
 import _bootstrap
@@ -122,6 +123,41 @@ def _absolute(value):
     if not isinstance(value, str) or not value.strip():
         return value
     return value if os.path.isabs(value) else os.path.join(PROJECT_ROOT, value)
+
+
+def resolve_directory_path(value, base_directories=None):
+    """Expand one exact leading directory alias without changing other paths.
+
+    Shared commands hold their output directory as a literal - ``logo.py`` uses
+    ``"$analysis_result$/Sequence_Logos"`` - and call this to turn it into a
+    real path. The contract mirrors ``EMAPSSN_Config.resolve_directory_path``
+    exactly, because the same command source runs against both: only a leading
+    alias is expanded, and anything else is handed back untouched.
+
+    The alias table is ``Viewer_State.ALIASES``, which is the same mapping the
+    desktop config publishes as ``DIRECTORY_PATH_ALIASES``.
+    """
+    if value is None:
+        return value
+    raw_path = os.fspath(value)
+    bases = base_directories or {}
+    for alias, setting_key in ALIASES.items():
+        if raw_path == alias:
+            suffix = ""
+        elif (
+            raw_path.startswith(alias)
+            and raw_path[len(alias):len(alias) + 1] in {"/", "\\"}
+        ):
+            suffix = raw_path[len(alias):].lstrip("/\\")
+        else:
+            continue
+
+        base_path = os.fspath(bases.get(setting_key, globals().get(setting_key, "")))
+        if not suffix:
+            return os.path.normpath(base_path)
+        parts = [part for part in re.split(r"[/\\]+", suffix) if part]
+        return os.path.normpath(os.path.join(base_path, *parts))
+    return raw_path
 
 
 def _coerce(key, value):

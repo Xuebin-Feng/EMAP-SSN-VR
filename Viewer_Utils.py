@@ -2,7 +2,6 @@ import os
 import glob
 import re
 import numpy as np
-import matplotlib.colors as mcolors
 from Bio import AlignIO
 from Bio.Seq import Seq
 from Bio.SeqRecord import SeqRecord
@@ -178,6 +177,12 @@ def sort_labels(labels):
     return sorted(labels, key=key_func)
 
 def hex_to_rgba(hex_code):
+    # Imported lazily, as upstream Command_Engine does. A module-level import
+    # put matplotlib on the critical path of every command that touches this
+    # file, so a headless viewer could not load `save` or `select` without a
+    # plotting stack it never uses.
+    import matplotlib.colors as mcolors
+
     return mcolors.to_rgba(hex_code)
 
 # --- 3. Clustering & Topology Functions ---

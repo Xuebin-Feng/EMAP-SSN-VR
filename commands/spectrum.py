@@ -121,38 +121,26 @@ def run(viewer, args):
         Command_Engine.print_help(viewer, f"Error: Property '{matched_key}' is not numerical (type is '{prop_data['type']}'). Spectrum coloring requires a numerical property.")
         return
 
-    # Keep selection cache fresh if selection expression is used
-    header_dir = getattr(cfg, 'HEADER_LIST_DIR', os.path.join("Input_Files", "Header_Lists"))
-    os.makedirs(header_dir, exist_ok=True)
-    sele_path = os.path.join(header_dir, "_sele.txt")
-    
-    if hasattr(viewer, 'selected_indices') and viewer.selected_indices:
-        with open(sele_path, "w", encoding="utf-8") as f:
-            for idx in viewer.selected_indices:
-                f.write(viewer.full_headers[idx] + "\n")
-    else:
-        if os.path.exists(sele_path):
-            open(sele_path, 'w').close()
+    # $sele$ is resolved in memory by the expression parser. It used to be
+    # spilled to HEADER_LIST_DIR/_sele.txt and read back as @_sele.txt@,
+    # writing into the user's shared header-list directory on every call.
+    selection_mask = Command_Engine.get_selected_mask(viewer)
 
-    # Preprocess expression (replace $sele$ and remove spaces in {})
+    # Preprocess expression (strip quoting around $sele$, spaces inside {})
     if expr:
-        expr = re.sub(r'["\']?\$sele\$["\']?', '@_sele.txt@', expr, flags=re.IGNORECASE)
+        expr = re.sub(r'["\']?(\$sele\$)["\']?', r'\1', expr, flags=re.IGNORECASE)
         expr = re.sub(r'\{([^}]+)\}', lambda m: '{' + m.group(1).replace(' ', '') + '}', expr)
 
     # Determine mask
     if expr:
-        viewer_to_aln = np.full(len(viewer.full_headers), -1, dtype=int)
-        if (getattr(viewer, 'alignment', None).aln if getattr(viewer, 'alignment', None) else None) is not None:
-            for i, h in enumerate(viewer.full_headers):
-                if h in viewer.alignment.seq_map:
-                    viewer_to_aln[i] = viewer.alignment.seq_map[h]
-        valid_indices = np.where(viewer_to_aln != -1)[0]
+        viewer_to_aln, valid_indices = Command_Engine.get_alignment_mapping(viewer)
         
         try:
             mask = Command_Engine.parse_advanced_expression(
                 expr, viewer_to_aln, valid_indices, viewer.full_headers,
                 getattr(viewer, 'cluster_labels', None), getattr(viewer, 'group_labels', None),
-                getattr(viewer, 'alignment', None), metadata=viewer.metadata
+                getattr(viewer, 'alignment', None), metadata=viewer.metadata,
+                selection_mask=selection_mask,
             )
         except Exception as e:
             Command_Engine.print_help(viewer, f"Error parsing expression '{expr}': {e}")

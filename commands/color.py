@@ -58,22 +58,14 @@ def run(viewer, args):
             viewer.console_text.text = "Help information printed to the console."
         return
 
-    # ALWAYS update the _sele.txt file to keep the cache fresh for implicit selection
-    header_dir = getattr(cfg, 'HEADER_LIST_DIR', os.path.join("Input_Files", "Header_Lists"))
-    os.makedirs(header_dir, exist_ok=True)
-    sele_path = os.path.join(header_dir, "_sele.txt")
-    
-    if hasattr(viewer, 'selected_indices') and viewer.selected_indices:
-        with open(sele_path, "w", encoding="utf-8") as f:
-            for idx in viewer.selected_indices:
-                f.write(viewer.full_headers[idx] + "\n")
-    else:
-        # Clear it out so old selections don't apply if nothing is selected
-        if os.path.exists(sele_path):
-            open(sele_path, 'w').close()
+    # $sele$ is resolved in memory by the expression parser. It used to be
+    # spilled to HEADER_LIST_DIR/_sele.txt and read back as @_sele.txt@,
+    # writing into the user's shared header-list directory on every call.
+    selection_mask = Command_Engine.get_selected_mask(viewer)
 
-    # FIX: Replace with correct file syntax, removing the literal quotes
-    args = [re.sub(r'["\']?\$sele\$["\']?', '@_sele.txt@', arg, flags=re.IGNORECASE) for arg in args]
+    # Strip quoting so "$sele$" and '$sele$' resolve like a bare token.
+    args = [re.sub(r'["\']?(\$sele\$)["\']?', r'\1', arg, flags=re.IGNORECASE)
+            for arg in args]
 
     assignments = []
     current_expr = None
@@ -87,7 +79,7 @@ def run(viewer, args):
         # A scale of 0 is a legal size (the help advertises "x0"), so compare
         # against None instead of testing truthiness.
         if not current_expr and (current_color or current_scale is not None):
-            current_expr = '@_sele.txt@'
+            current_expr = '$sele$'
 
         if current_expr and (current_color or current_scale is not None):
             assignments.append((current_expr, current_color, current_scale))
@@ -161,7 +153,7 @@ def run(viewer, args):
         if expr:
             expr = re.sub(r'\{([^}]+)\}', lambda m: '{' + m.group(1).replace(' ', '') + '}', expr)
         try:
-            mask = Command_Engine.parse_advanced_expression(expr, viewer_to_aln, valid_indices, viewer.full_headers, getattr(viewer, 'cluster_labels', None), getattr(viewer, 'group_labels', None), getattr(viewer, 'alignment', None), metadata=getattr(viewer, 'metadata', None))
+            mask = Command_Engine.parse_advanced_expression(expr, viewer_to_aln, valid_indices, viewer.full_headers, getattr(viewer, 'cluster_labels', None), getattr(viewer, 'group_labels', None), getattr(viewer, 'alignment', None), metadata=getattr(viewer, 'metadata', None), selection_mask=selection_mask)
         except Exception as e:
             Command_Engine.print_help(viewer, f"Error in expression '{expr}': {e}\nNothing was changed.")
             return

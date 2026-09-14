@@ -29,6 +29,9 @@ no dispatcher change.
 Not every upstream command can work here - some drive the VisPy canvas or a Qt
 dialog that does not exist in a headless process. Those fail at import with a
 clear "missing dependency" message rather than silently misbehaving.
+
+Which commands fall into which group is decided by ``Command_Compatibility.py``
+rather than by memory, and its verdict is enforced by the test suite.
 """
 
 import os

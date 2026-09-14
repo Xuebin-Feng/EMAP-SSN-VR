@@ -262,6 +262,46 @@ class CommandEngineAPITests(unittest.TestCase):
         )
         self.assertEqual(int(negated.sum()), viewer.n_nodes - 3)
 
+    def test_no_command_spills_the_selection_to_disk(self):
+        """$sele$ must resolve in memory.
+
+        Seven commands used to write every selected header to
+        HEADER_LIST_DIR/_sele.txt and read it back as @_sele.txt@, which wrote
+        into the user's shared header-list directory on every invocation.
+        """
+        import Settings as settings
+
+        original = getattr(settings, "HEADER_LIST_DIR", None)
+        with tempfile.TemporaryDirectory() as folder:
+            settings.HEADER_LIST_DIR = folder
+            try:
+                for command in (
+                    "color red $sele$",
+                    "hide $sele$",
+                    "spectrum $sele$ prop:Length",
+                    "group $sele$ g1",
+                    "select $sele$",
+                ):
+                    viewer = build_viewer()
+                    viewer.selected_indices = [1, 2, 3]
+                    run_command(viewer, command)
+                    self.assertEqual(
+                        os.listdir(folder), [],
+                        f"'{command}' wrote into the header-list directory",
+                    )
+            finally:
+                if original is not None:
+                    settings.HEADER_LIST_DIR = original
+
+    def test_selection_token_targets_exactly_the_selection(self):
+        viewer = build_viewer()
+        viewer.selected_indices = [0, 1]
+        run_command(viewer, "color red $sele$")
+        red = np.all(
+            np.isclose(viewer.current_colors[:, :3], [1.0, 0.0, 0.0]), axis=1
+        )
+        self.assertEqual(sorted(np.flatnonzero(red).tolist()), [0, 1])
+
     def test_selection_token_without_a_mask_is_empty_not_an_error(self):
         viewer = build_viewer()
         mapping, valid = Command_Engine.get_alignment_mapping(viewer)

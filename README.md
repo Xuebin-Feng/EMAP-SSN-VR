@@ -54,10 +54,30 @@ and a warning is printed.
 Settings are shared with the main program. `viewer_settings.json` in the
 EMAP-SSN project root is the source of truth, and the EMAP-SSN Config GUI is
 what writes it — **the VR runtime only ever reads it**, so no Qt is imported
-into the headless VR process. `VR_Settings.py` layers the handful of VR-only
+into the headless VR process. `Settings.py` layers the handful of VR-only
 keys (Unity host/port, edge-render budget) on top of the shared defaults in
 `src/desktop/Viewer_State.py`. Drop a `vr_settings.json` beside
-`VR_Settings.py` to override any of them locally.
+`Settings.py` to override any of them locally.
+
+## Which commands are shared
+
+`commands/` falls through to `src/commands`, so a command is either shared from
+upstream or overridden here. `Command_Compatibility.py` decides which, instead
+of leaving it to memory — that is how the previous fork drifted.
+
+```bash
+../.venv/Scripts/python.exe Command_Compatibility.py
+```
+
+Each command is probed twice: once by executing it behind an import hook that
+refuses Qt and VisPy, and once by comparing the `viewer.<attr>` reads in its AST
+against the surface `Viewer.py` actually provides. A command marked `redundant`
+has a local override that upstream could serve; one marked `broken` cannot be
+loaded at all, and `--check` exits non-zero so the test suite catches it.
+
+Both probes are load-time only. A clean verdict means "imports, and only touches
+API this viewer has" — not that the behaviour is what you want. Deleting a
+redundant override is still a judgement call.
 
 ## Tests
 

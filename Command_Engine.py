@@ -1,8 +1,47 @@
+import importlib.util
 import numpy as np
 import fnmatch
 import re
 import os
+import sys
+
+import _bootstrap
 import Settings as cfg
+
+
+def _upstream_engine():
+    """Load the main program's Command_Engine under a private alias.
+
+    ``import Command_Engine`` resolves to *this* module - opt_vr precedes src on
+    sys.path, which is what makes the override work at all - so the upstream
+    copy has to be loaded by path to be reachable from here.
+    """
+    alias = "_upstream_Command_Engine"
+    module = sys.modules.get(alias)
+    if module is None:
+        path = os.path.join(_bootstrap.SRC_DIR, "Command_Engine.py")
+        spec = importlib.util.spec_from_file_location(alias, path)
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[alias] = module
+        spec.loader.exec_module(module)
+    return module
+
+
+# The Boolean selection grammar belongs to the main program. Classification is
+# pure - upstream documents it as consulting "neither viewer data nor the
+# filesystem" - so these names are adopted rather than forked. Re-implementing
+# them here would mean copying a recursive-descent parser and twenty-odd helper
+# predicates that would start drifting the day upstream touched them, which is
+# exactly how the previous fork rotted.
+_upstream = _upstream_engine()
+
+SelectionExpressionError = _upstream.SelectionExpressionError
+SelectionContextError = _upstream.SelectionContextError
+SelectionClassification = _upstream.SelectionClassification
+SelectionClassificationKind = _upstream.SelectionClassificationKind
+classify_selection_expression = _upstream.classify_selection_expression
+parse_selection_expression = _upstream.parse_selection_expression
+
 
 def evaluate_string_mask(full_headers, target):
     """Evaluates a raw string, NCBI ID, or wildcard pattern into a boolean mask."""
@@ -341,7 +380,10 @@ def parse_advanced_expression(expr, viewer_to_aln, valid_indices, full_headers, 
     try:
         return eval(final_expr, {"__builtins__": {}}, {"masks": masks})
     except Exception as e:
-        raise ValueError(f"Invalid logic expression: {final_expr}. Ensure no spaces exist inside the logic.")
+        # SelectionExpressionError subclasses ValueError, so existing handlers
+        # still catch this, while upstream commands that catch the specific
+        # type now match instead of surfacing a raw traceback at the prompt.
+        raise SelectionExpressionError(f"Invalid logic expression: {final_expr}. Ensure no spaces exist inside the logic.")
 
 def print_help(viewer, msg, *, terminal_msg=None, report_message=True):
     """Print a message to the terminal.
