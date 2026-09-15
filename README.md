@@ -59,6 +59,8 @@ opt_vr/
     ├── EMAPSSN_Viewer_VR.py             # VR viewer and Unity bridge
     ├── Settings_VR.py                   # Qt-free settings layer
     ├── Viewer_Utils_VR.py               # sequence and colour helpers
+    ├── Unity_Build_VR.py                 # reads a build's baked endpoint
+    ├── Single_Instance_VR.py             # one VR viewer at a time
     ├── Command_Compatibility_VR.py      # shared vs overridden command audit
     ├── Command_Engine.py                # name pinned: upstream imports it
     ├── Viewer_Command_Portal.py         # name pinned: upstream imports it
@@ -240,6 +242,62 @@ the client connects, receives a binary handshake carrying node count,
 positions (`float32` x, y, z), and the rendered and full edge lists, then
 exchanges newline-delimited JSON for per-node colour, size and visibility
 updates.
+
+The endpoint cannot be negotiated: the client dials before Python has any way
+to tell it where to dial, so the address is compiled into the build and the
+server has to be told the same one. Getting that wrong produces no error at
+all - Python listens on one port, the player dials another, and the headset
+simply never fills in. So the Config GUI reads the address out of the build
+rather than asking for it. `src/Unity_Build_VR.py` finds it in the serialized
+scene, where Unity stores it as a length-prefixed string followed by the port:
+
+```
+09 00 00 00  "127.0.0.1"  00 00 00   8d 13 00 00
+|- length 9  |- utf-8     |- pad     |- int32 5005
+```
+
+Choosing a build fills **Unity Host** and **Unity Port** in from it, and any
+disagreement between the two is called out above the fields.
+
+## One viewer at a time
+
+Two VR viewers cannot usefully coexist. They drive the same headset through the
+same Unity client, and they listen on the same endpoint - which the client
+dials by an address compiled into its build, so it cannot be told to reach the
+other one. A second viewer does not give a second view; it gives two processes
+fighting over one client.
+
+So `src/Single_Instance_VR.py` takes a Windows named mutex before anything
+else, and a second viewer exits with an explanation rather than racing for the
+port. The mutex is used in preference to a lock file because the kernel
+releases it however the holding process died - a stale lock that refuses to
+start the viewer is a worse failure than the one being prevented - and it is
+session-local, so two desktop sessions on one machine do not fight over a
+headset neither of them shares. The listening socket asks for
+`SO_EXCLUSIVEADDRUSE` rather than `SO_REUSEADDR` for the same reason: on
+Windows the latter lets an unrelated process bind a port this one is already
+serving and take the connections with it.
+
+This is the one place opt_vr deliberately differs from the main program, whose
+viewer may legitimately be opened more than once because each instance owns its
+own window. Nothing here owns a window.
+
+**Quit With Unity**, at the bottom of the Visual Effects tab, decides what
+happens when the headset app closes. On - the default - the viewer follows it
+out rather than leaving an orphan holding the port. Off keeps the viewer and
+its command console running, which is what you want while debugging the
+client.
+
+This is a heuristic over a serialized asset, not a documented API, so it
+declines rather than guesses: an address merely embedded in a longer string, an
+implausible port, or two endpoints that disagree all read as unknown, and
+whatever you typed stands. A build that stores its endpoint some other way
+costs you the convenience, never the ability to set it by hand.
+
+The cleaner fix is the opposite direction - `EMAPSSN_Viewer_VR.py` launches the
+player itself, so it could pass the endpoint as a launch argument and make
+Python authoritative - but that needs a change on the Unity side and a rebuild.
+Until then, reading the build is what keeps the two ends from drifting.
 
 ## Licence
 

@@ -63,6 +63,11 @@ VR_BRIDGE_DEFAULTS = {
     # --- Edge rendering budget ---------------------------------------
     "ENABLE_EDGE_FILTERING": True,
     "MAX_RENDER_EDGES": 500000,
+    # --- Lifecycle -----------------------------------------------------
+    # The viewer exists to drive the headset, so it follows the client out
+    # by default. Turning this off keeps the command console alive after
+    # the Unity app closes, which is what you want while debugging.
+    "EXIT_WITH_UNITY": True,
     # --- Visual keys the Unity client reads from globalSettings -------
     "NEIGHBOR_COLOR": "#4488ff",
 }

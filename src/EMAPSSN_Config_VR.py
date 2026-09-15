@@ -51,6 +51,7 @@ from desktop.Desktop_App import (
     configure_linux_qt_desktop_identity,
 )
 from Layout_Cache_Generator import LayoutGenerationSettings
+import Unity_Build_VR
 from desktop.Viewer_State import (
     INPUT_PROFILE_DEFAULTS, VISUAL_PROFILE_DEFAULTS, PHYSICS_PROFILE_DEFAULTS, DIRECTORY_PROFILE_DEFAULTS, LEGACY_DEFAULT_DIRECTORY_PATHS, PROFILE_ENUM_VALUES, PROFILE_RANGES
 )
@@ -76,6 +77,61 @@ def application_icon_path():
             if os.path.exists(candidate):
                 return candidate
     return None
+
+
+#: The Unity connection tooltip. The endpoint cannot be negotiated - the client
+#: dials before Python has any way to tell it where to dial - so the GUI reads
+#: it out of the build and reports whether the two ends agree.
+BRIDGE_NOTE_UNREADABLE = (
+    "Host and Port are where this program listens. The client "
+    "dials an address compiled into its own scene; no address could be read "
+    "out of the selected build, so the two have to be matched by hand."
+)
+
+VR_CONTROL_TIPS = {
+    "VR_APP_DIR": "Unity Build: Folder containing the Unity application. Relative paths start in opt_vr.\nBrowse to select a build and fill Host and Port from its connection settings when readable.",
+    "VR_HOST": "Host: Local address where the Python viewer listens for Unity.\nThis must match the address compiled into the selected Unity build.",
+    "VR_PORT": "Port: TCP port where the Python viewer listens for Unity (1–65535).\nThis must match the port compiled into the selected Unity build.",
+    "ENABLE_EDGE_FILTERING": "Limit Rendered Edges: ON caps the edges sent to Unity at Max Edges; OFF sends all retained edges.\nReducing the rendered edges can improve VR performance.",
+    "MAX_RENDER_EDGES": "Max Edges: Maximum number of edges sent to Unity when Limit Rendered Edges is ON.\nAbove this limit, the viewer samples edges with a preference for weaker connections. Zero sends no edges.",
+    "DISTANCE_SCALE": "Distance Scale: Saved distance-scale value.\nThe current VR viewer starts at 1.0 and accepts scale updates from Unity; it does not yet apply this saved value at startup.",
+    "EXIT_WITH_UNITY": "Quit with Unity: ON closes the Python viewer when the Unity app closes.\nOFF keeps the viewer and its command console running for debugging.",
+}
+
+
+TOGGLE_ON_STYLE = (
+    "QPushButton { background-color: #4CAF50; color: white; border-radius: 14px; "
+    "font-weight: bold; border: 1px solid #388E3C; }"
+)
+TOGGLE_OFF_STYLE = (
+    "QPushButton { background-color: #e0e0e0; color: #333; border-radius: 14px; "
+    "font-weight: bold; border: 1px solid #bdbdbd; }"
+)
+
+
+def style_toggle_switch(button, checked):
+    """Paint a checkable QPushButton as the ON/OFF pill this GUI uses."""
+    button.setText("ON" if checked else "OFF")
+    button.setStyleSheet(TOGGLE_ON_STYLE if checked else TOGGLE_OFF_STYLE)
+
+
+def bridge_note_text(endpoint, host, port):
+    """Say whether the build and the fields name the same endpoint."""
+    if endpoint is None:
+        return BRIDGE_NOTE_UNREADABLE, False
+    build_host, build_port = endpoint
+    if (host, port) == (build_host, build_port):
+        return (
+            f"This build dials {build_host}:{build_port}, which is where "
+            "Host and Port listen.",
+            False,
+        )
+    return (
+        f"This build dials {build_host}:{build_port}, but Host and "
+        f"Port listen on {host}:{port}. The client will never connect. Change "
+        "the fields to match the build, or rebuild the client.",
+        True,
+    )
 
 
 #: Layout dimensionality is fixed: the VR viewer has no 2D mode, exactly as
@@ -226,6 +282,7 @@ VR_PROFILE_DEFAULTS = {
     "ENABLE_EDGE_FILTERING": True,
     "MAX_RENDER_EDGES": 500000,
     "VR_APP_DIR": "VR_App",
+    "EXIT_WITH_UNITY": True,
 }
 
 for _vr_key, _vr_value in VR_PROFILE_DEFAULTS.items():
@@ -1634,6 +1691,7 @@ if __name__ == "__main__":
 
         def setup_tips(self):
             self.tip_db_keys = {
+                **VR_CONTROL_TIPS,
                 "SAVED_CONFIG": "Saved Config: Selects the settings profile used for this tab.\n(custom) uses the current viewer_settings.json values; (default) uses read-only built-in defaults; (new) creates a named profile; named entries load profiles from the Saved Config Directory.",
                 "NODE_FASTA_FILE": "Primary FASTA file containing sequences visualized as nodes in the SSN.\nMust match sequences present in the selected network edges and multiple alignments.",
                 "MSA_FILE": "Multiple sequence alignment file (.fasta, .h5, or _sparse.h5) for the sequence set.\nUsed to calculate positional conservation, gaps, and occupancy thresholds during analysis.",
@@ -1728,6 +1786,7 @@ if __name__ == "__main__":
                     self._register_tip_targets(
                         widget, widget.toolTip(), overwrite=False
                     )
+            self._refresh_bridge_endpoint_note()
         
         def _toggle_new_cache_input(self, text):
             is_new_layout = text == "(New Layout Cache)"
@@ -2971,6 +3030,7 @@ if __name__ == "__main__":
             content = QWidget()
             main_layout = QVBoxLayout(content)
             main_layout.setContentsMargins(0, 0, 0, 0)
+            main_layout.setSpacing(CONFIG_TAB_ROW_SPACING)
             tab_layout.addWidget(content, 1)
             self.profile_content_widgets["visual_effects"] = content
             visual_grid = QGridLayout()
@@ -3125,17 +3185,8 @@ if __name__ == "__main__":
             # like the ones above, so they live here rather than on a tab of
             # their own.
             self._add_padded_separator(main_layout, "vrBridgeSeparator")
-            bridge_heading = QLabel("Unity Bridge")
-            bridge_heading.setStyleSheet("font-weight: bold;")
-            main_layout.addWidget(bridge_heading)
-            bridge_note = QLabel(
-                "The shipped Unity build has 127.0.0.1:5005 baked into its "
-                "scene, so changing the endpoint also means rebuilding the client."
-            )
-            bridge_note.setWordWrap(True)
-            bridge_note.setStyleSheet("color: #555; font-style: italic;")
-            main_layout.addWidget(bridge_note)
             main_layout.addWidget(self._build_bridge_fields())
+            main_layout.addWidget(self._build_lifecycle_field())
 
             main_layout.addStretch()
 
@@ -3500,59 +3551,69 @@ if __name__ == "__main__":
  
             self._add_scroll_tab(tab, "Simulation && Physics")
             
-        def _build_bridge_fields(self):
-            """Host, port, scale, edge budget and the Unity build location."""
+        def _build_lifecycle_field(self):
+            """Whether the viewer follows the Unity client out when it closes."""
             content = QWidget()
-            form = QFormLayout(content)
-            form.setContentsMargins(0, 0, 0, 0)
-            form.setHorizontalSpacing(CONFIG_FIELD_HORIZONTAL_SPACING)
-            form.setSpacing(CONFIG_TAB_ROW_SPACING)
+            row = QHBoxLayout(content)
+            row.setContentsMargins(0, 0, 0, 0)
+            row.setSpacing(CONFIG_FIELD_HORIZONTAL_SPACING)
 
-            def register(key, label_text, widget, row_widget=None):
+            label = QLabel("Quit with Unity:")
+            label.setFixedWidth(CONFIG_FIELD_LABEL_WIDTH)
+            toggle = QPushButton()
+            toggle.setCheckable(True)
+            toggle.setFixedSize(60, 28)
+            toggle.toggled.connect(
+                lambda checked, btn=toggle: style_toggle_switch(btn, checked)
+            )
+            initial = bool(globals().get("EXIT_WITH_UNITY", True))
+            toggle.setChecked(initial)
+            style_toggle_switch(toggle, initial)
+
+            self.labels["EXIT_WITH_UNITY"] = label
+            self.inputs["EXIT_WITH_UNITY"] = toggle
+            label.setToolTip(VR_CONTROL_TIPS["EXIT_WITH_UNITY"])
+            toggle.setToolTip(VR_CONTROL_TIPS["EXIT_WITH_UNITY"])
+            row.addWidget(label)
+            row.addWidget(toggle)
+            row.addStretch()
+            return content
+
+        def _build_bridge_fields(self):
+            """Two equal halves with shared columns across the Unity rows."""
+            content = QWidget()
+            content.setObjectName("vrBridgeFields")
+            layout = QHBoxLayout(content)
+            layout.setContentsMargins(0, 0, 0, 0)
+            layout.setSpacing(24)
+            left = QGridLayout()
+            right = QGridLayout()
+            for grid in (left, right):
+                grid.setContentsMargins(0, 0, 0, 0)
+                grid.setHorizontalSpacing(CONFIG_FIELD_HORIZONTAL_SPACING)
+                grid.setVerticalSpacing(CONFIG_TAB_ROW_SPACING)
+                for row in (0, 1):
+                    grid.setRowMinimumHeight(row, 28)
+                layout.addLayout(grid, 1)
+            left.setColumnStretch(3, 1)
+            right.setColumnStretch(1, 1)
+            right.setColumnStretch(3, 1)
+
+            def label_for(key, label_text, widget):
+                """Register the setting and its help on both label and input."""
                 label = QLabel(label_text)
-                label.setFixedWidth(CONFIG_FIELD_LABEL_WIDTH)
                 self.labels[key] = label
                 self.inputs[key] = widget
-                form.addRow(label, row_widget if row_widget is not None else widget)
-                return widget
+                label.setToolTip(VR_CONTROL_TIPS[key])
+                widget.setToolTip(VR_CONTROL_TIPS[key])
+                return label
 
-            host = QLineEdit(str(globals().get("VR_HOST", "127.0.0.1")))
-            register("VR_HOST", "Unity Host:", host)
-
-            port = NoScrollSpinBox()
-            port.setRange(1, 65535)
-            port.setValue(int(globals().get("VR_PORT", 5005) or 5005))
-            register("VR_PORT", "Unity Port:", port)
-
-            scale = NoScrollDoubleSpinBox()
-            scale.setDecimals(3)
-            scale.setRange(0.001, 1000.0)
-            scale.setSingleStep(0.1)
-            scale.setValue(float(globals().get("DISTANCE_SCALE", 1.0) or 1.0))
-            register("DISTANCE_SCALE", "Distance Scale:", scale)
-
-            filtering = QCheckBox()
-            filtering.setChecked(bool(globals().get("ENABLE_EDGE_FILTERING", True)))
-            register("ENABLE_EDGE_FILTERING", "Limit Rendered Edges:", filtering)
-
-            budget = NoScrollSpinBox()
-            budget.setRange(0, 100_000_000)
-            budget.setValue(int(globals().get("MAX_RENDER_EDGES", 500000) or 0))
-            register("MAX_RENDER_EDGES", "Max Rendered Edges:", budget)
-
-            def gate_budget(enabled, field=budget, label=self.labels["MAX_RENDER_EDGES"]):
-                field.setEnabled(enabled)
-                label.setEnabled(enabled)
-
-            filtering.toggled.connect(gate_budget)
-            gate_budget(filtering.isChecked())
-
-            app_row = QWidget()
-            app_layout = QHBoxLayout(app_row)
-            app_layout.setContentsMargins(0, 0, 0, 0)
+            # --- Row 1: which build, and where it connects --------------------
             app_dir = QLineEdit(str(globals().get("VR_APP_DIR", "VR_App")))
             browse = QPushButton("...")
             browse.setFixedWidth(36)
+            browse.setToolTip(VR_CONTROL_TIPS["VR_APP_DIR"])
+            self._unity_browse_button = browse
 
             def choose_app_dir(_checked=False, field=app_dir):
                 start = field.text().strip() or str(PROJECT_ROOT)
@@ -3567,11 +3628,113 @@ if __name__ == "__main__":
                     except ValueError:
                         relative = chosen
                     field.setText(chosen if relative.startswith("..") else relative)
+                    # Picking a build is the one moment the user has said which
+                    # client they mean, so its endpoint wins over whatever was
+                    # in the fields. Every other edit only warns.
+                    endpoint = Unity_Build_VR.read_endpoint(chosen)
+                    if endpoint is not None:
+                        host.setText(endpoint[0])
+                        port.setValue(endpoint[1])
 
             browse.clicked.connect(choose_app_dir)
-            app_layout.addWidget(app_dir, 1)
-            app_layout.addWidget(browse)
-            register("VR_APP_DIR", "Unity Build:", app_dir, row_widget=app_row)
+
+            host = QLineEdit(str(globals().get("VR_HOST", "127.0.0.1")))
+
+            port = NoScrollSpinBox()
+            port.setRange(1, 65535)
+            port.setValue(int(globals().get("VR_PORT", 5005) or 5005))
+
+            build_label = label_for("VR_APP_DIR", "Unity Build:", app_dir)
+            build_label.setFixedWidth(CONFIG_FIELD_LABEL_WIDTH)
+            left.addWidget(build_label, 0, 0)
+            left.addWidget(app_dir, 0, 1, 1, 3)
+            left.addWidget(browse, 0, 4)
+            host_label = label_for("VR_HOST", "Host:", host)
+            port_label = label_for("VR_PORT", "Port:", port)
+            right.addWidget(host_label, 0, 0)
+            right.addWidget(host, 0, 1)
+            right.addWidget(port_label, 0, 2)
+            right.addWidget(port, 0, 3)
+
+            # --- Row 2: how much of the network is drawn ----------------------
+            filtering = QPushButton()
+            filtering.setCheckable(True)
+            filtering.setFixedSize(60, 28)
+
+            filtering.toggled.connect(
+                lambda checked, btn=filtering: style_toggle_switch(btn, checked)
+            )
+
+            budget = NoScrollSpinBox()
+            budget.setRange(0, 100_000_000)
+            budget.setValue(int(globals().get("MAX_RENDER_EDGES", 500000) or 0))
+
+            scale = NoScrollDoubleSpinBox()
+            scale.setDecimals(3)
+            scale.setRange(0.001, 1000.0)
+            scale.setSingleStep(0.1)
+            scale.setValue(float(globals().get("DISTANCE_SCALE", 1.0) or 1.0))
+
+            filtering_label = label_for(
+                "ENABLE_EDGE_FILTERING", "Limit Rendered Edges:", filtering
+            )
+            filtering_label.setFixedWidth(CONFIG_FIELD_LABEL_WIDTH)
+            left.addWidget(filtering_label, 1, 0)
+            left.addWidget(filtering, 1, 1)
+            left.addWidget(label_for("MAX_RENDER_EDGES", "Max Edges:", budget), 1, 2)
+            left.addWidget(budget, 1, 3)
+            scale_label = label_for("DISTANCE_SCALE", "Distance Scale:", scale)
+            # Matching label widths make Host and Port equal-sized groups,
+            # while the scale editor spans their shared input columns.
+            right_label_width = scale_label.sizeHint().width()
+            for label in (host_label, port_label, scale_label):
+                label.setFixedWidth(right_label_width)
+            right.addWidget(scale_label, 1, 0)
+            right.addWidget(scale, 1, 1, 1, 3)
+
+            # The budget only means anything while filtering is on, and it sits
+            # beside its switch now, so the gating reads as one control.
+            def gate_budget(enabled, field=budget, label=self.labels["MAX_RENDER_EDGES"]):
+                field.setEnabled(enabled)
+                label.setEnabled(enabled)
+
+            filtering.toggled.connect(gate_budget)
+            initial_filtering = bool(globals().get("ENABLE_EDGE_FILTERING", True))
+            filtering.setChecked(initial_filtering)
+            style_toggle_switch(filtering, initial_filtering)
+            gate_budget(initial_filtering)
+
+            def refresh_endpoint_note():
+                """Keep the connection status in the endpoint tooltips."""
+                value = app_dir.text().strip()
+                build_dir = (
+                    value
+                    if os.path.isabs(value)
+                    else os.path.join(str(PROJECT_ROOT), value)
+                ) if value else ""
+                text, warning = bridge_note_text(
+                    Unity_Build_VR.read_endpoint(build_dir),
+                    host.text().strip(),
+                    int(port.value()),
+                )
+                self._bridge_endpoint_warning = warning
+                for key in ("VR_APP_DIR", "VR_HOST", "VR_PORT"):
+                    tip = VR_CONTROL_TIPS[key] + "\n" + text
+                    targets = [self.inputs[key], self.labels[key]]
+                    if key == "VR_APP_DIR":
+                        targets.append(browse)
+                    for target in targets:
+                        target.setToolTip(tip)
+                        if hasattr(self, "tip_db"):
+                            self._register_tip_targets(target, tip)
+
+            # Programmatic setText/setValue emit these too, so loading a saved
+            # profile re-checks the endpoint without a separate hook.
+            app_dir.textChanged.connect(lambda _text: refresh_endpoint_note())
+            host.textChanged.connect(lambda _text: refresh_endpoint_note())
+            port.valueChanged.connect(lambda _value: refresh_endpoint_note())
+            self._refresh_bridge_endpoint_note = refresh_endpoint_note
+            refresh_endpoint_note()
 
             return content
 

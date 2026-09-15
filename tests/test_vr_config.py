@@ -317,16 +317,55 @@ class VRSettingsSourceTests(unittest.TestCase):
             os.environ.pop("SSN_VIEWER_SETTINGS_PATH", None)
 
     def test_relative_directories_resolve_inside_the_submodule(self):
+        """A relative directory is the submodule's, never the parent's.
+
+        This drives a settings file of its own rather than whatever the user
+        last saved. Pointing the VR front end at an external data store is a
+        supported configuration - an absolute path is honoured as written, and
+        the next test pins that - so reading the live file made this assert the
+        user's setup instead of the resolution rule.
+        """
         import Settings_VR
 
-        values = Settings_VR.load_settings()
-        for key in ("CACHE_FILE_DIR", "SAVED_LAYOUT_DIR", "INPUT_FILE_DIR",
-                    "ANALYSIS_RESULT_DIR", "VR_APP_DIR"):
+        relative = {
+            "CACHE_FILE_DIR": "Cache_Files",
+            "SAVED_LAYOUT_DIR": r"$cache_file$\Saved_Layouts",
+            "INPUT_FILE_DIR": "Input_Files",
+            "ANALYSIS_RESULT_DIR": "Analysis_Results",
+            "VR_APP_DIR": "VR_App",
+        }
+        values = self._settings_from(relative)
+        for key in relative:
             with self.subTest(key=key):
                 self.assertTrue(
                     str(values[key]).startswith(_bootstrap_vr.OPT_VR_DIR),
                     f"{key} escaped the submodule: {values[key]}",
                 )
+
+    def test_absolute_directories_are_left_alone(self):
+        """An external data store is a supported choice, not a mistake."""
+        import Settings_VR
+
+        external = os.path.join(tempfile.gettempdir(), "SSN_Viewer_Data")
+        values = self._settings_from({"INPUT_FILE_DIR": external})
+        self.assertEqual(os.path.normpath(values["INPUT_FILE_DIR"]),
+                         os.path.normpath(external))
+
+    def _settings_from(self, document):
+        """Load settings from a throwaway file holding exactly `document`."""
+        import Settings_VR
+
+        handle = tempfile.NamedTemporaryFile(
+            "w", suffix=".json", delete=False, encoding="utf-8"
+        )
+        json.dump(document, handle)
+        handle.close()
+        self.addCleanup(lambda: os.path.exists(handle.name) and os.unlink(handle.name))
+        os.environ["SSN_VIEWER_SETTINGS_PATH"] = handle.name
+        try:
+            return Settings_VR.load_settings()
+        finally:
+            os.environ.pop("SSN_VIEWER_SETTINGS_PATH", None)
 
     def test_bridge_values_are_coerced_to_their_own_types(self):
         """The GUI writes spin boxes as text; unconverted they break arithmetic."""
@@ -341,6 +380,160 @@ class VRSettingsSourceTests(unittest.TestCase):
         import Settings_VR
 
         self.assertEqual(Settings_VR.VR_DEFAULTS["LAYOUT_DIMENSIONS"], 3)
+
+
+class UnityEndpointTests(unittest.TestCase):
+    """The GUI reads the endpoint out of the build instead of asking for it.
+
+    Every case drives the build path and the fields explicitly. Reading the
+    live settings file would make these describe whichever build the user last
+    selected rather than the behaviour.
+    """
+
+    SHIPPED_BUILD = os.path.join(OPT_VR, "VR_App")
+
+    def note_for(self, build_dir, host="127.0.0.1", port=5005):
+        return report_from(
+            """
+            window.inputs["VR_APP_DIR"].setText({build!r})
+            window.inputs["VR_HOST"].setText({host!r})
+            window.inputs["VR_PORT"].setValue({port!r})
+            print("@@" + json.dumps({{
+                "text": window.inputs["VR_APP_DIR"].toolTip(),
+                "warning": window._bridge_endpoint_warning,
+            }}))
+            """.format(build=build_dir, host=host, port=port)
+        )
+
+    def test_note_text_is_decided_without_qt(self):
+        """The wording is a pure function, so it is worth pinning directly."""
+        report = report_from(
+            """
+            decide = namespace["bridge_note_text"]
+            print("@@" + json.dumps({
+                "unknown": decide(None, "127.0.0.1", 5005),
+                "match": decide(("127.0.0.1", 5005), "127.0.0.1", 5005),
+                "host_differs": decide(("127.0.0.1", 5005), "10.0.0.5", 5005),
+                "port_differs": decide(("127.0.0.1", 5005), "127.0.0.1", 6000),
+            }))
+            """
+        )
+        self.assertFalse(report["unknown"][1], "an unreadable build is not an error")
+        self.assertFalse(report["match"][1])
+        for key in ("host_differs", "port_differs"):
+            with self.subTest(case=key):
+                text, warning = report[key]
+                self.assertTrue(warning)
+                self.assertIn("127.0.0.1:5005", text, "must name what the build dials")
+                self.assertIn("never connect", text)
+
+    @unittest.skipUnless(
+        os.path.isdir(os.path.join(OPT_VR, "VR_App")), "VR_App is not checked out"
+    )
+    def test_agreement_with_the_shipped_build_is_reported(self):
+        report = self.note_for(self.SHIPPED_BUILD)
+        self.assertIn("127.0.0.1:5005", report["text"])
+        self.assertFalse(report["warning"])
+
+    @unittest.skipUnless(
+        os.path.isdir(os.path.join(OPT_VR, "VR_App")), "VR_App is not checked out"
+    )
+    def test_a_mismatch_warns_instead_of_failing_silently(self):
+        """Without this the only symptom is a headset that never fills in."""
+        report = self.note_for(self.SHIPPED_BUILD, port=6000)
+        self.assertTrue(report["warning"])
+        self.assertIn("127.0.0.1:5005", report["text"])
+        self.assertIn("127.0.0.1:6000", report["text"])
+
+    def test_an_unreadable_build_falls_back_to_the_typed_values(self):
+        report = self.note_for(os.path.join(OPT_VR, "no_such_build"))
+        self.assertFalse(report["warning"], "an unreadable build is not a mismatch")
+        self.assertIn("matched by hand", report["text"])
+
+    @unittest.skipUnless(
+        os.path.isdir(os.path.join(OPT_VR, "VR_App")), "VR_App is not checked out"
+    )
+    def test_choosing_a_build_fills_the_endpoint_in(self):
+        """Picking a build is the moment the user says which client they mean."""
+        report = report_from(
+            """
+            from PySide6.QtWidgets import QFileDialog, QPushButton
+            window.inputs["VR_HOST"].setText("10.0.0.5")
+            window.inputs["VR_PORT"].setValue(6000)
+            field = window.inputs["VR_APP_DIR"]
+            browse = [b for b in field.parentWidget().findChildren(QPushButton)
+                      if b.text() == "..."]
+            with mock.patch.object(
+                QFileDialog, "getExistingDirectory", return_value={build!r}
+            ):
+                browse[0].click()
+            print("@@" + json.dumps({{
+                "browse_buttons": len(browse),
+                "host": window.inputs["VR_HOST"].text(),
+                "port": window.inputs["VR_PORT"].value(),
+                "warning": window._bridge_endpoint_warning,
+            }}))
+            """.format(build=os.path.join(OPT_VR, "VR_App"))
+        )
+        self.assertEqual(report["browse_buttons"], 1)
+        self.assertEqual(report["host"], "127.0.0.1")
+        self.assertEqual(report["port"], 5005)
+        self.assertFalse(report["warning"])
+
+
+class QuitWithUnityTests(unittest.TestCase):
+    """The VR-only control for whether the viewer outlives the headset app."""
+
+    def test_it_is_a_switch_with_its_own_label(self):
+        report = report_from(
+            """
+            from PySide6.QtWidgets import QPushButton
+            widget = window.inputs["EXIT_WITH_UNITY"]
+            print("@@" + json.dumps({
+                "is_button": isinstance(widget, QPushButton),
+                "checkable": widget.isCheckable(),
+                "label": window.labels["EXIT_WITH_UNITY"].text(),
+                "declared_default": namespace["VR_PROFILE_DEFAULTS"]["EXIT_WITH_UNITY"],
+            }))
+            """
+        )
+        self.assertTrue(report["is_button"], "asked for a button, not a checkbox")
+        self.assertTrue(report["checkable"])
+        self.assertEqual(report["label"], "Quit with Unity:")
+        self.assertIs(report["declared_default"], True, "killing is the default")
+
+    def test_both_positions_round_trip(self):
+        report = report_from(
+            """
+            widget = window.inputs["EXIT_WITH_UNITY"]
+            readings = {}
+            for state in (False, True):
+                widget.setChecked(state)
+                readings[str(state)] = {
+                    "value": window._widget_profile_value("EXIT_WITH_UNITY"),
+                    "text": widget.text(),
+                }
+            print("@@" + json.dumps(readings))
+            """
+        )
+        self.assertIs(report["False"]["value"], False)
+        self.assertIs(report["True"]["value"], True)
+        # The pill has to say which way it is pointing.
+        self.assertEqual(report["False"]["text"], "OFF")
+        self.assertEqual(report["True"]["text"], "ON")
+
+    def test_it_belongs_to_the_visual_effects_profile(self):
+        """Otherwise a saved profile would silently drop it."""
+        report = report_from(
+            """
+            print("@@" + json.dumps({
+                "in_profile": "EXIT_WITH_UNITY" in namespace[
+                    "VR_VISUAL_PROFILE_DEFAULTS"
+                ],
+            }))
+            """
+        )
+        self.assertTrue(report["in_profile"])
 
 
 if __name__ == "__main__":

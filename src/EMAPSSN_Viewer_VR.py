@@ -20,6 +20,8 @@ import glob
 # Importing _bootstrap_vr also applies any --settings argument the Config GUI
 # passed, which must happen before Settings_VR reads its file below.
 import _bootstrap_vr
+import Single_Instance_VR
+import _thread
 import Settings_VR as cfg
 
 # Upstream modules do `import EMAPSSN_Config as cfg`, which would pull PySide6
@@ -369,7 +371,66 @@ def _as_three_dimensional(positions):
     return lifted
 
 
-def _edges_for(cache_headers):
+def _cache_edge_filter(cache_path):
+    """The edge filter recorded in the manifest beside `cache_path`, or None."""
+    if not cache_path:
+        return None
+    try:
+        import Cache_Manifest as cache_manifest
+
+        folder = os.path.dirname(os.path.abspath(cache_path))
+        manifest = cache_manifest.read_manifest(folder)
+    except Exception as error:
+        print(f"Note: could not read the cache manifest: {error}")
+        return None
+    return (manifest.get("compatibility") or {}).get("edge_filter")
+
+
+def _adopt_cache_edge_filter(cache_path):
+    """Adopt the cache's own edge filter when the settings name none.
+
+    The layout generator records the filter it used in the cache manifest.
+    Nothing in the Config GUI forces one of the two filter controls to hold a
+    value - Similarity Threshold and Top Edge Percent only disable each other -
+    and ``_collect_settings`` writes an empty Top Edge Percent as "None" while
+    dropping an empty Similarity Threshold entirely. A launch with both blank
+    therefore reaches the viewer with no filter at all, prepare_network has
+    nothing to threshold on, and it dies on ``float >= None``, which reaches
+    the user as nothing but a network drawn without edges.
+
+    Live settings still win whenever they name a filter, so narrowing the view
+    without regenerating the cache keeps working exactly as it does for the
+    desktop viewer. This only fills the gap where there was no answer at all.
+    """
+    if getattr(cfg, "UMAP_MODE", False):
+        return
+    if getattr(cfg, "TOP_EDGE_PERCENT", None) is not None:
+        return
+    if getattr(cfg, "SIMILARITY_THRESHOLD", None) is not None:
+        return
+
+    edge_filter = _cache_edge_filter(cache_path) or {}
+    mode = edge_filter.get("mode")
+    value = edge_filter.get("value")
+    if value is None:
+        return
+
+    if mode == "top_edge_percent":
+        cfg.TOP_EDGE_PERCENT = float(value)
+        print(f"Edge filter from the cache manifest: top {float(value)}% of edges.")
+    elif mode == "similarity_threshold":
+        cfg.SIMILARITY_THRESHOLD = float(value)
+        print(f"Edge filter from the cache manifest: score >= {float(value)}.")
+    elif mode == "umap_neighbors":
+        cfg.UMAP_MODE = True
+        cfg.UMAP_NEIGHBORS = int(value)
+        print(
+            "Edge filter from the cache manifest: UMAP topology, "
+            f"{int(value)} neighbours per node."
+        )
+
+
+def _edges_for(cache_headers, cache_path=None):
     """Rebuild the edge list from the source network.
 
     The layout generator deliberately does not cache edges, so they are
@@ -383,6 +444,20 @@ def _edges_for(cache_headers):
         print(
             f"Warning: source network {network_path!r} is unavailable; "
             "showing nodes without edges."
+        )
+        return empty
+
+    _adopt_cache_edge_filter(cache_path)
+    if (
+        not getattr(cfg, "UMAP_MODE", False)
+        and getattr(cfg, "TOP_EDGE_PERCENT", None) is None
+        and getattr(cfg, "SIMILARITY_THRESHOLD", None) is None
+    ):
+        print(
+            "Warning: no edge filter is set and the cache manifest does not "
+            "name one, so edges cannot be rebuilt; showing nodes without "
+            "edges.\n         Set Similarity Threshold or Top Edge Percent in "
+            "the VR Configuration GUI."
         )
         return empty
 
@@ -547,7 +622,7 @@ def load_layout_cache():
             f"{n_nodes} positions."
         )
 
-    edges, edge_scores = _edges_for(headers)
+    edges, edge_scores = _edges_for(headers, cache_path)
     print(
         f"Loaded {n_nodes} nodes and {len(edges)} edges "
         f"from a {dimensions}D cache."
@@ -593,10 +668,9 @@ def terminal_loop(viewer):
     
     while viewer.running:
         try:
-            sys.stdout.write("> ")
-            sys.stdout.flush()
-            
             cmd_chars = []
+            CONSOLE.show_prompt("> ", cmd_chars)
+
             if hasattr(viewer, 'command_history'):
                 viewer.history_index = len(viewer.command_history)
                 
@@ -606,15 +680,13 @@ def terminal_loop(viewer):
                     
                     # Enter key
                     if ch in ('\r', '\n'):
-                        sys.stdout.write('\n')
-                        sys.stdout.flush()
+                        CONSOLE.end_prompt()
                         break
                     # Backspace
                     elif ch == '\x08':
                         if cmd_chars:
                             cmd_chars.pop()
-                            sys.stdout.write('\b \b')
-                            sys.stdout.flush()
+                            CONSOLE.echo('\b \b')
                     # Ctrl+C
                     elif ch == '\x03':
                         raise KeyboardInterrupt
@@ -625,11 +697,12 @@ def terminal_loop(viewer):
                             if hasattr(viewer, 'command_history') and viewer.command_history:
                                 viewer.history_index = max(0, viewer.history_index - 1)
                                 new_cmd = viewer.command_history[viewer.history_index]
-                                # Erase current line
-                                sys.stdout.write('\b \b' * len(cmd_chars))
-                                cmd_chars = list(new_cmd)
-                                sys.stdout.write(new_cmd)
-                                sys.stdout.flush()
+                                # Erase current line. cmd_chars is replaced in
+                                # place: CONSOLE holds this very list so it can
+                                # redraw the line a message interrupted.
+                                CONSOLE.echo('\b \b' * len(cmd_chars))
+                                cmd_chars[:] = list(new_cmd)
+                                CONSOLE.echo(new_cmd)
                         elif scan_code == 'P':  # Down Arrow
                             if hasattr(viewer, 'command_history') and viewer.command_history:
                                 viewer.history_index = min(len(viewer.command_history), viewer.history_index + 1)
@@ -637,22 +710,20 @@ def terminal_loop(viewer):
                                     new_cmd = ""
                                 else:
                                     new_cmd = viewer.command_history[viewer.history_index]
-                                # Erase current line
-                                sys.stdout.write('\b \b' * len(cmd_chars))
-                                cmd_chars = list(new_cmd)
-                                sys.stdout.write(new_cmd)
-                                sys.stdout.flush()
+                                CONSOLE.echo('\b \b' * len(cmd_chars))
+                                cmd_chars[:] = list(new_cmd)
+                                CONSOLE.echo(new_cmd)
                     # Normal characters
                     else:
                         cmd_chars.append(ch)
-                        sys.stdout.write(ch)
-                        sys.stdout.flush()
+                        CONSOLE.echo(ch)
                 else:
                     time.sleep(0.01)
                     
             if not viewer.running:
+                CONSOLE.end_prompt()
                 break
-                
+
             cmd = "".join(cmd_chars).strip()
             if cmd.lower() in ("exit", "quit"):
                 viewer.running = False
@@ -681,18 +752,107 @@ def client_reader_loop(client, viewer):
                     viewer.transform_scale = data.get("scale", viewer.transform_scale)
                     viewer.distance_scale = data.get("distanceScale", viewer.distance_scale)
             except Exception as ex:
-                print(f"\n[Warning] Failed to parse Unity client JSON: {ex}")
-                print(f"Raw line: {repr(line)}")
+                CONSOLE.message(f"[Warning] Failed to parse Unity client JSON: {ex}")
+                CONSOLE.message(f"Raw line: {repr(line)}")
     except Exception as e:
-        print(f"[Warning] Client reader loop encountered exception: {e}")
+        CONSOLE.message(f"[Warning] Client reader loop encountered exception: {e}")
     finally:
         viewer.is_connected = False
+
+class PromptConsole:
+    """Serialise terminal output so a message never lands on the prompt.
+
+    The Unity server runs in its own thread and prints whenever a client
+    connects, receives the layout, or drops, while the main thread is sitting
+    on "> " with a possibly half-typed command. Printing straight to stdout
+    puts the message *after* that prompt, so the prompt scrolls away and the
+    cursor is left on a bare line - which reads as a terminal that has stopped
+    accepting input, and is why pressing Enter looked necessary to get the
+    prompt back.
+
+    The cure is to treat the prompt as state rather than as characters already
+    written: a background message erases it, prints, and draws it again with
+    whatever had been typed so far. The lock also stops a message from landing
+    between the prompt and its echoed keystrokes.
+    """
+
+    def __init__(self, stream=None):
+        self._lock = threading.RLock()
+        self._stream = stream
+        self._prompt = ""
+        self._typed = None
+        self._visible = False
+
+    @property
+    def stream(self):
+        # Resolved late: the launcher reconfigures sys.stdout for UTF-8 before
+        # the viewer starts, and a stream captured at import would miss it.
+        return self._stream if self._stream is not None else sys.stdout
+
+    def show_prompt(self, prompt, typed):
+        """Draw `prompt` and remember it, so a message can restore it.
+
+        `typed` is kept by reference and must be mutated in place; rebinding it
+        would leave this holding the previous list and redraw a stale line.
+        """
+        with self._lock:
+            self._prompt = prompt
+            self._typed = typed
+            self._visible = True
+            self._write(prompt + "".join(typed))
+
+    def echo(self, text):
+        """Write keystroke feedback without a message cutting into it."""
+        with self._lock:
+            self._write(text)
+
+    def end_prompt(self, newline=True):
+        """The prompt is finished with; messages may print freely again."""
+        with self._lock:
+            if newline:
+                self._write("\n")
+            self._visible = False
+            self._typed = None
+
+    def message(self, text=""):
+        """Print `text` above the prompt, then put the prompt back."""
+        with self._lock:
+            if self._visible:
+                self._write("\r" + " " * self._width() + "\r")
+            self._write(str(text).rstrip("\n") + "\n")
+            if self._visible:
+                self._write(self._prompt + "".join(self._typed or ()))
+
+    def _width(self):
+        return len(self._prompt) + len(self._typed or ())
+
+    def _write(self, text):
+        stream = self.stream
+        stream.write(text)
+        stream.flush()
+
+
+#: One console for the process. The server thread and the terminal both go
+#: through it, which is the only way their output can be ordered at all.
+CONSOLE = PromptConsole()
+
+
+def should_exit_with_unity():
+    """Whether losing the Unity client should end the viewer.
+
+    On by default: the viewer exists to drive the headset, so it follows the
+    client out rather than leaving an orphaned process holding the port. Off
+    keeps the command console alive after the app closes, which is the point
+    while debugging.
+    """
+    return bool(getattr(cfg, "EXIT_WITH_UNITY", True))
+
 
 def unity_server_loop(server_socket, viewer, pos, edges_to_send, n_nodes, n_edges_to_send, unfiltered_edges):
     try:
         while True:
             client, addr = server_socket.accept()
-            print(f"\nUnity connected from {addr}")
+            CONSOLE.message(f"Unity connected from {addr}")
             
             try:
                 # 1. Send Node Count
@@ -714,7 +874,10 @@ def unity_server_loop(server_socket, viewer, pos, edges_to_send, n_nodes, n_edge
                 unfiltered_bytes = unfiltered_edges.astype('<i4').tobytes()
                 client.sendall(unfiltered_bytes)
                 
-                print(f"Successfully sent initial binary layout. Establishing persistent JSON connection...")
+                CONSOLE.message(
+                    "Successfully sent initial binary layout. "
+                    "Establishing persistent JSON connection..."
+                )
                 
                 # Send initial state (colors, sizes, visible, settings, transform)
                 initial_packet = {
@@ -749,9 +912,23 @@ def unity_server_loop(server_socket, viewer, pos, edges_to_send, n_nodes, n_edge
                     client.close()
                 except Exception:
                     pass
-                print(f"\nUnity client {addr} disconnected. Waiting for a new connection...")
+                if should_exit_with_unity():
+                    CONSOLE.message(
+                        f"Unity client {addr} disconnected. Closing the viewer.\n"
+                        '         Turn "Quit With Unity" off in the VR '
+                        "Configuration GUI to keep the console running instead."
+                    )
+                    viewer.running = False
+                    # The main thread may be blocked reading a command, so ask
+                    # for the same KeyboardInterrupt that Ctrl+C would raise and
+                    # let the existing shutdown path do the cleanup.
+                    _thread.interrupt_main()
+                    return
+                CONSOLE.message(
+                    f"Unity client {addr} disconnected. Waiting for a new connection..."
+                )
     except Exception as e:
-        print(f"Server loop shutting down: {e}")
+        CONSOLE.message(f"Server loop shutting down: {e}")
 
 #: Unity ships these alongside the player; neither is the application.
 _NOT_THE_PLAYER = ("unitycrashhandler",)
@@ -882,8 +1059,23 @@ def start_server(host=None, port=None):
     n_edges_to_send = len(edges_to_send)
     
     server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    server_socket.bind((host, port))
+    # SO_REUSEADDR on Windows lets an unrelated process bind a port this one is
+    # already serving and take the connections with it. SO_EXCLUSIVEADDRUSE is
+    # the opposite, and turns a clash into an error someone can act on.
+    exclusive = getattr(socket, "SO_EXCLUSIVEADDRUSE", None)
+    if exclusive is not None:
+        server_socket.setsockopt(socket.SOL_SOCKET, exclusive, 1)
+    try:
+        server_socket.bind((host, port))
+    except OSError as error:
+        server_socket.close()
+        sys.exit(
+            f"Could not listen on {host}:{port}: {error}\n\n"
+            "Something else already holds that endpoint. The Unity client dials "
+            "an address compiled into its build, so this viewer has to own it.\n"
+            "Close whatever is using the port, or change Unity Host and Unity "
+            "Port in the VR Configuration GUI and rebuild the client to match."
+        )
     server_socket.listen(1)
     
     print(f"\nServer listening on {host}:{port}. Waiting for Unity to connect...")
@@ -896,7 +1088,7 @@ def start_server(host=None, port=None):
     vr_proc = launch_vr_app()
     
     try:
-        while True:
+        while viewer.running:
             # The terminal is deliberately not gated on Unity: analysis
             # commands operate on viewer state, and Unity resynchronises
             # from that state whenever it connects.
@@ -926,5 +1118,11 @@ if __name__ == "__main__":
     # refuses to start elsewhere rather than binding a socket nothing can
     # ever connect to.
     _bootstrap_vr.require_windows("The EMAP-SSN VR Viewer")
+    # Claimed before the cache is loaded: finding out that another viewer owns
+    # the headset after a minute of reading HDF5 helps nobody. The handle is
+    # held in a module global so the mutex lives as long as the process.
+    _INSTANCE_HANDLE = Single_Instance_VR.acquire()
+    if _INSTANCE_HANDLE is None:
+        sys.exit(Single_Instance_VR.BUSY_MESSAGE)
     print("--- VR SSN Viewer Backend ---")
     start_server()
