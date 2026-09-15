@@ -83,15 +83,15 @@ def application_icon_path():
 #: dials before Python has any way to tell it where to dial - so the GUI reads
 #: it out of the build and reports whether the two ends agree.
 BRIDGE_NOTE_UNREADABLE = (
-    "Host and Port are where this program listens. The client "
+    "Unity Host and Unity Port are where this program listens. The client "
     "dials an address compiled into its own scene; no address could be read "
     "out of the selected build, so the two have to be matched by hand."
 )
 
 VR_CONTROL_TIPS = {
-    "VR_APP_DIR": "Unity Build: Folder containing the Unity application. Relative paths start in opt_vr.\nBrowse to select a build and fill Host and Port from its connection settings when readable.",
-    "VR_HOST": "Host: Local address where the Python viewer listens for Unity.\nThis must match the address compiled into the selected Unity build.",
-    "VR_PORT": "Port: TCP port where the Python viewer listens for Unity (1–65535).\nThis must match the port compiled into the selected Unity build.",
+    "VR_APP_DIR": "Unity Build: Folder containing the Unity application. Relative paths start in opt_vr.\nThe build is parsed on every GUI launch and when the build or profile changes. A readable endpoint fills and locks Unity Host and Unity Port; otherwise they can be entered manually.",
+    "VR_HOST": "Unity Host: Local address where the Python viewer listens for Unity.\nThis must match the address compiled into the selected Unity build.",
+    "VR_PORT": "Unity Port: TCP port where the Python viewer listens for Unity (1–65535).\nThis must match the port compiled into the selected Unity build.",
     "ENABLE_EDGE_FILTERING": "Limit Rendered Edges: ON caps the edges sent to Unity at Max Edges; OFF sends all retained edges.\nReducing the rendered edges can improve VR performance.",
     "MAX_RENDER_EDGES": "Max Edges: Maximum number of edges sent to Unity when Limit Rendered Edges is ON.\nAbove this limit, the viewer samples edges with a preference for weaker connections. Zero sends no edges.",
     "DISTANCE_SCALE": "Distance Scale: Saved distance-scale value.\nThe current VR viewer starts at 1.0 and accepts scale updates from Unity; it does not yet apply this saved value at startup.",
@@ -123,11 +123,11 @@ def bridge_note_text(endpoint, host, port):
     if (host, port) == (build_host, build_port):
         return (
             f"This build dials {build_host}:{build_port}, which is where "
-            "Host and Port listen.",
+            "Unity Host and Unity Port listen.",
             False,
         )
     return (
-        f"This build dials {build_host}:{build_port}, but Host and "
+        f"This build dials {build_host}:{build_port}, but Unity Host and Unity "
         f"Port listen on {host}:{port}. The client will never connect. Change "
         "the fields to match the build, or rebuild the client.",
         True,
@@ -731,7 +731,7 @@ if __name__ == "__main__":
         qt_monospace_font,
         show_window_in_front,
     )
-    from PySide6.QtCore import Qt, QUrl, QThread, Signal
+    from PySide6.QtCore import Qt, QUrl, QThread, Signal, QSignalBlocker
     from PySide6.QtGui import (
         QColor,
         QDesktopServices,
@@ -1448,6 +1448,10 @@ if __name__ == "__main__":
             if tab_id == "inputs_outputs":
                 self.update_norm_mode_options()
             self._set_profile_content_enabled(tab_id, not read_only)
+            if tab_id == "visual_effects":
+                # Resolve after all profile values have been applied: a saved
+                # endpoint must not overwrite the selected build's endpoint.
+                self._refresh_bridge_endpoint_note()
             if hasattr(self, "update_live_validators"):
                 self.update_live_validators()
 
@@ -3186,7 +3190,6 @@ if __name__ == "__main__":
             # their own.
             self._add_padded_separator(main_layout, "vrBridgeSeparator")
             main_layout.addWidget(self._build_bridge_fields())
-            main_layout.addWidget(self._build_lifecycle_field())
 
             main_layout.addStretch()
 
@@ -3559,7 +3562,6 @@ if __name__ == "__main__":
             row.setSpacing(CONFIG_FIELD_HORIZONTAL_SPACING)
 
             label = QLabel("Quit with Unity:")
-            label.setFixedWidth(CONFIG_FIELD_LABEL_WIDTH)
             toggle = QPushButton()
             toggle.setCheckable(True)
             toggle.setFixedSize(60, 28)
@@ -3576,7 +3578,6 @@ if __name__ == "__main__":
             toggle.setToolTip(VR_CONTROL_TIPS["EXIT_WITH_UNITY"])
             row.addWidget(label)
             row.addWidget(toggle)
-            row.addStretch()
             return content
 
         def _build_bridge_fields(self):
@@ -3610,8 +3611,7 @@ if __name__ == "__main__":
 
             # --- Row 1: which build, and where it connects --------------------
             app_dir = QLineEdit(str(globals().get("VR_APP_DIR", "VR_App")))
-            browse = QPushButton("...")
-            browse.setFixedWidth(36)
+            browse = QPushButton("Browse")
             browse.setToolTip(VR_CONTROL_TIPS["VR_APP_DIR"])
             self._unity_browse_button = browse
 
@@ -3628,13 +3628,9 @@ if __name__ == "__main__":
                     except ValueError:
                         relative = chosen
                     field.setText(chosen if relative.startswith("..") else relative)
-                    # Picking a build is the one moment the user has said which
-                    # client they mean, so its endpoint wins over whatever was
-                    # in the fields. Every other edit only warns.
-                    endpoint = Unity_Build_VR.read_endpoint(chosen)
-                    if endpoint is not None:
-                        host.setText(endpoint[0])
-                        port.setValue(endpoint[1])
+                    # Also re-read when the same folder is selected again;
+                    # its build may have been replaced since the last parse.
+                    refresh_endpoint_note()
 
             browse.clicked.connect(choose_app_dir)
 
@@ -3649,8 +3645,8 @@ if __name__ == "__main__":
             left.addWidget(build_label, 0, 0)
             left.addWidget(app_dir, 0, 1, 1, 3)
             left.addWidget(browse, 0, 4)
-            host_label = label_for("VR_HOST", "Host:", host)
-            port_label = label_for("VR_PORT", "Port:", port)
+            host_label = label_for("VR_HOST", "Unity Host:", host)
+            port_label = label_for("VR_PORT", "Unity Port:", port)
             right.addWidget(host_label, 0, 0)
             right.addWidget(host, 0, 1)
             right.addWidget(port_label, 0, 2)
@@ -3681,16 +3677,22 @@ if __name__ == "__main__":
             filtering_label.setFixedWidth(CONFIG_FIELD_LABEL_WIDTH)
             left.addWidget(filtering_label, 1, 0)
             left.addWidget(filtering, 1, 1)
-            left.addWidget(label_for("MAX_RENDER_EDGES", "Max Edges:", budget), 1, 2)
-            left.addWidget(budget, 1, 3)
+            budget_label = label_for("MAX_RENDER_EDGES", "Max Edges:", budget)
+            budget_label.setContentsMargins(CONFIG_FIELD_HORIZONTAL_SPACING, 0, 0, 0)
+            left.addWidget(budget_label, 1, 2)
+            left.addWidget(budget, 1, 3, 1, 2)
             scale_label = label_for("DISTANCE_SCALE", "Distance Scale:", scale)
-            # Matching label widths make Host and Port equal-sized groups,
-            # while the scale editor spans their shared input columns.
+            # Matching label widths keep the endpoint groups equal-sized.
             right_label_width = scale_label.sizeHint().width()
             for label in (host_label, port_label, scale_label):
                 label.setFixedWidth(right_label_width)
             right.addWidget(scale_label, 1, 0)
-            right.addWidget(scale, 1, 1, 1, 3)
+            scale_and_quit = QHBoxLayout()
+            scale_and_quit.setContentsMargins(0, 0, 0, 0)
+            scale_and_quit.setSpacing(24)
+            scale_and_quit.addWidget(scale, 1)
+            scale_and_quit.addWidget(self._build_lifecycle_field())
+            right.addLayout(scale_and_quit, 1, 1, 1, 3)
 
             # The budget only means anything while filtering is on, and it sits
             # beside its switch now, so the gating reads as one control.
@@ -3705,21 +3707,43 @@ if __name__ == "__main__":
             gate_budget(initial_filtering)
 
             def refresh_endpoint_note():
-                """Keep the connection status in the endpoint tooltips."""
+                """Use the build's endpoint when readable; allow manual fallback."""
+                if self._profile_loading:
+                    return
                 value = app_dir.text().strip()
                 build_dir = (
                     value
                     if os.path.isabs(value)
                     else os.path.join(str(PROJECT_ROOT), value)
                 ) if value else ""
+                try:
+                    endpoint = Unity_Build_VR.read_endpoint(build_dir)
+                except OSError:
+                    endpoint = None
+                parsed = endpoint is not None
+                if parsed:
+                    # Updating both fields atomically avoids recursive parsing
+                    # through their textChanged/valueChanged signals.
+                    with QSignalBlocker(host), QSignalBlocker(port):
+                        host.setText(endpoint[0])
+                        port.setValue(endpoint[1])
+                for key in ("VR_HOST", "VR_PORT"):
+                    self.inputs[key].setEnabled(not parsed)
+                    self.labels[key].setEnabled(not parsed)
+                self._bridge_endpoint_parsed = parsed
                 text, warning = bridge_note_text(
-                    Unity_Build_VR.read_endpoint(build_dir),
+                    endpoint,
                     host.text().strip(),
                     int(port.value()),
                 )
+                status = (
+                    "Parsing succeeded. Unity Host and Unity Port are filled from the build and locked."
+                    if parsed else
+                    "Parsing failed: no unique endpoint could be read. Unity Host and Unity Port can be entered manually in an editable profile."
+                )
                 self._bridge_endpoint_warning = warning
                 for key in ("VR_APP_DIR", "VR_HOST", "VR_PORT"):
-                    tip = VR_CONTROL_TIPS[key] + "\n" + text
+                    tip = VR_CONTROL_TIPS[key] + "\n" + status + "\n" + text
                     targets = [self.inputs[key], self.labels[key]]
                     if key == "VR_APP_DIR":
                         targets.append(browse)

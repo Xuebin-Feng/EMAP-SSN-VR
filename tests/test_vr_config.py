@@ -238,6 +238,7 @@ class ConfigPersistenceTests(unittest.TestCase):
             if os.path.exists(settings_file):
                 with open(settings_file, encoding="utf-8") as handle:
                     original = handle.read()
+            window.inputs["VR_APP_DIR"].setText("no_such_build")
             window.inputs["VR_PORT"].setValue(5123)
             try:
                 window.save_settings()
@@ -401,6 +402,9 @@ class UnityEndpointTests(unittest.TestCase):
             print("@@" + json.dumps({{
                 "text": window.inputs["VR_APP_DIR"].toolTip(),
                 "warning": window._bridge_endpoint_warning,
+                "host": window.inputs["VR_HOST"].text(),
+                "port": window.inputs["VR_PORT"].value(),
+                "editable": [window.inputs[key].isEnabled() for key in ("VR_HOST", "VR_PORT")],
             }}))
             """.format(build=build_dir, host=host, port=port)
         )
@@ -438,17 +442,95 @@ class UnityEndpointTests(unittest.TestCase):
     @unittest.skipUnless(
         os.path.isdir(os.path.join(OPT_VR, "VR_App")), "VR_App is not checked out"
     )
-    def test_a_mismatch_warns_instead_of_failing_silently(self):
-        """Without this the only symptom is a headset that never fills in."""
+    def test_a_mismatch_is_corrected_and_locked(self):
         report = self.note_for(self.SHIPPED_BUILD, port=6000)
-        self.assertTrue(report["warning"])
+        self.assertFalse(report["warning"])
         self.assertIn("127.0.0.1:5005", report["text"])
-        self.assertIn("127.0.0.1:6000", report["text"])
+        self.assertIn("Parsing succeeded", report["text"])
+        self.assertEqual((report["host"], report["port"]), ("127.0.0.1", 5005))
+        self.assertEqual(report["editable"], [False, False])
 
     def test_an_unreadable_build_falls_back_to_the_typed_values(self):
         report = self.note_for(os.path.join(OPT_VR, "no_such_build"))
         self.assertFalse(report["warning"], "an unreadable build is not a mismatch")
         self.assertIn("matched by hand", report["text"])
+        self.assertIn("Parsing failed", report["text"])
+        self.assertEqual(report["editable"], [True, True])
+
+    def test_profile_changes_switch_between_parsed_and_manual_endpoints(self):
+        report = report_from(
+            """
+            tab = "visual_effects"
+            profile = dict(namespace["VR_VISUAL_PROFILE_DEFAULTS"])
+            profile.update(VR_APP_DIR="test_build", VR_HOST="10.0.0.5", VR_PORT=6000)
+            def state():
+                return {
+                    "host": window.inputs["VR_HOST"].text(),
+                    "port": window.inputs["VR_PORT"].value(),
+                    "enabled": [window.inputs[k].isEnabled() for k in ("VR_HOST", "VR_PORT")],
+                    "label_enabled": [window.labels[k].isEnabled() for k in ("VR_HOST", "VR_PORT")],
+                }
+            with mock.patch.object(namespace["Unity_Build_VR"], "read_endpoint", return_value=("localhost", 7777)):
+                window._apply_profile_data(tab, profile)
+                parsed = state()
+                saved = window._collect_tab_profile_data(tab)
+                window._apply_profile_data(tab, profile, read_only=True)
+                window._apply_profile_data(tab, profile)
+                after_default = state()
+            with mock.patch.object(namespace["Unity_Build_VR"], "read_endpoint", return_value=None):
+                window._apply_profile_data(tab, profile)
+                manual = state()
+                window._apply_profile_data(tab, profile, read_only=True)
+                read_only = state()
+            with mock.patch.object(namespace["Unity_Build_VR"], "read_endpoint", side_effect=PermissionError("unreadable build")):
+                window._apply_profile_data(tab, profile)
+                unreadable = state()
+            print("@@" + json.dumps({"parsed": parsed, "saved": saved,
+                "after_default": after_default, "manual": manual,
+                "read_only": read_only, "unreadable": unreadable}))
+            """
+        )
+        parsed = report["parsed"]
+        self.assertEqual((parsed["host"], parsed["port"]), ("localhost", 7777))
+        self.assertEqual(parsed["enabled"], [False, False])
+        self.assertEqual(parsed["label_enabled"], [False, False])
+        self.assertEqual(report["after_default"], parsed)
+        self.assertEqual(report["saved"]["VR_HOST"], "localhost")
+        self.assertEqual(int(report["saved"]["VR_PORT"]), 7777)
+        self.assertEqual(report["manual"]["enabled"], [True, True])
+        self.assertEqual((report["manual"]["host"], report["manual"]["port"]), ("10.0.0.5", 6000))
+        self.assertEqual(report["read_only"]["enabled"], [False, False])
+        self.assertEqual(report["unreadable"], report["manual"])
+
+    def test_each_new_window_rereads_the_build_before_using_saved_values(self):
+        report = report_from(
+            """
+            import tempfile, struct
+            from pathlib import Path
+            reports = []
+            with tempfile.TemporaryDirectory() as folder:
+                scene = Path(folder) / "Player_Data" / "level0"
+                scene.parent.mkdir()
+                custom = dict(window._custom_settings)
+                custom.update(VR_APP_DIR=folder, VR_HOST="10.0.0.5", VR_PORT=6000)
+                for port in (7001, 7002):
+                    host = b"127.0.0.1"
+                    scene.write_bytes(struct.pack("<i", len(host)) + host + b"\\x00" * (-len(host) % 4) + struct.pack("<i", port))
+                    with mock.patch.object(type(window), "_read_custom_settings", return_value=custom):
+                        fresh = type(window)()
+                    try:
+                        reports.append({"port": fresh.inputs["VR_PORT"].value(),
+                            "enabled": fresh.inputs["VR_PORT"].isEnabled(),
+                            "tooltip": fresh.inputs["VR_APP_DIR"].toolTip()})
+                    finally:
+                        fresh.close()
+            print("@@" + json.dumps(reports))
+            """
+        )
+        self.assertEqual([item["port"] for item in report], [7001, 7002])
+        for item in report:
+            self.assertFalse(item["enabled"])
+            self.assertIn("Parsing succeeded", item["tooltip"])
 
     @unittest.skipUnless(
         os.path.isdir(os.path.join(OPT_VR, "VR_App")), "VR_App is not checked out"
@@ -462,7 +544,7 @@ class UnityEndpointTests(unittest.TestCase):
             window.inputs["VR_PORT"].setValue(6000)
             field = window.inputs["VR_APP_DIR"]
             browse = [b for b in field.parentWidget().findChildren(QPushButton)
-                      if b.text() == "..."]
+                      if b.text() == "Browse"]
             with mock.patch.object(
                 QFileDialog, "getExistingDirectory", return_value={build!r}
             ):
