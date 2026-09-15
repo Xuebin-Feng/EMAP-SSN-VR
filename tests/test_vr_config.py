@@ -212,8 +212,14 @@ class LaunchTargetTests(unittest.TestCase):
             namespace["_handoff_to_layout_generator"].__globals__[
                 "launch_in_terminal"] = fake
             namespace["_handoff_to_layout_generator"](
-                "ignored", "layout.json", {}, executable="/python"
+                "ignored", "layout.json", {}, executable="/python", launch_viewer=False
             )
+            generator_only = list(captured["argv"])
+            namespace["_handoff_to_layout_generator"](
+                "ignored", "layout.json", {}, executable="/python", launch_viewer=True
+            )
+            captured["vr_argv"] = list(captured["argv"])
+            captured["argv"] = generator_only
             print("@@" + json.dumps(captured))
             """
         )
@@ -225,6 +231,8 @@ class LaunchTargetTests(unittest.TestCase):
             ),
             f"generator resolved to {script}",
         )
+        self.assertEqual(report["vr_argv"][2], os.path.join(VR_SRC, "Layout_Launcher_VR.py"))
+        self.assertNotIn("--launch-viewer", report["vr_argv"])
 
 
 class ConfigPersistenceTests(unittest.TestCase):
@@ -603,6 +611,49 @@ class QuitWithUnityTests(unittest.TestCase):
         # The pill has to say which way it is pointing.
         self.assertEqual(report["False"]["text"], "OFF")
         self.assertEqual(report["True"]["text"], "ON")
+
+    def test_launch_snapshot_preserves_unity_settings_in_a_fresh_viewer_process(self):
+        report = report_from(
+            """
+            import subprocess
+            window.inputs["VR_APP_DIR"].setText("test_custom_unity_build")
+            window.inputs["VR_HOST"].setText("localhost")
+            window.inputs["VR_PORT"].setValue(6123)
+            window.inputs["DISTANCE_SCALE"].setValue(2.5)
+            window.inputs["ENABLE_EDGE_FILTERING"].setChecked(False)
+            window.inputs["MAX_RENDER_EDGES"].setValue(12345)
+            reports = []
+            for checked in (False, True):
+                window.inputs["EXIT_WITH_UNITY"].setChecked(checked)
+                path = namespace["_create_viewer_settings_snapshot"](window.collect_data())
+                try:
+                    script = (
+                        "import sys, json; sys.path.insert(0, " + repr(str(namespace["_bootstrap_vr"].VR_SRC_DIR)) + "); "
+                        "import EMAPSSN_Viewer_VR as viewer; "
+                        "print('@@' + json.dumps({'exit': viewer.should_exit_with_unity(), "
+                        "'values': {k: getattr(viewer.cfg, k) for k in " + repr(list(namespace["VR_PROFILE_DEFAULTS"])) + "}}))"
+                    )
+                    result = subprocess.run(
+                        [sys.executable, "-c", script, "--settings", path],
+                        capture_output=True, text=True, timeout=120,
+                    )
+                    assert result.returncode == 0, result.stdout + result.stderr
+                    reports.append(json.loads(result.stdout.split("@@", 1)[1]))
+                finally:
+                    os.unlink(path)
+            print("@@" + json.dumps(reports))
+            """
+        )
+        for checked, item in zip((False, True), report):
+            with self.subTest(checked=checked):
+                self.assertIs(item["exit"], checked)
+                self.assertIs(item["values"]["EXIT_WITH_UNITY"], checked)
+                self.assertEqual(item["values"]["VR_HOST"], "localhost")
+                self.assertEqual(item["values"]["VR_PORT"], 6123)
+                self.assertEqual(item["values"]["DISTANCE_SCALE"], 2.5)
+                self.assertIs(item["values"]["ENABLE_EDGE_FILTERING"], False)
+                self.assertEqual(item["values"]["MAX_RENDER_EDGES"], 12345)
+                self.assertEqual(item["values"]["VR_APP_DIR"], os.path.join(OPT_VR, "test_custom_unity_build"))
 
     def test_it_belongs_to_the_visual_effects_profile(self):
         """Otherwise a saved profile would silently drop it."""

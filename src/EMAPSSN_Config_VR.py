@@ -589,10 +589,11 @@ def _handoff_to_layout_generator(
     """Launch the layout generator in a terminal, optionally handing off to viewer."""
     executable = executable or sys.executable
     project_root = os.path.abspath(project_root)
-    generator_script = str(SRC_DIR / "Layout_Cache_Generator.py")
+    generator_script = str(
+        Path(_bootstrap_vr.VR_SRC_DIR) / "Layout_Launcher_VR.py"
+        if launch_viewer else SRC_DIR / "Layout_Cache_Generator.py"
+    )
     argv = [executable, "-u", generator_script, layout_settings_path]
-    if launch_viewer:
-        argv.append("--launch-viewer")
     argv.append("--delete-settings")
     return launch_in_terminal(
         argv,
@@ -622,8 +623,10 @@ def _create_layout_settings_snapshot(settings_doc):
 
 def _create_viewer_settings_snapshot(settings):
     """Write one private settings file for a single Viewer process."""
-    from desktop.Viewer_State import DEFAULTS, encode_document
-    settings = encode_document("viewer", {**DEFAULTS, **settings})
+    from desktop.Viewer_State import DEFAULTS
+    # This private VR snapshot uses the same flat mapping as the VR settings
+    # file. The desktop encoder silently omits every Unity-specific setting.
+    settings = {**DEFAULTS, **VR_PROFILE_DEFAULTS, **settings}
     descriptor, path = tempfile.mkstemp(prefix="ssn_viewer_", suffix=".json")
     try:
         with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as handle:

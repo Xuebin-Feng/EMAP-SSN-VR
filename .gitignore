@@ -197,3 +197,4 @@ viewer_settings_vr.json
 # command history, all produced by a session and specific to one dataset. The
 # parent project ignores its own Cache_Files/ identically.
 Cache_Files/
+VR_Test/

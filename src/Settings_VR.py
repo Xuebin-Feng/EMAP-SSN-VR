@@ -126,10 +126,9 @@ def _read_json(path):
         return {}
     if not isinstance(stored, dict):
         return {}
-    # The Config GUI hands each launch a private snapshot written with
-    # encode_document() - sectioned, not a flat mapping - and points
-    # SSN_VIEWER_SETTINGS_PATH at it. Decode that shape so the VR viewer
-    # consumes the GUI's handoff exactly as the desktop viewer does.
+    # VR config files and launch snapshots are flat mappings, preserving the
+    # Unity settings absent from the desktop schema. Continue accepting shared
+    # desktop documents for callers that provide only shared settings.
     if stored.get("schema_version") is not None:
         try:
             return decode_document(stored, "viewer", partial=True)

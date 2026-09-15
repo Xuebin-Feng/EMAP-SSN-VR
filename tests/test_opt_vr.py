@@ -505,8 +505,8 @@ class LaunchHandoffTests(unittest.TestCase):
         finally:
             _bootstrap_vr.SETTINGS_SNAPSHOT_TO_DELETE = previous
 
-    def test_gui_settings_document_is_decoded(self):
-        """The GUI snapshot is encode_document output, not a flat mapping."""
+    def test_shared_settings_document_is_still_decoded(self):
+        """Shared callers can still pass a sectioned desktop document."""
         import tempfile
 
         from desktop.Viewer_State import DEFAULTS, encode_document

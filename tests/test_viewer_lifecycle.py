@@ -29,6 +29,8 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
+from types import SimpleNamespace
 from contextlib import redirect_stderr, redirect_stdout
 
 OPT_VR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -134,6 +136,40 @@ class ExitWithUnityTests(unittest.TestCase):
         for written, expected in (("False", False), ("True", True), (False, False)):
             with self.subTest(written=written):
                 self.assertIs(cfg._coerce("EXIT_WITH_UNITY", written), expected)
+
+    def test_disconnect_keeps_listening_only_when_quit_is_off(self):
+        import queue
+        import socket
+        import numpy as np
+
+        for quit_with_unity in (False, True):
+            with self.subTest(quit_with_unity=quit_with_unity):
+                cfg.EXIT_WITH_UNITY = quit_with_unity
+                client, peer = socket.socketpair()
+                self.addCleanup(client.close)
+                self.addCleanup(peer.close)
+                # A real EOF from the peer drives client_reader_loop and the
+                # production server's disconnect path, without a Unity app.
+                peer.shutdown(socket.SHUT_WR)
+                state = SimpleNamespace(
+                    running=True, is_connected=False,
+                    current_colors=np.ones((1, 4)), current_sizes=np.ones(1),
+                    visible_mask=np.ones(1, dtype=bool),
+                    get_global_settings=lambda: {}, get_transform_state=lambda: {},
+                    update_queue=queue.Queue(),
+                )
+                listener = mock.Mock()
+                listener.accept.side_effect = [
+                    (client, ("local", 1)), OSError("test listener stopped")
+                ]
+                with mock.patch.object(viewer._thread, "interrupt_main") as interrupt, mock.patch.object(viewer.CONSOLE, "message"):
+                    empty_edges = np.empty((0, 2), dtype=np.int32)
+                    viewer.unity_server_loop(
+                        listener, state, np.zeros((1, 3)), empty_edges, 1, 0, empty_edges
+                    )
+                self.assertEqual(state.running, not quit_with_unity)
+                self.assertEqual(interrupt.call_count, int(quit_with_unity))
+                self.assertEqual(listener.accept.call_count, 1 if quit_with_unity else 2)
 
 
 class PortOwnershipTests(unittest.TestCase):
