@@ -31,9 +31,10 @@ REM cross-platform.
 REM
 REM Modes:
 REM   (none)         validate the environment, then open the VR Config GUI
-REM   --check-only   exit 0 when the managed environment is ready, else 10
-REM   --setup-only   create or repair the managed environment, then exit
-REM   --run-only     open the GUI, assuming the environment is already valid
+REM   --check-only      exit 0 when the managed environment is ready, else 10
+REM   --setup-only      create or repair the managed environment, then exit
+REM   --run-only        open the GUI, assuming the environment is already valid
+REM   --check-hardware  report whether this machine can drive a headset
 REM =========================================================================
 setlocal EnableDelayedExpansion
 set "LAUNCH_MODE=%~1"
@@ -51,6 +52,7 @@ set "PARENT_LAUNCHER=%PROJECT_ROOT%\src\bin\EMAPSSN.bat"
 set "VENV_PYTHON=%PROJECT_ROOT%\.venv\Scripts\python.exe"
 set "CONFIG_GUI=%OPT_VR_ROOT%\src\EMAPSSN_Config_VR.py"
 set "INSTANCE_PROBE=%OPT_VR_ROOT%\src\bin\Single_Instance_Probe_VR.py"
+set "HARDWARE_CHECK=%OPT_VR_ROOT%\src\Detect_GPU_VR.py"
 
 if not exist "!PARENT_LAUNCHER!" (
     echo Error: the EMAP-SSN launcher was not found at:
@@ -69,6 +71,14 @@ if "%LAUNCH_MODE%"=="" call :ACTIVATE_EXISTING_INSTANCE
 if "%LAUNCH_MODE%"=="" if !ERRORLEVEL! equ 0 exit /b 0
 if /I "%LAUNCH_MODE%"=="--run-only" call :ACTIVATE_EXISTING_INSTANCE
 if /I "%LAUNCH_MODE%"=="--run-only" if !ERRORLEVEL! equ 0 exit /b 0
+
+:: Whether a headset can be driven at all. Reported, never enforced: the
+:: Config GUI is useful on a machine with no headset attached to it.
+if /I "%LAUNCH_MODE%"=="--check-hardware" (
+    if not exist "!VENV_PYTHON!" exit /b 10
+    "!VENV_PYTHON!" "!HARDWARE_CHECK!"
+    exit /b !ERRORLEVEL!
+)
 
 :: 1. Read-only validation of the parent's managed environment.
 if /I "%LAUNCH_MODE%"=="--check-only" (
@@ -106,7 +116,9 @@ if not exist "!VENV_PYTHON!" (
     exit /b 10
 )
 
-:: 3. Run the VR configuration tool.
+:: 3. Report VR hardware, then run the VR configuration tool.
+"!VENV_PYTHON!" "!HARDWARE_CHECK!"
+
 :RUN_APPLICATION
 call :ACTIVATE_EXISTING_INSTANCE
 if !ERRORLEVEL! equ 0 exit /b 0

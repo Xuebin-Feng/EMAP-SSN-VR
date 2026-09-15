@@ -61,6 +61,7 @@ opt_vr/
     ├── Viewer_Utils_VR.py               # sequence and colour helpers
     ├── Unity_Build_VR.py                 # reads a build's baked endpoint
     ├── Single_Instance_VR.py             # one VR viewer at a time
+    ├── Detect_GPU_VR.py                  # can this machine drive a headset
     ├── Command_Compatibility_VR.py      # shared vs overridden command audit
     ├── Command_Engine.py                # name pinned: upstream imports it
     ├── Viewer_Command_Portal.py         # name pinned: upstream imports it
@@ -258,6 +259,43 @@ scene, where Unity stores it as a length-prefixed string followed by the port:
 
 Choosing a build fills **Unity Host** and **Unity Port** in from it, and any
 disagreement between the two is called out above the fields.
+
+## Hardware
+
+Not every GPU that runs the main program can run this one. `src/Detect_GPU_VR.py`
+answers that separately, because the main program's `Detect_GPU` is deciding
+which PyTorch backend to install - a compute question whose answer does not
+carry over. The Unity client, not Python, is what renders to the headset.
+
+| Vendor | VR | Notes |
+|---|---|---|
+| NVIDIA | yes | |
+| AMD | yes | SteamVR's stated floor is roughly an RX 480 |
+| Intel Arc (A- and B-series) | **no** | SteamVR refuses to start when it detects an Arc GPU, and Intel has published no timeline. Streaming apps such as Virtual Desktop are the only route, and they bypass this viewer's client |
+| Intel integrated (UHD, Iris) | no | not a VR part |
+
+Arc is the trap worth naming: it is a perfectly good XPU compute target, so the
+main program will happily pick it, embed on it and build layouts with it, and
+the headset will still never light up.
+
+The check reads display adapter names and the registered OpenXR runtime -
+about 0.7s, against roughly four seconds for the full `detect_hardware()`,
+which is what makes it cheap enough to run on every launch. It reports and
+never enforces: the Config GUI is useful on a machine with no headset attached,
+so an unsupported verdict is printed and launched past rather than refused.
+
+```bash
+../.venv/Scripts/python.exe src/Detect_GPU_VR.py
+```
+
+Exit codes are 0 ready, 10 no supported GPU, 11 no OpenXR runtime, 12 unknown,
+so a script can branch on it. The desktop launcher runs it after validating the
+Python environment, and the viewer runs it again just before handing over to
+the Unity client, which is the moment an unsupported GPU actually bites.
+
+What it deliberately does not do is judge whether the hardware is *fast
+enough*. That depends on the headset, the scene and the network size, and a
+checker that guessed would be wrong more often than useful.
 
 ## One viewer at a time
 

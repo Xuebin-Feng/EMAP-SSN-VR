@@ -970,6 +970,31 @@ def find_vr_app():
 
     return None
 
+def warn_about_vr_hardware():
+    """Say so when the client is about to start on hardware that cannot run it.
+
+    This is the moment it matters: an Intel Arc GPU will take the layout
+    happily and then fail to present it, because SteamVR refuses to start at
+    all. A warning here costs under a second and turns "the headset stayed
+    black" into something with a cause attached.
+
+    It warns and continues rather than refusing. The check reads adapter names,
+    which is a weaker thing to know than whether a headset actually works, and
+    a false negative that blocked a working setup would be worse than the
+    problem it prevents.
+    """
+    try:
+        import Detect_GPU_VR
+
+        report = Detect_GPU_VR.check()
+    except Exception as error:
+        CONSOLE.message(f"Note: could not check VR hardware: {error}")
+        return None
+    if report["verdict"] != Detect_GPU_VR.READY:
+        CONSOLE.message(f"Warning: {Detect_GPU_VR.summary(report)}")
+    return report
+
+
 def launch_vr_app():
     """Attempt to launch the built VR application.
     Returns the subprocess.Popen object if launched, or None if not found.
@@ -983,6 +1008,7 @@ def launch_vr_app():
             print(f"    {os.path.normpath(search_dir)}")
         return None
     
+    warn_about_vr_hardware()
     print(f"Launching VR application: {exe_path}")
     try:
         proc = subprocess.Popen(

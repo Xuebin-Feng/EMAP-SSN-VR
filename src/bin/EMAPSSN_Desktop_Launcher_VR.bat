@@ -53,6 +53,18 @@ if not exist "!VENV_PYTHON!" (
     exit /b 1
 )
 
+:: The GUI is still useful without a headset - choosing caches, generating
+:: layouts - so an unsupported result is reported and then launched past,
+:: rather than refused. The pause is what makes it readable: this terminal
+:: closes itself the moment the Qt window is up.
+echo Checking VR hardware...
+call "!PORTABLE_LAUNCHER!" --check-hardware
+if !ERRORLEVEL! neq 0 (
+    echo.
+    echo !APP_LABEL! will still open, but a headset may not work on this machine.
+    pause
+)
+
 call :ACTIVATE_EXISTING_INSTANCE
 if !ERRORLEVEL! equ 0 exit /b 0
 
