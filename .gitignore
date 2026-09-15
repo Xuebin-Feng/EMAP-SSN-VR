@@ -180,6 +180,20 @@ cython_debug/
 .cursorignore
 .cursorindexingignore
 
-# Per-user VR configuration, written by Config.py. The parent project
-# ignores viewer_settings.json for the same reason: it holds local paths.
-vr_settings.json
+# Launcher state directories, written by
+# srcin\EMAPSSN_Desktop_Launcher_VR.bat while it waits for the Qt window.
+# The parent project ignores its own /temp/ for the same reason.
+/temp/
+
+# Generated launchers. install_vr.bat writes EMAP-SSN VR.lnk; the parent
+# project ignores its .lnk files identically.
+*.lnk
+
+# Per-user VR configuration, written by EMAPSSN_Config_VR.py. The parent
+# project ignores its viewer_settings.json for the same reason: local paths.
+viewer_settings_vr.json
+
+# Runtime working directory: layout caches, header lists, exported settings and
+# command history, all produced by a session and specific to one dataset. The
+# parent project ignores its own Cache_Files/ identically.
+Cache_Files/

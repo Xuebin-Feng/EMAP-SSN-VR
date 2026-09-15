@@ -4,8 +4,8 @@ import re
 import numpy as np
 import pandas as pd
 import h5py
-import Viewer_Utils as utils
-import Settings as cfg
+import Viewer_Utils_VR as utils
+import Settings_VR as cfg
 
 def print_help(meta_dir_help):
     print(f"""

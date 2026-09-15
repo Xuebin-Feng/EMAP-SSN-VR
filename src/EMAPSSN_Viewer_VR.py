@@ -13,14 +13,14 @@ import queue
 import subprocess
 import glob
 
-# _bootstrap owns sys.path: it puts this directory ahead of the main
+# _bootstrap_vr owns sys.path: it puts this directory ahead of the main
 # program's src/ so local command overrides win. Appending the directory
 # again here would add a second, lower-priority entry.
 
-# Importing _bootstrap also applies any --settings argument the Config GUI
-# passed, which must happen before Settings reads its file below.
-import _bootstrap
-import Settings as cfg
+# Importing _bootstrap_vr also applies any --settings argument the Config GUI
+# passed, which must happen before Settings_VR reads its file below.
+import _bootstrap_vr
+import Settings_VR as cfg
 
 # Upstream modules do `import EMAPSSN_Config as cfg`, which would pull PySide6
 # into this headless process. Publish the Qt-free settings module under that
@@ -29,9 +29,9 @@ import Settings as cfg
 # This MUST precede any import that reaches an upstream module. Alignment_Manager
 # below is the main program's own, so installing the alias afterwards would let
 # the real, Qt-importing EMAPSSN_Config load first.
-_bootstrap.install_settings_alias(cfg)
+_bootstrap_vr.install_settings_alias(cfg)
 
-import Viewer_Utils as utils
+import Viewer_Utils_VR as utils
 import Alignment_Manager
 from desktop.Viewer_State import resolve_selected_cache
 
@@ -75,8 +75,11 @@ class HeadlessViewer:
             lengths_map = {}
             fasta_path = getattr(cfg, 'NODE_FASTA_FILE', None) or getattr(cfg, 'SEQUENCES_FILE', '')
             if fasta_path and fasta_path.startswith('..'):
-                script_dir = os.path.dirname(os.path.abspath(__file__))
-                fasta_path = os.path.normpath(os.path.join(script_dir, fasta_path))
+                # Relative settings resolve against the submodule root, not
+                # against this module's directory inside src/.
+                fasta_path = os.path.normpath(
+                    os.path.join(_bootstrap_vr.OPT_VR_DIR, fasta_path)
+                )
                 
             if fasta_path and os.path.exists(fasta_path):
                 try:
@@ -756,7 +759,9 @@ _NOT_THE_PLAYER = ("unitycrashhandler",)
 
 def vr_app_search_dirs():
     """Directories that may hold the built Unity player, most specific first."""
-    script_dir = os.path.dirname(os.path.abspath(__file__))
+    # VR_App sits at the submodule root beside src/, the way the main
+    # program keeps its own resource directories out of the module tree.
+    script_dir = _bootstrap_vr.OPT_VR_DIR
     configured = getattr(cfg, "VR_APP_DIR", "VR_App")
     return [
         # The setting wins, resolved against opt_vr when it is relative.
@@ -819,11 +824,11 @@ def launch_vr_app():
 def _consume_launch_snapshot():
     """Delete the per-launch settings snapshot the Config GUI handed us.
 
-    Settings has already read the file by the time this runs, so removing it
+    Settings_VR has already read the file by the time this runs, so removing it
     here honours --delete-settings exactly as the desktop viewer does.
     """
-    path = _bootstrap.SETTINGS_SNAPSHOT_TO_DELETE
-    _bootstrap.SETTINGS_SNAPSHOT_TO_DELETE = None
+    path = _bootstrap_vr.SETTINGS_SNAPSHOT_TO_DELETE
+    _bootstrap_vr.SETTINGS_SNAPSHOT_TO_DELETE = None
     if not path:
         return
     try:
@@ -917,5 +922,9 @@ def start_server(host=None, port=None):
         server_socket.close()
 
 if __name__ == "__main__":
+    # The server exists to drive the Windows Unity player in VR_App, so it
+    # refuses to start elsewhere rather than binding a socket nothing can
+    # ever connect to.
+    _bootstrap_vr.require_windows("The EMAP-SSN VR Viewer")
     print("--- VR SSN Viewer Backend ---")
     start_server()

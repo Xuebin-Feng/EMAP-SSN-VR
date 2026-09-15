@@ -8,7 +8,7 @@ from Bio.SeqRecord import SeqRecord
 from collections import Counter
 import math
 import fnmatch
-import Settings as cfg
+import Settings_VR as cfg
 
 # --- 1. Library Detection ---
 try:

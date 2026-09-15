@@ -35,9 +35,12 @@ import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 
+#: The submodule root; VR_SRC is its module tree, mirroring the main
+#: program's project-root/src split.
 OPT_VR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if OPT_VR not in sys.path:
-    sys.path.insert(0, OPT_VR)
+VR_SRC = os.path.join(OPT_VR, "src")
+if VR_SRC not in sys.path:
+    sys.path.insert(0, VR_SRC)
 
 # A neutral settings file keeps these tests independent of whatever the user
 # last saved in the project's viewer_settings.json.
@@ -50,14 +53,14 @@ os.environ["SSN_VIEWER_SETTINGS_PATH"] = _NEUTRAL.name
 
 import numpy as np  # noqa: E402
 
-import _bootstrap  # noqa: E402
+import _bootstrap_vr  # noqa: E402
 import Command_Engine  # noqa: E402
-import Settings as cfg  # noqa: E402
+import Settings_VR as cfg  # noqa: E402
 
 with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
-    import Viewer as vr_viewer  # noqa: E402
+    import EMAPSSN_Viewer_VR as vr_viewer  # noqa: E402
 
-_bootstrap.install_settings_alias(cfg)
+_bootstrap_vr.install_settings_alias(cfg)
 
 
 def build_viewer(n_nodes=12, seed=0):
@@ -92,19 +95,19 @@ def run_command(viewer, command_string):
 
 class BootstrapTests(unittest.TestCase):
     def test_opt_vr_precedes_the_main_program_on_sys_path(self):
-        """opt_vr must win, or every local command override is ignored."""
-        self.assertIn(_bootstrap.OPT_VR_DIR, sys.path)
-        self.assertIn(_bootstrap.SRC_DIR, sys.path)
+        """opt_vr/src must win, or every local override is ignored."""
+        self.assertIn(_bootstrap_vr.VR_SRC_DIR, sys.path)
+        self.assertIn(_bootstrap_vr.SRC_DIR, sys.path)
         # First occurrence is what import resolution actually uses.
         self.assertLess(
-            sys.path.index(_bootstrap.OPT_VR_DIR),
-            sys.path.index(_bootstrap.SRC_DIR),
+            sys.path.index(_bootstrap_vr.VR_SRC_DIR),
+            sys.path.index(_bootstrap_vr.SRC_DIR),
         )
         # And it must appear exactly once, or a stale duplicate could shadow it.
-        self.assertEqual(sys.path.count(_bootstrap.OPT_VR_DIR), 1)
+        self.assertEqual(sys.path.count(_bootstrap_vr.VR_SRC_DIR), 1)
 
     def test_settings_alias_is_registered_for_upstream_modules(self):
-        """Importing Settings must be enough to register the alias.
+        """Importing Settings_VR must be enough to register the alias.
 
         Upstream modules do `import EMAPSSN_Config as cfg`. If the real one
         loads first it drags PySide6 into this headless process, so the alias
@@ -118,7 +121,7 @@ class BootstrapTests(unittest.TestCase):
 
         self.assertIn("src", Alignment_Manager.__file__)
         self.assertFalse(
-            os.path.exists(os.path.join(OPT_VR, "Alignment_Manager.py")),
+            os.path.exists(os.path.join(VR_SRC, "Alignment_Manager.py")),
             "opt_vr must not carry its own Alignment_Manager fork",
         )
 
@@ -168,7 +171,7 @@ class CommandPackageTests(unittest.TestCase):
     def test_every_local_command_exposes_run(self):
         import importlib
 
-        directory = os.path.join(OPT_VR, "commands")
+        directory = os.path.join(VR_SRC, "commands")
         names = sorted(
             name[:-3]
             for name in os.listdir(directory)
@@ -269,7 +272,7 @@ class CommandEngineAPITests(unittest.TestCase):
         HEADER_LIST_DIR/_sele.txt and read it back as @_sele.txt@, which wrote
         into the user's shared header-list directory on every invocation.
         """
-        import Settings as settings
+        import Settings_VR as settings
 
         original = getattr(settings, "HEADER_LIST_DIR", None)
         with tempfile.TemporaryDirectory() as folder:
@@ -465,24 +468,24 @@ class LaunchHandoffTests(unittest.TestCase):
             os.environ["SSN_VIEWER_SETTINGS_PATH"] = self._saved
 
     def test_settings_argument_sets_the_path_settings_reads(self):
-        _bootstrap.apply_settings_argument(["Viewer.py", "--settings", "snap.json"])
+        _bootstrap_vr.apply_settings_argument(["EMAPSSN_Viewer_VR.py", "--settings", "snap.json"])
         self.assertEqual(os.environ["SSN_VIEWER_SETTINGS_PATH"], "snap.json")
 
     def test_equals_form_is_accepted(self):
-        _bootstrap.apply_settings_argument(["Viewer.py", "--settings=snap.json"])
+        _bootstrap_vr.apply_settings_argument(["EMAPSSN_Viewer_VR.py", "--settings=snap.json"])
         self.assertEqual(os.environ["SSN_VIEWER_SETTINGS_PATH"], "snap.json")
 
     def test_snapshot_is_only_scheduled_for_deletion_when_asked(self):
-        kept = _bootstrap.apply_settings_argument(["Viewer.py", "--settings", "a.json"])
+        kept = _bootstrap_vr.apply_settings_argument(["EMAPSSN_Viewer_VR.py", "--settings", "a.json"])
         self.assertIsNone(kept)
-        doomed = _bootstrap.apply_settings_argument(
-            ["Viewer.py", "--settings", "b.json", "--delete-settings"]
+        doomed = _bootstrap_vr.apply_settings_argument(
+            ["EMAPSSN_Viewer_VR.py", "--settings", "b.json", "--delete-settings"]
         )
         self.assertEqual(doomed, "b.json")
 
     def test_plain_launch_touches_nothing(self):
         os.environ.pop("SSN_VIEWER_SETTINGS_PATH", None)
-        self.assertIsNone(_bootstrap.apply_settings_argument(["Viewer.py"]))
+        self.assertIsNone(_bootstrap_vr.apply_settings_argument(["EMAPSSN_Viewer_VR.py"]))
         self.assertNotIn("SSN_VIEWER_SETTINGS_PATH", os.environ)
 
     def test_snapshot_is_deleted_once(self):
@@ -492,15 +495,15 @@ class LaunchHandoffTests(unittest.TestCase):
             "w", suffix=".json", delete=False, encoding="utf-8"
         )
         handle.close()
-        previous = _bootstrap.SETTINGS_SNAPSHOT_TO_DELETE
+        previous = _bootstrap_vr.SETTINGS_SNAPSHOT_TO_DELETE
         try:
-            _bootstrap.SETTINGS_SNAPSHOT_TO_DELETE = handle.name
+            _bootstrap_vr.SETTINGS_SNAPSHOT_TO_DELETE = handle.name
             vr_viewer._consume_launch_snapshot()
             self.assertFalse(os.path.exists(handle.name))
             # Idempotent: a second call must not raise or delete anything else.
             vr_viewer._consume_launch_snapshot()
         finally:
-            _bootstrap.SETTINGS_SNAPSHOT_TO_DELETE = previous
+            _bootstrap_vr.SETTINGS_SNAPSHOT_TO_DELETE = previous
 
     def test_gui_settings_document_is_decoded(self):
         """The GUI snapshot is encode_document output, not a flat mapping."""
@@ -516,9 +519,9 @@ class LaunchHandoffTests(unittest.TestCase):
         handle.close()
         self.addCleanup(lambda: os.path.exists(handle.name) and os.unlink(handle.name))
 
-        import Settings
+        import Settings_VR
 
-        self.assertEqual(Settings._read_json(handle.name).get("NODE_SIZE"), 17)
+        self.assertEqual(Settings_VR._read_json(handle.name).get("NODE_SIZE"), 17)
 
 
 

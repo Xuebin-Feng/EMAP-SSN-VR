@@ -47,8 +47,8 @@ import os
 import numpy as np
 
 import Command_Engine
-import Settings as cfg
-import Viewer_Utils as utils
+import Settings_VR as cfg
+import Viewer_Utils_VR as utils
 
 #: Fraction of the bounding box added as a margin on each side.
 PADDING_FRACTION = 0.05

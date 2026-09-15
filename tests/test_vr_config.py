@@ -15,7 +15,7 @@
 
 """Tests for the VR Configuration GUI.
 
-``Config.py`` is a copy of the main program's Config GUI, rebased onto the
+``EMAPSSN_Config_VR.py`` is a copy of the main program's Config GUI, rebased onto the
 submodule. These tests pin the handful of things that copy had to change -
 where settings are stored, which viewer is launched, that layouts are always
 three dimensional, and that the Unity bridge settings exist - rather than
@@ -37,11 +37,14 @@ import tempfile
 import textwrap
 import unittest
 
+#: The submodule root; VR_SRC is its module tree, mirroring the main
+#: program's project-root/src split.
 OPT_VR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if OPT_VR not in sys.path:
-    sys.path.insert(0, OPT_VR)
+VR_SRC = os.path.join(OPT_VR, "src")
+if VR_SRC not in sys.path:
+    sys.path.insert(0, VR_SRC)
 
-import _bootstrap  # noqa: E402
+import _bootstrap_vr  # noqa: E402
 
 
 def run_gui_script(body):
@@ -50,8 +53,8 @@ def run_gui_script(body):
         """
         import json, os, runpy, sys
         os.environ["QT_QPA_PLATFORM"] = "offscreen"
-        sys.path.insert(0, {opt_vr!r})
-        import _bootstrap  # puts the parent src tree on sys.path
+        sys.path.insert(0, {vr_src!r})
+        import _bootstrap_vr  # puts the parent src tree on sys.path
         from unittest import mock
         from utilities import Hardware_Acceleration as _preload  # torch before Qt
         from PySide6.QtWidgets import QApplication
@@ -59,12 +62,12 @@ def run_gui_script(body):
         with mock.patch.object(QApplication, "exec", return_value=0), \\
              mock.patch.object(sys, "exit", return_value=None):
             namespace = runpy.run_path(
-                os.path.join({opt_vr!r}, "Config.py"), run_name="__main__"
+                os.path.join({vr_src!r}, "EMAPSSN_Config_VR.py"), run_name="__main__"
             )
         window = namespace["window"]
         Config = type("Config", (), namespace)
         """
-    ).format(opt_vr=OPT_VR) + textwrap.dedent(body) + textwrap.dedent(
+    ).format(vr_src=VR_SRC) + textwrap.dedent(body) + textwrap.dedent(
         """
         window.close()
         """
@@ -137,7 +140,7 @@ class ConfigWindowTests(unittest.TestCase):
         self.assertNotIn("PACKING_GEOMETRY", self.report["inputs"])
 
     def test_node_colour_has_exactly_one_control(self):
-        """Settings republishes INITIAL_NODE_COLOR as NEIGHBOR_COLOR and wins,
+        """Settings_VR republishes INITIAL_NODE_COLOR as NEIGHBOR_COLOR and wins,
         so a second control would silently discard the user's choice."""
         self.assertIn("INITIAL_NODE_COLOR", self.report["inputs"])
         self.assertNotIn("NEIGHBOR_COLOR", self.report["inputs"])
@@ -166,7 +169,7 @@ class ConfigWindowTests(unittest.TestCase):
             os.path.abspath(OPT_VR),
         )
         self.assertTrue(
-            self.report["settings_file"].endswith("vr_settings.json"),
+            self.report["settings_file"].endswith("viewer_settings_vr.json"),
             self.report["settings_file"],
         )
 
@@ -192,7 +195,7 @@ class LaunchTargetTests(unittest.TestCase):
         )
         script = report["argv"][2]
         self.assertTrue(
-            os.path.samefile(script, os.path.join(OPT_VR, "Viewer.py")),
+            os.path.samefile(script, os.path.join(VR_SRC, "EMAPSSN_Viewer_VR.py")),
             f"launched {script}",
         )
         self.assertNotIn("EMAPSSN_Viewer.py", script)
@@ -218,7 +221,7 @@ class LaunchTargetTests(unittest.TestCase):
         self.assertTrue(
             os.path.samefile(
                 script,
-                os.path.join(_bootstrap.SRC_DIR, "Layout_Cache_Generator.py"),
+                os.path.join(_bootstrap_vr.SRC_DIR, "Layout_Cache_Generator.py"),
             ),
             f"generator resolved to {script}",
         )
@@ -257,7 +260,7 @@ class ConfigPersistenceTests(unittest.TestCase):
         self.assertTrue(report["has_directories"], "directories must be persisted")
 
     def test_the_desktop_settings_file_is_never_written(self):
-        desktop = os.path.join(_bootstrap.PROJECT_ROOT, "viewer_settings.json")
+        desktop = os.path.join(_bootstrap_vr.PROJECT_ROOT, "viewer_settings.json")
         before = os.path.getmtime(desktop) if os.path.exists(desktop) else None
         run_gui_script(
             """
@@ -290,17 +293,17 @@ class VRSettingsSourceTests(unittest.TestCase):
             os.environ["SSN_VIEWER_SETTINGS_PATH"] = self._saved
 
     def test_default_settings_path_is_in_the_submodule(self):
-        import Settings
+        import Settings_VR
 
-        path = Settings._settings_path()
+        path = Settings_VR._settings_path()
         self.assertEqual(
             os.path.dirname(os.path.abspath(path)), os.path.abspath(OPT_VR)
         )
-        self.assertTrue(path.endswith("vr_settings.json"), path)
+        self.assertTrue(path.endswith("viewer_settings_vr.json"), path)
 
     def test_environment_override_still_wins(self):
         """That override is how the GUI hands a per-launch snapshot over."""
-        import Settings
+        import Settings_VR
 
         handle = tempfile.NamedTemporaryFile(
             "w", suffix=".json", delete=False, encoding="utf-8"
@@ -309,35 +312,35 @@ class VRSettingsSourceTests(unittest.TestCase):
         self.addCleanup(lambda: os.path.exists(handle.name) and os.unlink(handle.name))
         os.environ["SSN_VIEWER_SETTINGS_PATH"] = handle.name
         try:
-            self.assertEqual(Settings._settings_path(), handle.name)
+            self.assertEqual(Settings_VR._settings_path(), handle.name)
         finally:
             os.environ.pop("SSN_VIEWER_SETTINGS_PATH", None)
 
     def test_relative_directories_resolve_inside_the_submodule(self):
-        import Settings
+        import Settings_VR
 
-        values = Settings.load_settings()
+        values = Settings_VR.load_settings()
         for key in ("CACHE_FILE_DIR", "SAVED_LAYOUT_DIR", "INPUT_FILE_DIR",
                     "ANALYSIS_RESULT_DIR", "VR_APP_DIR"):
             with self.subTest(key=key):
                 self.assertTrue(
-                    str(values[key]).startswith(_bootstrap.OPT_VR_DIR),
+                    str(values[key]).startswith(_bootstrap_vr.OPT_VR_DIR),
                     f"{key} escaped the submodule: {values[key]}",
                 )
 
     def test_bridge_values_are_coerced_to_their_own_types(self):
         """The GUI writes spin boxes as text; unconverted they break arithmetic."""
-        import Settings
+        import Settings_VR
 
-        self.assertEqual(Settings._coerce("VR_PORT", "5005"), 5005)
-        self.assertIsInstance(Settings._coerce("VR_PORT", "5005"), int)
-        self.assertEqual(Settings._coerce("DISTANCE_SCALE", "2.5"), 2.5)
-        self.assertIs(Settings._coerce("ENABLE_EDGE_FILTERING", "false"), False)
+        self.assertEqual(Settings_VR._coerce("VR_PORT", "5005"), 5005)
+        self.assertIsInstance(Settings_VR._coerce("VR_PORT", "5005"), int)
+        self.assertEqual(Settings_VR._coerce("DISTANCE_SCALE", "2.5"), 2.5)
+        self.assertIs(Settings_VR._coerce("ENABLE_EDGE_FILTERING", "false"), False)
 
     def test_layout_dimensions_defaults_to_three(self):
-        import Settings
+        import Settings_VR
 
-        self.assertEqual(Settings.VR_DEFAULTS["LAYOUT_DIMENSIONS"], 3)
+        self.assertEqual(Settings_VR.VR_DEFAULTS["LAYOUT_DIMENSIONS"], 3)
 
 
 if __name__ == "__main__":

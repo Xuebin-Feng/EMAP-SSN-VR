@@ -2,8 +2,8 @@ import Command_Engine
 import os
 import re
 from Bio import SeqIO
-import Settings as cfg
-import Viewer_Utils as utils
+import Settings_VR as cfg
+import Viewer_Utils_VR as utils
 
 def _sequence_export_directory():
     """Resolve the configured Sequence_Export folder.

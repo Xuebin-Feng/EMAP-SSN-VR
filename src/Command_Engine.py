@@ -5,8 +5,8 @@ import re
 import os
 import sys
 
-import _bootstrap
-import Settings as cfg
+import _bootstrap_vr
+import Settings_VR as cfg
 
 
 def _upstream_engine():
@@ -19,7 +19,7 @@ def _upstream_engine():
     alias = "_upstream_Command_Engine"
     module = sys.modules.get(alias)
     if module is None:
-        path = os.path.join(_bootstrap.SRC_DIR, "Command_Engine.py")
+        path = os.path.join(_bootstrap_vr.SRC_DIR, "Command_Engine.py")
         spec = importlib.util.spec_from_file_location(alias, path)
         module = importlib.util.module_from_spec(spec)
         sys.modules[alias] = module

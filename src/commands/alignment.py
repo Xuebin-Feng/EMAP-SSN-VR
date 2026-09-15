@@ -1,6 +1,6 @@
 import os
 import fnmatch
-import Settings as cfg
+import Settings_VR as cfg
 import Command_Engine
 
 def print_help():

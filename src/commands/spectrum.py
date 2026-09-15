@@ -4,8 +4,8 @@ import numpy as np
 import pandas as pd
 import matplotlib as mpl
 import matplotlib.cm as cm
-import Settings as cfg
-import Viewer_Utils as utils
+import Settings_VR as cfg
+import Viewer_Utils_VR as utils
 import Command_Engine
 
 def print_help():

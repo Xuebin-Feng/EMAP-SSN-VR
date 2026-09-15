@@ -30,14 +30,14 @@ Not every upstream command can work here - some drive the VisPy canvas or a Qt
 dialog that does not exist in a headless process. Those fail at import with a
 clear "missing dependency" message rather than silently misbehaving.
 
-Which commands fall into which group is decided by ``Command_Compatibility.py``
+Which commands fall into which group is decided by ``Command_Compatibility_VR.py``
 rather than by memory, and its verdict is enforced by the test suite.
 """
 
 import os
 
-import _bootstrap
+import _bootstrap_vr
 
-_UPSTREAM_COMMANDS = os.path.join(_bootstrap.SRC_DIR, "commands")
+_UPSTREAM_COMMANDS = os.path.join(_bootstrap_vr.SRC_DIR, "commands")
 if os.path.isdir(_UPSTREAM_COMMANDS) and _UPSTREAM_COMMANDS not in __path__:
     __path__.append(_UPSTREAM_COMMANDS)

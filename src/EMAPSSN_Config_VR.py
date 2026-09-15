@@ -15,6 +15,18 @@
 
 import unicodedata  # Pre-load to prevent Windows DLL search path conflicts with Qt/OpenGL
 import sys
+
+# opt_vr sits beside the main program; _bootstrap_vr puts its src tree on
+# sys.path so every upstream import below resolves exactly as it does for
+# the desktop GUI this file was copied from. It has to run before the
+# headless branch, which imports from that tree.
+import _bootstrap_vr
+
+if __name__ == "__main__":
+    # Windows-only, like every other VR entry point: Save & Run hands off
+    # to a viewer that drives the Windows Unity build in VR_App.
+    _bootstrap_vr.require_windows("The EMAP-SSN VR Configuration GUI")
+
 if __name__ == "__main__" and "--headless" in sys.argv:
     from utilities.Headless_Settings import main as headless_main
     raise SystemExit(headless_main("config"))
@@ -29,11 +41,6 @@ import tempfile
 from types import SimpleNamespace
 import traceback
 from pathlib import Path
-
-# opt_vr sits beside the main program; _bootstrap puts its src tree on
-# sys.path so every upstream import below resolves exactly as it does
-# for the desktop GUI this file was copied from.
-import _bootstrap
 
 from utilities.Terminal_Launcher import HoldMode, launch_in_terminal
 from desktop.Desktop_App import (
@@ -51,6 +58,25 @@ from desktop.Viewer_State import (
 #: rather than borrowing the desktop program's display names.
 VR_CONFIG_DISPLAY_NAME = "EMAP-SSN VR Configuration"
 VR_VIEWER_DISPLAY_NAME = "EMAP-SSN VR Viewer"
+
+#: opt_vr ships no logo assets of its own, so the window and taskbar icon
+#: come from the parent checkout. A ``bin/logos`` folder inside the
+#: submodule still wins if one is ever added.
+ICON_SEARCH_DIRS = (
+    os.path.join(_bootstrap_vr.VR_SRC_DIR, "bin", "logos"),
+    os.path.join(_bootstrap_vr.SRC_DIR, "bin", "logos"),
+)
+
+
+def application_icon_path():
+    """Return the VR window icon, or None when no logo asset is present."""
+    for directory in ICON_SEARCH_DIRS:
+        for name in ("viewer_logo.ico", "viewer_logo.png"):
+            candidate = os.path.join(directory, name)
+            if os.path.exists(candidate):
+                return candidate
+    return None
+
 
 #: Layout dimensionality is fixed: the VR viewer has no 2D mode, exactly as
 #: the desktop viewer has no 3D one.
@@ -76,9 +102,9 @@ TARGET_CACHE_MODE = os.environ.get("SSN_TARGET_CACHE_MODE", None)
 # This GUI belongs to the submodule, so its root - and every relative
 # directory it resolves - is opt_vr. MAIN_PROJECT_ROOT is kept only for
 # reaching the shared pipeline scripts under src/.
-PROJECT_ROOT = Path(_bootstrap.OPT_VR_DIR)
-MAIN_PROJECT_ROOT = Path(_bootstrap.PROJECT_ROOT)
-SRC_DIR = Path(_bootstrap.SRC_DIR)
+PROJECT_ROOT = Path(_bootstrap_vr.OPT_VR_DIR)
+MAIN_PROJECT_ROOT = Path(_bootstrap_vr.PROJECT_ROOT)
+SRC_DIR = Path(_bootstrap_vr.SRC_DIR)
 
 # --- Directory & File Paths ---
 INPUT_FILE_ALIAS = "$input_file$"
@@ -194,7 +220,7 @@ VR_PROFILE_DEFAULTS = {
     "VR_HOST": "127.0.0.1",
     "VR_PORT": 5005,
     "DISTANCE_SCALE": 1.0,
-    # NEIGHBOR_COLOR is deliberately absent: Settings republishes
+    # NEIGHBOR_COLOR is deliberately absent: Settings_VR republishes
     # INITIAL_NODE_COLOR under that name, and it wins, so a second control for
     # it would silently lose whatever the user picked.
     "ENABLE_EDGE_FILTERING": True,
@@ -448,7 +474,7 @@ def apply_viewer_settings(settings_dict):
     _resolve_runtime_path_settings()
 
 
-DEFAULT_SETTINGS_FILE = str(PROJECT_ROOT / "vr_settings.json")
+DEFAULT_SETTINGS_FILE = str(PROJECT_ROOT / "viewer_settings_vr.json")
 SETTINGS_FILE = os.environ.get("SSN_VIEWER_SETTINGS_PATH") or DEFAULT_SETTINGS_FILE
 viewer_settings = {}
 if not os.environ.get("SSN_VIEWER_EXPLICIT_SETTINGS") and os.path.exists(SETTINGS_FILE):
@@ -480,7 +506,7 @@ def _handoff_to_viewer(
     """Launch the viewer while preserving each platform's terminal contract."""
     executable = executable or sys.executable
     project_root = os.path.abspath(project_root)
-    viewer_script = str(Path(_bootstrap.OPT_VR_DIR) / "Viewer.py")
+    viewer_script = str(Path(_bootstrap_vr.VR_SRC_DIR) / "EMAPSSN_Viewer_VR.py")
     argv = [executable, "-u", viewer_script]
     if settings_path:
         argv.extend(["--settings", os.fspath(settings_path), "--delete-settings"])
@@ -854,10 +880,8 @@ if __name__ == "__main__":
             self.setWindowTitle(VR_CONFIG_DISPLAY_NAME)
             
             # Set Window Icon
-            icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bin", "logos", "viewer_logo.ico")
-            if not os.path.exists(icon_path):
-                icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bin", "logos", "viewer_logo.png")
-            if os.path.exists(icon_path):
+            icon_path = application_icon_path()
+            if icon_path:
                 self.setWindowIcon(QIcon(icon_path))
                 
             self.resize(1000, 650)
@@ -3032,7 +3056,7 @@ if __name__ == "__main__":
 
             # 2. Colors Setup
             # TEXT_COLOR is gone with the HUD text it coloured. INITIAL_NODE_COLOR
-            # stays: Settings republishes it as NEIGHBOR_COLOR, which is the key
+            # stays: Settings_VR republishes it as NEIGHBOR_COLOR, which is the key
             # the Unity client actually reads.
             color_keys = ["INITIAL_NODE_COLOR", "HOVER_COLOR", "CONNECTED_NODE_COLOR", "EDGE_COLOR", "NODE_BOUNDARY_COLOR"]
             self.visual_defaults = VISUAL_PROFILE_DEFAULTS
@@ -4118,10 +4142,8 @@ if __name__ == "__main__":
         print(f"Warning: Could not configure bundled application fonts: {e}")
     
     # Set Application-wide Icon
-    icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bin", "logos", "viewer_logo.ico")
-    if not os.path.exists(icon_path):
-        icon_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bin", "logos", "viewer_logo.png")
-    if os.path.exists(icon_path):
+    icon_path = application_icon_path()
+    if icon_path:
         app.setWindowIcon(QIcon(icon_path))
         
     try:

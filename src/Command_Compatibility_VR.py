@@ -34,7 +34,7 @@ Attributes the command assigns itself, and attributes it guards with ``hasattr``
 or three-argument ``getattr``, are not requirements - that is the idiom upstream
 uses for optional UI hooks, and counting it as a hard dependency would condemn
 commands that already degrade gracefully. The viewer surface is derived from
-``Viewer.py`` and its siblings by AST rather than from a hand-maintained list,
+``EMAPSSN_Viewer_VR.py`` and its siblings by AST rather than from a hand-maintained list,
 so it tracks the VR viewer automatically.
 
 Neither probe runs a command, so a clean verdict means "loads, and only touches
@@ -43,9 +43,9 @@ substitute for the test suite.
 
 Run it directly for a report::
 
-    python opt_vr/Command_Compatibility.py
-    python opt_vr/Command_Compatibility.py --format json
-    python opt_vr/Command_Compatibility.py --check
+    python opt_vr/Command_Compatibility_VR.py
+    python opt_vr/Command_Compatibility_VR.py --format json
+    python opt_vr/Command_Compatibility_VR.py --check
 
 ``--check`` enforces the one invariant that must always hold: every command the
 dispatcher can reach is loadable. Redundant overrides are reported but never
@@ -64,29 +64,30 @@ import os
 import sys
 from dataclasses import dataclass
 
-import _bootstrap
+import _bootstrap_vr
 
 # Imported before probing: this registers the Qt-free stand-in under the name
 # upstream modules import as EMAPSSN_Config, which is what lets them load here
 # at all. Probing without it would blame PySide6 for nearly every command.
-import Settings  # noqa: F401
+import Settings_VR  # noqa: F401
 
 # matplotlib selects a Qt backend when PySide6 is installed, which would make
 # the deny finder blame plotting commands for a toolkit they never asked for.
 os.environ.setdefault("MPLBACKEND", "Agg")
 
-PROJECT_ROOT = _bootstrap.PROJECT_ROOT
-OPT_VR_DIR = _bootstrap.OPT_VR_DIR
-SRC_DIR = _bootstrap.SRC_DIR
+PROJECT_ROOT = _bootstrap_vr.PROJECT_ROOT
+OPT_VR_DIR = _bootstrap_vr.OPT_VR_DIR
+VR_SRC_DIR = _bootstrap_vr.VR_SRC_DIR
+SRC_DIR = _bootstrap_vr.SRC_DIR
 
 UPSTREAM_COMMAND_DIR = os.path.join(SRC_DIR, "commands")
-LOCAL_COMMAND_DIR = os.path.join(OPT_VR_DIR, "commands")
+LOCAL_COMMAND_DIR = os.path.join(VR_SRC_DIR, "commands")
 
 #: Toolkits that cannot exist in a process whose renderer is the Unity client.
 GUI_PACKAGES = ("PySide6", "PyQt5", "PyQt6", "vispy")
 
 #: Modules that attach attributes to the viewer object at runtime.
-VIEWER_PROVIDERS = ("Viewer.py", "Command_Engine.py", "Viewer_Command_Portal.py")
+VIEWER_PROVIDERS = ("EMAPSSN_Viewer_VR.py", "Command_Engine.py", "Viewer_Command_Portal.py")
 
 #: The class the VR runtime hands to ``run(viewer, args)``.
 VIEWER_CLASS = "HeadlessViewer"
@@ -113,7 +114,7 @@ GUI = "gui"
 ERROR = "error"
 
 #: Directories whose modules are the project's own.
-_PROJECT_MODULE_DIRS = (SRC_DIR, os.path.join(SRC_DIR, "utilities"), OPT_VR_DIR)
+_PROJECT_MODULE_DIRS = (SRC_DIR, os.path.join(SRC_DIR, "utilities"), VR_SRC_DIR)
 
 _SELF = os.path.abspath(__file__)
 
@@ -290,7 +291,7 @@ def viewer_surface(providers=VIEWER_PROVIDERS):
     """Attributes and methods the VR viewer offers, read straight from source."""
     names = set(dir(object))
     for filename in providers:
-        path = os.path.join(OPT_VR_DIR, filename)
+        path = os.path.join(VR_SRC_DIR, filename)
         if not os.path.isfile(path):
             continue
         tree = _parse(path)
@@ -593,7 +594,7 @@ def render_table(reports, verbose=False):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(
-        prog="Command_Compatibility",
+        prog="Command_Compatibility_VR",
         description="Report which upstream commands the VR viewer can share.",
     )
     parser.add_argument(

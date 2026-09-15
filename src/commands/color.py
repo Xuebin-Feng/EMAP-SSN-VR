@@ -3,8 +3,8 @@ import re
 import fnmatch
 import numpy as np
 import matplotlib.colors as mcolors
-import Settings as cfg
-import Viewer_Utils as utils
+import Settings_VR as cfg
+import Viewer_Utils_VR as utils
 import Command_Engine
 
 def print_help():

@@ -16,7 +16,7 @@
 """Qt-free settings for the VR viewer.
 
 The schema for every shared key comes from ``src/desktop/Viewer_State.py``;
-this module layers ``opt_vr/vr_settings.json`` on top of those defaults and
+this module layers ``opt_vr/viewer_settings_vr.json`` on top of those defaults and
 adds the handful of keys only the VR bridge needs.
 
 The division of labour is deliberate: **opt_vr's Config GUI writes settings,
@@ -37,7 +37,7 @@ import os
 import re
 import sys
 
-import _bootstrap
+import _bootstrap_vr
 from desktop.Viewer_State import ALIASES, DEFAULTS, decode_document
 
 #: Upstream renamed some keys; the VR code and the Unity client still use the
@@ -51,8 +51,8 @@ _NULLABLE_NUMBERS = ("SIMILARITY_THRESHOLD", "TOP_EDGE_PERCENT")
 
 _NULL_TOKENS = {"", "none", "null"}
 
-PROJECT_ROOT = _bootstrap.PROJECT_ROOT
-OPT_VR_DIR = _bootstrap.OPT_VR_DIR
+PROJECT_ROOT = _bootstrap_vr.PROJECT_ROOT
+OPT_VR_DIR = _bootstrap_vr.OPT_VR_DIR
 
 #: The Unity bridge settings, grouped so the VR Config GUI can offer saved
 #: profiles for them the way the desktop GUI does for its own tabs.
@@ -107,7 +107,7 @@ def _settings_path() -> str:
     override = os.environ.get("SSN_VIEWER_SETTINGS_PATH")
     if override:
         return override
-    return os.path.join(OPT_VR_DIR, "vr_settings.json")
+    return os.path.join(OPT_VR_DIR, "viewer_settings_vr.json")
 
 
 def _read_json(path):
@@ -117,7 +117,7 @@ def _read_json(path):
         with open(path, encoding="utf-8") as handle:
             stored = json.load(handle)
     except (OSError, ValueError) as error:
-        print(f"[Settings] Ignoring unreadable settings at {path}: {error}")
+        print(f"[Settings_VR] Ignoring unreadable settings at {path}: {error}")
         return {}
     if not isinstance(stored, dict):
         return {}
@@ -129,7 +129,7 @@ def _read_json(path):
         try:
             return decode_document(stored, "viewer", partial=True)
         except ValueError as error:
-            print(f"[Settings] Ignoring unreadable settings document at {path}: {error}")
+            print(f"[Settings_VR] Ignoring unreadable settings document at {path}: {error}")
             return {}
     return stored
 
@@ -250,7 +250,7 @@ def load_settings() -> dict:
     values = dict(DEFAULTS)
     values.update(VR_DEFAULTS)
 
-    # One file only. Reading vr_settings.json again after this would override
+    # One file only. Reading viewer_settings_vr.json again after this would override
     # the per-launch snapshot the VR Config GUI hands the viewer, which is
     # exactly the choice the user just made in the GUI.
     for key, value in _read_json(_settings_path()).items():
@@ -299,5 +299,5 @@ reload()
 # Register the alias here, not at the call site. Upstream modules do
 # `import EMAPSSN_Config as cfg`, and if the real one loads first it drags
 # PySide6 into this headless process. Doing it on import of this module means
-# merely importing Settings is enough, so no caller has to get the order right.
-_bootstrap.install_settings_alias(sys.modules[__name__])
+# merely importing Settings_VR is enough, so no caller has to get the order right.
+_bootstrap_vr.install_settings_alias(sys.modules[__name__])

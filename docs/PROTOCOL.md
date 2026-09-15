@@ -3,7 +3,8 @@
 The VR viewer is two processes: this Python backend, and a Unity/SteamVR
 client. They speak over a plain TCP socket on `127.0.0.1:5005`.
 
-This document describes the protocol as implemented in `Viewer.py`. The Python
+This document describes the protocol as implemented in
+`src/EMAPSSN_Viewer_VR.py`. The Python
 side has been read and verified; the Unity side has **not** been rebuilt or
 instrumented as part of this work, so statements about the client's behaviour
 come from reading its serialized scene and assembly, not from running it under

@@ -24,7 +24,8 @@ bridges it to the Unity client.
 Two things are set up here:
 
 1. ``<project>/src`` and ``<project>/src/utilities`` go on ``sys.path``, so
-   upstream modules import exactly as they do for the desktop viewer.
+   upstream modules import exactly as they do for the desktop viewer, and
+   ``opt_vr/src`` goes on ahead of them.
 2. ``install_settings_alias`` registers the Qt-free VR settings module under
    the name upstream expects (``EMAPSSN_Config``). Several upstream modules -
    ``Alignment_Manager`` among them - do ``import EMAPSSN_Config as cfg``,
@@ -51,7 +52,13 @@ if sys.stderr is not None and hasattr(sys.stderr, "reconfigure"):
         pass
 
 
-OPT_VR_DIR = os.path.dirname(os.path.abspath(__file__))
+#: ``opt_vr/src`` - this file's own directory, and the VR module tree.
+VR_SRC_DIR = os.path.dirname(os.path.abspath(__file__))
+#: The submodule root. Every relative directory a VR setting names - the
+#: cache folder, the Unity build - resolves against this, not against
+#: ``VR_SRC_DIR``, so the layout mirrors the main program's.
+OPT_VR_DIR = os.path.dirname(VR_SRC_DIR)
+#: The parent EMAP-SSN checkout, and its module tree.
 PROJECT_ROOT = os.path.dirname(OPT_VR_DIR)
 SRC_DIR = os.path.join(PROJECT_ROOT, "src")
 UTILITIES_DIR = os.path.join(SRC_DIR, "utilities")
@@ -70,11 +77,13 @@ def _require_parent_checkout() -> None:
 
 _require_parent_checkout()
 
-# Order matters: opt_vr MUST precede src, or `import commands` resolves to the
-# main program's package and every local override is silently ignored. Entries
-# are removed first so a caller that already put one of these on sys.path
-# cannot invert the precedence.
-for _path in (SRC_DIR, UTILITIES_DIR, OPT_VR_DIR):
+# Order matters: opt_vr/src MUST precede the parent's src, or `import commands`
+# resolves to the main program's package and every local override is silently
+# ignored - as would `import Command_Engine` and `import Viewer_Command_Portal`,
+# which upstream commands issue by those exact names. Entries are removed first
+# so a caller that already put one of these on sys.path cannot invert the
+# precedence.
+for _path in (SRC_DIR, UTILITIES_DIR, VR_SRC_DIR):
     while _path in sys.path:
         sys.path.remove(_path)
     sys.path.insert(0, _path)
@@ -88,9 +97,9 @@ def apply_settings_argument(argv) -> str | None:
     implements, which is what lets ``EMAPSSN_Config --viewer`` drive either
     front end without special-casing one of them.
 
-    This lives in the bootstrap rather than in ``Viewer`` because ``Settings``
+    This lives in the bootstrap rather than in ``Viewer`` because ``Settings_VR``
     reads its file at import time. Doing it here means any import order works:
-    ``Settings`` imports this module before it looks the path up.
+    ``Settings_VR`` imports this module before it looks the path up.
 
     Returns the snapshot to delete once it has been read, or ``None``.
     """
@@ -120,3 +129,64 @@ def install_settings_alias(module) -> None:
     """
     for name in ("EMAPSSN_Config", "SSN_VR_Config"):
         sys.modules.setdefault(name, module)
+
+
+# ---------------------------------------------------------------------------
+# Platform policy
+# ---------------------------------------------------------------------------
+# The main program is cross-platform: it ships .bat, .sh and .app launchers and
+# an installer for each host. This submodule deliberately is not. ``VR_App``
+# holds a built Windows Unity player which ``EMAPSSN_Viewer_VR.py`` launches directly, and
+# the headset runtimes it talks to are Windows-only, so there is nothing for a
+# macOS or Linux user to run. Refusing at the entry point states that plainly
+# instead of failing later on a missing ``.exe``.
+#
+# This is a function rather than a module-level guard on purpose: the settings,
+# command and cache layers are ordinary Python and their tests must stay
+# runnable anywhere. Only the entry points that reach the Unity build or the
+# Windows desktop launchers call it.
+
+WINDOWS_ONLY_PLATFORM = "win32"
+
+#: Default subject for the refusal message, overridden per entry point.
+VR_COMPONENT_NAME = "The EMAP-SSN VR front end"
+
+
+def is_windows(platform_name: str | None = None) -> bool:
+    """Report whether this host can run the VR front end."""
+    return (platform_name or sys.platform) == WINDOWS_ONLY_PLATFORM
+
+
+def windows_only_message(
+    component: str = VR_COMPONENT_NAME,
+    *,
+    platform_name: str | None = None,
+) -> str:
+    """Explain why ``component`` refuses to start on this host."""
+    reported = platform_name or sys.platform
+    return "\n".join((
+        f"{component} runs on Windows only.",
+        f"This host reports sys.platform={reported!r}.",
+        "",
+        "opt_vr drives the built Unity player in VR_App, which is a Windows",
+        "build, so there is no VR runtime to start here. The main EMAP-SSN",
+        "program is cross-platform, and its desktop viewer opens the same",
+        "layout caches in 2D:",
+        "    python src/EMAPSSN_Config.py",
+    ))
+
+
+def require_windows(
+    component: str = VR_COMPONENT_NAME,
+    *,
+    platform_name: str | None = None,
+    stream=None,
+) -> None:
+    """Exit with a clear explanation when a VR entry point is not on Windows."""
+    if is_windows(platform_name):
+        return
+    print(
+        windows_only_message(component, platform_name=platform_name),
+        file=stream if stream is not None else sys.stderr,
+    )
+    raise SystemExit(1)

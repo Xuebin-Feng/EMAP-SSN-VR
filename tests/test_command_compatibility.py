@@ -35,9 +35,12 @@ import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 
+#: The submodule root; VR_SRC is its module tree, mirroring the main
+#: program's project-root/src split.
 OPT_VR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if OPT_VR not in sys.path:
-    sys.path.insert(0, OPT_VR)
+VR_SRC = os.path.join(OPT_VR, "src")
+if VR_SRC not in sys.path:
+    sys.path.insert(0, VR_SRC)
 
 # Keep these tests independent of whatever the user last saved.
 _NEUTRAL = tempfile.NamedTemporaryFile(
@@ -48,7 +51,7 @@ _NEUTRAL.close()
 os.environ["SSN_VIEWER_SETTINGS_PATH"] = _NEUTRAL.name
 
 with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
-    import Command_Compatibility as cc  # noqa: E402
+    import Command_Compatibility_VR as cc  # noqa: E402
 
 
 def _module(source):
@@ -428,7 +431,7 @@ class ResolutionTests(unittest.TestCase):
 class SharedHelperContractTests(unittest.TestCase):
     """Shared commands call opt_vr's helpers, which must satisfy them.
 
-    opt_vr shadows Command_Engine, Viewer_Utils and EMAPSSN_Config, so a command
+    opt_vr shadows Command_Engine, Viewer_Utils_VR and EMAPSSN_Config, so a command
     served from src/commands calls *these* copies. A helper upstream grew but
     opt_vr never did is an AttributeError at the prompt that no import probe
     would catch, which is precisely how `select` would have broken.
@@ -440,16 +443,16 @@ class SharedHelperContractTests(unittest.TestCase):
 
         with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
             import Command_Engine
-            import Settings
-            import Viewer_Utils
+            import Settings_VR
+            import Viewer_Utils_VR
 
         cls.ast = ast_module
         cls.providers = {
             "Command_Engine": Command_Engine,
-            "utils": Viewer_Utils,
-            "Viewer_Utils": Viewer_Utils,
-            "cfg": Settings,
-            "EMAPSSN_Config": Settings,
+            "utils": Viewer_Utils_VR,
+            "Viewer_Utils_VR": Viewer_Utils_VR,
+            "cfg": Settings_VR,
+            "EMAPSSN_Config": Settings_VR,
         }
         with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
             cls.shared = [
@@ -507,19 +510,19 @@ class SharedHelperContractTests(unittest.TestCase):
         )
 
     def test_resolve_directory_path_expands_a_leading_alias(self):
-        import Settings
+        import Settings_VR
 
-        resolved = Settings.resolve_directory_path(
+        resolved = Settings_VR.resolve_directory_path(
             os.path.join("$analysis_result$", "Sequence_Logos")
         )
         self.assertTrue(os.path.isabs(resolved), resolved)
         self.assertTrue(resolved.endswith("Sequence_Logos"), resolved)
 
     def test_resolve_directory_path_leaves_other_paths_alone(self):
-        import Settings
+        import Settings_VR
 
-        self.assertEqual(Settings.resolve_directory_path("plain/path"), "plain/path")
-        self.assertIsNone(Settings.resolve_directory_path(None))
+        self.assertEqual(Settings_VR.resolve_directory_path("plain/path"), "plain/path")
+        self.assertIsNone(Settings_VR.resolve_directory_path(None))
 
 
 class SharedCommandSmokeTests(unittest.TestCase):
