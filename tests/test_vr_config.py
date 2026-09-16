@@ -341,7 +341,7 @@ class VRSettingsSourceTests(unittest.TestCase):
             "SAVED_LAYOUT_DIR": r"$cache_file$\Saved_Layouts",
             "INPUT_FILE_DIR": "Input_Files",
             "ANALYSIS_RESULT_DIR": "Analysis_Results",
-            "VR_APP_DIR": "VR_App",
+            "VR_APP_DIR": "unity",
         }
         values = self._settings_from(relative)
         for key in relative:
@@ -399,7 +399,7 @@ class UnityEndpointTests(unittest.TestCase):
     selected rather than the behaviour.
     """
 
-    SHIPPED_BUILD = os.path.join(OPT_VR, "VR_App")
+    SHIPPED_BUILD = os.path.join(OPT_VR, "unity")
 
     def note_for(self, build_dir, host="127.0.0.1", port=5005):
         return report_from(
@@ -440,7 +440,7 @@ class UnityEndpointTests(unittest.TestCase):
                 self.assertIn("never connect", text)
 
     @unittest.skipUnless(
-        os.path.isdir(os.path.join(OPT_VR, "VR_App")), "VR_App is not checked out"
+        os.path.isdir(os.path.join(OPT_VR, "unity")), "unity/ is not checked out"
     )
     def test_agreement_with_the_shipped_build_is_reported(self):
         report = self.note_for(self.SHIPPED_BUILD)
@@ -448,7 +448,7 @@ class UnityEndpointTests(unittest.TestCase):
         self.assertFalse(report["warning"])
 
     @unittest.skipUnless(
-        os.path.isdir(os.path.join(OPT_VR, "VR_App")), "VR_App is not checked out"
+        os.path.isdir(os.path.join(OPT_VR, "unity")), "unity/ is not checked out"
     )
     def test_a_mismatch_is_corrected_and_locked(self):
         report = self.note_for(self.SHIPPED_BUILD, port=6000)
@@ -541,7 +541,7 @@ class UnityEndpointTests(unittest.TestCase):
             self.assertIn("Parsing succeeded", item["tooltip"])
 
     @unittest.skipUnless(
-        os.path.isdir(os.path.join(OPT_VR, "VR_App")), "VR_App is not checked out"
+        os.path.isdir(os.path.join(OPT_VR, "unity")), "unity/ is not checked out"
     )
     def test_choosing_a_build_fills_the_endpoint_in(self):
         """Picking a build is the moment the user says which client they mean."""
@@ -563,7 +563,7 @@ class UnityEndpointTests(unittest.TestCase):
                 "port": window.inputs["VR_PORT"].value(),
                 "warning": window._bridge_endpoint_warning,
             }}))
-            """.format(build=os.path.join(OPT_VR, "VR_App"))
+            """.format(build=os.path.join(OPT_VR, "unity"))
         )
         self.assertEqual(report["browse_buttons"], 1)
         self.assertEqual(report["host"], "127.0.0.1")

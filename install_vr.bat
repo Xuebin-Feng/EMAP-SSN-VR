@@ -21,7 +21,7 @@ REM The VR counterpart of the main program's install.bat. It generates one
 REM shortcut, "EMAP-SSN VR.lnk", pointing at the visible-startup desktop
 REM launcher, and optionally copies it to the Desktop.
 REM
-REM There is no install.sh counterpart, by design: VR_App holds a Windows
+REM There is no install.sh counterpart, by design: unity/ holds a Windows
 REM Unity build, so the VR front end is Windows-only. Run the parent
 REM project's installer for the cross-platform desktop program.
 REM

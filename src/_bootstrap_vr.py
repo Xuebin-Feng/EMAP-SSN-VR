@@ -135,7 +135,7 @@ def install_settings_alias(module) -> None:
 # Platform policy
 # ---------------------------------------------------------------------------
 # The main program is cross-platform: it ships .bat, .sh and .app launchers and
-# an installer for each host. This submodule deliberately is not. ``VR_App``
+# an installer for each host. This submodule deliberately is not. ``unity/``
 # holds a built Windows Unity player which ``EMAPSSN_Viewer_VR.py`` launches directly, and
 # the headset runtimes it talks to are Windows-only, so there is nothing for a
 # macOS or Linux user to run. Refusing at the entry point states that plainly
@@ -168,7 +168,7 @@ def windows_only_message(
         f"{component} runs on Windows only.",
         f"This host reports sys.platform={reported!r}.",
         "",
-        "opt_vr drives the built Unity player in VR_App, which is a Windows",
+        "opt_vr drives the built Unity player in unity/, which is a Windows",
         "build, so there is no VR runtime to start here. The main EMAP-SSN",
         "program is cross-platform, and its desktop viewer opens the same",
         "layout caches in 2D:",

@@ -75,7 +75,7 @@ VR_BRIDGE_DEFAULTS = {
 #: Keys with no upstream counterpart. Everything else comes from DEFAULTS.
 VR_DEFAULTS = {
     **VR_BRIDGE_DEFAULTS,
-    "VR_APP_DIR": "VR_App",
+    "VR_APP_DIR": "unity",
     # --- Alignment ----------------------------------------------------
     "GAP_CHARS": ["-", "."],
     # --- Directories without an upstream profile entry ----------------
