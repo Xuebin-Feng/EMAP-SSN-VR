@@ -20,6 +20,9 @@ def print_help(meta_dir_help):
           Downloads the current session metadata to the specified filename inside the metadata folder.
           An optional boolean logic expression can be provided at the end to filter 
           which nodes are exported (e.g., #cluster_1#, {{Length>500}}, or $sele$).
+      meta show/display <property_name>
+          Accepted for compatibility with the desktop viewer. The VR viewer has
+          no on-canvas HUD, so nothing is displayed.
       meta help
           Displays this help message.
 
@@ -59,6 +62,29 @@ def run(viewer, args):
     if not args or args[0].lower() in ['help', '-h', '--help']:
         print_help(meta_dir)
         Command_Engine.command_succeeded(viewer, 'Help information printed to the terminal.')
+        return
+
+    # 'meta display <property>' / 'meta show <property>' asks the desktop viewer
+    # to print a property beside the on-canvas status indicators when a node is
+    # clicked. There is no canvas and no click here, so the request is accepted
+    # and acknowledged rather than refused: 'spectrum' issues it automatically
+    # after every successful run, and treating it as a filename made a working
+    # spectrum end in "Could not find file 'display Length.xlsx'".
+    if args[0].lower() in ['show', 'display']:
+        target = " ".join(args[1:]).strip()
+        if target.lower() in ('', 'clear', 'off'):
+            msg = "Metadata display is not used in the VR viewer; nothing to clear."
+        else:
+            msg = (
+                f"Noted '{target}' for metadata display. The VR viewer has no "
+                "on-canvas HUD to show it on - the headset renders the network "
+                "and the terminal is the only text surface - so nothing "
+                "changes here. Use 'meta download <file>' to take the property "
+                "out, or open the layout in the desktop viewer to see it on "
+                "node click."
+            )
+        Command_Engine.print_help(viewer, msg)
+        Command_Engine.command_succeeded(viewer, msg)
         return
 
     # --- 2. Resolve Directory & Path ---

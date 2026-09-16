@@ -21,12 +21,15 @@ construction and layout generation are all the main program's responsibility;
 this package only consumes the layout cache the main program publishes and
 bridges it to the Unity client.
 
-Two things are set up here:
+Three things are set up here:
 
 1. ``<project>/src`` and ``<project>/src/utilities`` go on ``sys.path``, so
    upstream modules import exactly as they do for the desktop viewer, and
    ``opt_vr/src`` goes on ahead of them.
-2. ``install_settings_alias`` registers the Qt-free VR settings module under
+2. The ``commands`` package is resolved immediately, while that ordering is
+   known to hold, so no later edit to ``sys.path`` can silently swap the VR
+   command overrides for the main program's.
+3. ``install_settings_alias`` registers the Qt-free VR settings module under
    the name upstream expects (``EMAPSSN_Config``). Several upstream modules -
    ``Alignment_Manager`` among them - do ``import EMAPSSN_Config as cfg``,
    which would otherwise drag PySide6 into a process that must stay
@@ -87,6 +90,66 @@ for _path in (SRC_DIR, UTILITIES_DIR, VR_SRC_DIR):
     while _path in sys.path:
         sys.path.remove(_path)
     sys.path.insert(0, _path)
+
+
+def _lock_command_package():
+    """Resolve ``commands`` now, while opt_vr is known to win the path race.
+
+    The loop above orders sys.path correctly, but sys.path is global and
+    mutable, and ``commands`` is not imported until the user types their first
+    command - a long way from here. Anything that ran in between and put the
+    parent's ``src`` back in front would make ``import commands`` bind the main
+    program's package, whose ``__init__`` never extends ``__path__``. All
+    eleven local overrides would vanish with no error at all: ``zoom`` would
+    reach for a VisPy canvas this process does not have, ``agent`` and
+    ``esmfold`` would raise AttributeError deep inside a web backend instead of
+    explaining themselves, and ``color`` would quietly answer to the desktop
+    grammar. A silent wrong answer is the worst failure this module can
+    produce, so the window is closed rather than documented.
+
+    Importing here binds the package in sys.modules for the life of the
+    process, where no later path edit can reach it. The cost is one trivial
+    ``__init__`` that does nothing but join two paths.
+
+    ``commands`` is also the honest canary for the other names upstream
+    commands import by bare name - ``Command_Engine``, ``Viewer_Command_Portal``
+    - because all of them depend on the single precondition this verifies:
+    VR_SRC_DIR precedes SRC_DIR. Those two are left to import lazily, since
+    pulling numpy and the upstream engine into every process that merely
+    touches this bootstrap would cost far more than it protects.
+    """
+    local_package = os.path.join(VR_SRC_DIR, "commands")
+
+    cached = sys.modules.get("commands")
+    if cached is not None and not _is_local_package(cached, local_package):
+        raise ImportError(
+            "The main program's 'commands' package was imported before "
+            "opt_vr's bootstrap ran, so every VR command override is already "
+            "shadowed. Import _bootstrap_vr before any project module."
+        )
+
+    import commands
+
+    if not _is_local_package(commands, local_package):
+        raise ImportError(
+            "'commands' resolved to "
+            f"{getattr(commands, '__file__', '<unknown>')!r} instead of "
+            f"{local_package!r}. Something reordered sys.path so the parent "
+            "checkout precedes opt_vr/src; every VR command override would be "
+            "silently ignored."
+        )
+    return commands
+
+
+def _is_local_package(module, local_package) -> bool:
+    """True when ``module`` is the package rooted at ``local_package``."""
+    search_path = getattr(module, "__path__", None)
+    if not search_path:
+        return False
+    return os.path.abspath(search_path[0]) == os.path.abspath(local_package)
+
+
+_lock_command_package()
 
 
 def apply_settings_argument(argv) -> str | None:

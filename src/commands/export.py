@@ -1,153 +1,219 @@
+# Copyright 2026 Xuebin Feng
+# Author affiliation: University of Toronto
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""FASTA export, held as close to the desktop viewer as headlessness allows.
+
+This is the main program's ``commands/export.py`` with exactly two changes, and
+it is kept diffable against that file on purpose: the previous VR copy had
+drifted into a different command entirely, accepting ``group:NAME`` targets
+that upstream rejects by name while rejecting the ``#LABEL#`` targets upstream
+documents.
+
+1. ``desktop.Desktop_App.open_in_file_manager`` is not imported. It reaches
+   PySide6, which is what stops the upstream module loading here, and the call
+   it served - popping a file manager window once the files are written - has
+   nowhere to appear in a headset session. The destination is printed instead.
+
+2. Nothing else. ``import EMAPSSN_Config as cfg`` is left exactly as upstream
+   writes it: ``_bootstrap_vr`` registers the Qt-free ``Settings_VR`` under that
+   name, so it resolves to the VR settings here and to the real config on the
+   desktop, and the sequence set, directory layout and every message stay
+   byte-identical between the two front ends.
+
+The sequences come from ``viewer.sequences_map``, which ``HeadlessViewer``
+populates from the same FASTA parse it already performs for ``Length``
+metadata - the same in-memory set upstream exports from, rather than a re-read
+of the file that could disagree with what the viewer is showing.
+"""
+
 import Command_Engine
 import os
 import re
-from Bio import SeqIO
-import Settings_VR as cfg
-import Viewer_Utils_VR as utils
+import EMAPSSN_Config as cfg
+import Cache_Manifest as cache_manifest
+from utilities.Sequence_Utils import write_fasta_atomic
 
-def _sequence_export_directory():
-    """Resolve the configured Sequence_Export folder.
+SEQUENCE_EXPORT_DIRECTORY = os.path.join(
+    "$analysis_result$", "Sequence_Export"
+)
 
-    The previous implementation wrote to the relative path
-    "Cache_Files/FASTA_Split", which lands wherever the VR process happened to
-    be launched from - usually inside the opt_vr checkout - instead of the
-    Analysis Results directory the user configured. Upstream routes exports to
-    $analysis_result$/Sequence_Export; this mirrors that without requiring the
-    Qt config module.
-    """
-    base = getattr(cfg, "SEQUENCE_EXPORT_DIR", None)
-    if base:
-        return base
-    base = getattr(cfg, "ANALYSIS_RESULT_DIR", None) or os.path.join(
-        getattr(cfg, "PROJECT_ROOT", "."), "Analysis_Results"
-    )
-    return os.path.join(base, "Sequence_Export")
+
+def _get_in_memory_sequence_records(viewer):
+    """Return canonical header/sequence pairs already loaded by the viewer."""
+    selected_records = getattr(viewer, "_selected_fasta_records", None)
+    if selected_records is not None:
+        return {
+            str(header): str(sequence)
+            for header, sequence in selected_records
+        }
+
+    sequence_map = getattr(viewer, "sequences_map", None)
+    if sequence_map is None:
+        return {}
+    return {
+        header: str(sequence_map[header])
+        for header in viewer.full_headers
+        if header in sequence_map
+    }
 
 def print_help():
     print("""
     FASTA Export Tool
     =================
-    Usage: export [TARGET] [<TARGET_2> ...]
+    Usage: export [clusters | groups | #LABEL# ...]
            export help
 
     Description:
-      Extracts sequence subsets from the currently active viewer state and saves them 
-      as standalone .fasta files. Files are routed to strictly organized subdirectories 
-      of the Sequence_Export folder inside the configured Analysis Results directory.
-      The destination is printed to the terminal when the export completes.
+      Extracts sanitized sequence subsets from the currently active viewer state and
+      saves them as standalone .fasta files. Files are automatically routed to strictly
+      organized subdirectories beneath the configured Analysis Results directory.
       
     [TARGET] Arguments (Default: clusters):
       clusters : Exports sequences based on their assigned topology cluster ID. 
                  (Note: Unclustered 'Noise' nodes are automatically ignored).
-      groups   : Exports separate .fasta files for ALL custom group labels currently defined.
-                 ('group' is accepted as a synonym.)
-      group:<Name> : Exports only specific groups by prefixing with group: (e.g., group:kinase).
-                     You can chain multiple specific groups (e.g., export group:kinase group:receptor).
-      Unrecognized targets are rejected instead of being silently exported as clusters.
+      groups / group : Exports separate .fasta files for ALL custom group labels currently defined.
+      #LABEL# : Exports a specific custom group, topology cluster, or noise label.
+                Multiple labels may be mixed and repeated labels are deduplicated.
 
     Examples:
       export             (Defaults to exporting all clusters)
-      export groups      (Exports all custom groups)
-      export group:human (Exports only the sequences in the 'human' group)
+      export group       (Exports all custom groups)
+      export #human# (Exports only the sequences in the 'human' group)
+      export #cluster_1# #noise# (Exports one cluster and the explicit noise subset)
     """)
     
 def run(viewer, args):
     if args and args[0].lower() in ['help', '-h', '-?']:
         print_help()
+        if hasattr(viewer, 'console_text'):
+            viewer.console_text.text = "Help information printed to the terminal"
         Command_Engine.command_succeeded(viewer, 'Help information printed to the terminal.')
         return
 
     # --- 1. Parse Arguments ---
     target_mode = "clusters"
-    specific_groups = []
+    specific_targets = []
     mode_tokens = []
+    label_tokens = []
 
     for arg in args:
         arg_lower = arg.lower()
-        if arg_lower in ("clusters", "cluster"):
-            mode_tokens.append("clusters")
-        elif arg_lower in ("groups", "group"):
-            mode_tokens.append("groups")
-        elif arg_lower.startswith("group:") and arg_lower[6:].strip():
-            g_target = arg_lower[6:].strip()
-            if g_target not in specific_groups:
-                specific_groups.append(g_target)
-        else:
-            # An unknown target used to be ignored, so a typo silently
-            # exported every cluster instead of what was asked for.
-            msg = (f"Error: Unrecognized export target '{arg}'. "
-                   "Use clusters, groups, or group:<Name>.")
-            Command_Engine.print_help(viewer, msg)
-            Command_Engine.command_failed(viewer, msg)
+        if arg_lower.startswith("group:"):
+            Command_Engine.print_help(
+                viewer,
+                "Error: Legacy export group:NAME syntax is no longer supported. "
+                "Use export #NAME#.",
+            )
+            Command_Engine.command_failed(viewer, 'Error: Legacy export group:NAME syntax is no longer supported. Use export #NAME#.')
             return
-
-    if mode_tokens and specific_groups:
-        msg = "Error: 'clusters'/'groups' cannot be combined with specific group:<Name> targets."
-        Command_Engine.print_help(viewer, msg)
-        Command_Engine.command_failed(viewer, msg)
+        if arg_lower == "clusters":
+            mode_tokens.append("clusters")
+            continue
+        if arg_lower in ["group", "groups"]:
+            mode_tokens.append("groups")
+            continue
+        label_match = re.fullmatch(r'#([^#]+)#', arg)
+        if label_match:
+            label_tokens.append(label_match.group(1))
+            continue
+        Command_Engine.print_help(
+            viewer,
+            f"Error: Unrecognized export target '{arg}'. Use clusters, groups, or #LABEL#.",
+        )
+        Command_Engine.command_failed(viewer, f"Error: Unrecognized export target '{arg}'. Use clusters, groups, or #LABEL#.")
         return
-    if len(set(mode_tokens)) > 1:
-        msg = "Error: Export accepts only one all-target mode: clusters or groups."
-        Command_Engine.print_help(viewer, msg)
-        Command_Engine.command_failed(viewer, msg)
-        return
 
-    if specific_groups:
-        target_mode = "specific"
-    elif mode_tokens:
+    if mode_tokens and label_tokens:
+        Command_Engine.print_help(
+            viewer,
+            "Error: Export all-target modes cannot be combined with specific #LABEL# targets.",
+        )
+        Command_Engine.command_failed(viewer, 'Error: Export all-target modes cannot be combined with specific #LABEL# targets.')
+        return
+    if len(mode_tokens) > 1:
+        Command_Engine.print_help(
+            viewer, "Error: Export accepts only one all-target mode: clusters or groups."
+        )
+        Command_Engine.command_failed(viewer, 'Error: Export accepts only one all-target mode: clusters or groups.')
+        return
+    if mode_tokens:
         target_mode = mode_tokens[0]
+    elif label_tokens:
+        target_mode = "specific"
+        seen_targets = set()
+        try:
+            for label in label_tokens:
+                resolved = Command_Engine.resolve_label_target(
+                    getattr(viewer, 'cluster_labels', None),
+                    getattr(viewer, 'group_labels', None),
+                    label,
+                )
+                key = (
+                    resolved.kind,
+                    resolved.cluster_id
+                    if resolved.kind in ("cluster", "noise")
+                    else resolved.name.lower(),
+                )
+                if key not in seen_targets:
+                    seen_targets.add(key)
+                    specific_targets.append(resolved)
+        except Command_Engine.SelectionExpressionError as error:
+            Command_Engine.report_selection_error(
+                viewer, " ".join(f"#{label}#" for label in label_tokens), error, "Export"
+            )
+            return
 
     # --- Validations ---
     if target_mode == "clusters" and getattr(viewer, 'cluster_labels', None) is None:
-        msg = "Error: Run 'cluster' first to export clusters."
-        Command_Engine.print_help(viewer, msg)
-        Command_Engine.command_failed(viewer, msg)
+        viewer.console_text.text = "Error: Run 'cluster' first."
+        Command_Engine.command_failed(viewer, viewer.console_text.text)
+        print("Error: Run 'cluster' first to export clusters.")
+        Command_Engine.command_failed(viewer, "Error: Run 'cluster' first to export clusters.")
         return
         
-    if target_mode in ["groups", "specific"] and getattr(viewer, 'group_labels', None) is None:
-        msg = "Error: No groups defined. Use the 'group' command first."
-        Command_Engine.print_help(viewer, msg)
-        Command_Engine.command_failed(viewer, msg)
+    if target_mode == "groups" and getattr(viewer, 'group_labels', None) is None:
+        viewer.console_text.text = "Error: No groups defined."
+        Command_Engine.command_failed(viewer, viewer.console_text.text)
+        print("Error: No groups defined. Use the 'group' command first.")
+        Command_Engine.command_failed(viewer, "Error: No groups defined. Use the 'group' command first.")
         return
 
-    # --- 2. Load Source FASTA ---
-    fasta_path = getattr(cfg, 'NODE_FASTA_FILE', None)
-    if not fasta_path or not os.path.exists(fasta_path):
-        fasta_path = getattr(cfg, 'SEQUENCES_FILE', None)
-        
-    if not fasta_path or not os.path.exists(fasta_path):
-        msg = "Error: Cannot find source FASTA file."
-        Command_Engine.print_help(viewer, msg)
+    # --- 2. Load Canonical Records Already Held by the Viewer ---
+    source_records = _get_in_memory_sequence_records(viewer)
+    if not source_records:
+        msg = "Error: No in-memory sequence set is available for export."
         Command_Engine.command_failed(viewer, msg)
+        viewer.console_text.text = msg
+        print(msg)
         return
 
-    print(f"Loading source FASTA: {os.path.basename(fasta_path)}...")
-    source_records = {}
-    try:
-        for rec in SeqIO.parse(fasta_path, "fasta"):
-            # Store by full header to ensure perfect mapping
-            source_records[rec.description] = rec
-    except Exception as e:
-        msg = f"Error reading FASTA: {e}"
-        Command_Engine.print_help(viewer, msg)
-        Command_Engine.command_failed(viewer, msg)
-        return
+    fasta_path = (
+        getattr(cfg, 'NODE_FASTA_FILE', None)
+        or getattr(cfg, 'SEQUENCES_FILE', None)
+        or "loaded_sequences.fasta"
+    )
+    print(f"Using {len(source_records)} in-memory sanitized sequences...")
 
     # --- 3. Resolve Target Directory (NO Reference Injection) ---
-    hdf5_base = os.path.basename(getattr(cfg, 'INPUT_HDF5', ''))
     fasta_base = os.path.splitext(os.path.basename(fasta_path))[0]
-    
-    match = re.search(r'(\[.*?\])', hdf5_base)
-    if match:
-        model_str = f"_{match.group(1)}"
-    else:
-        hdf5_no_ext = hdf5_base[:-3] if hdf5_base.endswith(".h5") else os.path.splitext(hdf5_base)[0]
-        stripped = re.sub(r'_(network|evalue)$', '', hdf5_no_ext, flags=re.IGNORECASE)
-        old_match = re.search(r'_(e[0-9]+_.*|blast.*)$', stripped, flags=re.IGNORECASE)
-        model_str = f"_{old_match.group(1)}" if old_match else ""
-        
-    lvl1_name = f"{fasta_base}{model_str}"
-    is_blast = "EValue" in hdf5_base or "Evalue" in hdf5_base or "blast" in hdf5_base.lower()
+    metadata = cache_manifest.validate_network_schema(cfg.INPUT_HDF5)
+    model_label = re.sub(
+        r'[<>:"/\\|?*]', "_", metadata.model_name
+    )
+    lvl1_name = f"{fasta_base}_[{model_label}]"
+    is_blast = metadata.network_type == "blast"
     if not is_blast:
         norm_m = getattr(cfg, 'NORM_MODE', None)
         if norm_m: lvl1_name += f"_{norm_m}"
@@ -164,7 +230,18 @@ def run(viewer, args):
         try: lvl2_name_base += f"Score{float(thresh)}"
         except: pass
         
-    if target_mode == "clusters":
+    uses_cluster_directory = target_mode == "clusters" or (
+        target_mode == "specific"
+        and specific_targets
+        and all(target.kind in ("cluster", "noise") for target in specific_targets)
+    )
+    uses_group_directory = target_mode == "groups" or (
+        target_mode == "specific"
+        and specific_targets
+        and all(target.kind == "group" for target in specific_targets)
+    )
+
+    if uses_cluster_directory:
         if getattr(viewer, 'last_cluster_params', None):
             c_mode_param, c_min_param = viewer.last_cluster_params
             if lvl2_name_base:
@@ -176,11 +253,14 @@ def run(viewer, args):
     else:
         lvl2_name = lvl2_name_base
 
-    # Build Output Path (configured Analysis Results / Sequence_Export)
-    out_dir = os.path.join(_sequence_export_directory(), lvl1_name)
+    sequence_export_dir = cfg.resolve_directory_path(SEQUENCE_EXPORT_DIRECTORY)
+    out_dir = os.path.join(sequence_export_dir, lvl1_name)
     
-    if target_mode in ["groups", "specific"]:
+    if uses_group_directory:
         final_dir_name = f"{lvl2_name}_GROUPS" if lvl2_name else "GROUPS"
+        out_dir = os.path.join(out_dir, final_dir_name)
+    elif target_mode == "specific" and not uses_cluster_directory:
+        final_dir_name = f"{lvl2_name}_LABELS" if lvl2_name else "LABELS"
         out_dir = os.path.join(out_dir, final_dir_name)
     else:
         out_dir = os.path.join(out_dir, lvl2_name) if lvl2_name else out_dir
@@ -195,7 +275,7 @@ def run(viewer, args):
             missing_count += 1
             continue
             
-        record = source_records[full_header]
+        record = (full_header, source_records[full_header])
         
         if target_mode == "clusters":
             if i >= len(viewer.cluster_labels): continue
@@ -213,21 +293,36 @@ def run(viewer, args):
                 if file_name not in file_map: file_map[file_name] = []
                 file_map[file_name].append(record)
                 
-        elif target_mode == "specific":
-            if i >= len(viewer.group_labels): continue
-            for g_name in viewer.group_labels[i]:
-                if g_name.lower() in specific_groups:
-                    file_name = f"{g_name}.fasta"
-                    if file_name not in file_map: file_map[file_name] = []
-                    file_map[file_name].append(record)
+    if target_mode == "specific":
+        file_map = {}
+        for target in specific_targets:
+            if target.kind == "cluster":
+                filename = f"Cluster_{target.cluster_id}.fasta"
+            elif target.kind == "noise":
+                filename = "Noise.fasta"
+            else:
+                filename = f"{target.name}.fasta"
+            target_mask = Command_Engine.evaluate_label_mask(
+                viewer.full_headers,
+                getattr(viewer, 'cluster_labels', None),
+                getattr(viewer, 'group_labels', None),
+                target.name,
+            )
+            records = [
+                (header, source_records[header])
+                for index, header in enumerate(viewer.full_headers)
+                if target_mask[index] and header in source_records
+            ]
+            if records:
+                file_map[filename] = records
 
     if missing_count > 0:
         print(f"Warning: {missing_count} viewer nodes were not found in the original FASTA file.")
 
     if not file_map:
-        # Nothing to write: do not leave an empty directory tree behind.
         msg = "No valid subsets found to export."
-        Command_Engine.print_help(viewer, msg)
+        viewer.console_text.text = msg
+        print(msg)
         Command_Engine.command_succeeded(viewer, msg)
         return
 
@@ -241,17 +336,24 @@ def run(viewer, args):
     for filename, recs in file_map.items():
         out_path = os.path.join(out_dir, filename)
         try:
-            SeqIO.write(recs, out_path, "fasta")
+            write_fasta_atomic(
+                out_path,
+                [header for header, _ in recs],
+                [sequence for _, sequence in recs],
+            )
             Command_Engine.command_artifact(viewer, out_path)
             files_written += 1
             seqs_written += len(recs)
         except Exception as e:
             print(f"Failed to write {filename}: {e}")
-            Command_Engine.command_failed(viewer, f"Failed to write {filename}: {e}")
+            Command_Engine.command_failed(viewer, f'Failed to write {filename}: {e}')
 
-    # The terminal is the only output surface here, so the destination is
-    # reported instead of popping a file manager window over the headset.
-    msg = (f"Exported {files_written} files ({seqs_written} sequences) to:\n"
-           f"  {os.path.abspath(out_dir)}")
-    Command_Engine.print_help(viewer, msg)
+    msg = f"Exported {files_written} files ({seqs_written} sequences)."
+    viewer.console_text.text = msg
+    print(f"\nSuccess! {msg}")
+    
+    # Upstream pops the system file manager here. The terminal is the only
+    # output surface in this process - and a window opening behind a headset is
+    # worse than useless - so the destination is printed instead.
+    print(f"Saved to: {os.path.abspath(out_dir)}")
     Command_Engine.command_succeeded(viewer, msg)

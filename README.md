@@ -221,6 +221,24 @@ Both probes are load-time only. A clean verdict means "imports, and only touches
 API this viewer has" — not that the behaviour is what you want. Deleting a
 redundant override is still a judgement call.
 
+That gap is worth stating plainly, because it is where the last round of drift
+hid: `color`, `spectrum` and `export` each probed clean for months while
+answering a different syntax from the desktop viewer's — `x2` against `2x`,
+`prop:Length` against `{Length}`, `group:NAME` against `#NAME#`. Each accepted
+exactly what upstream rejects by name. The probes cannot see that, so an
+override needs a reason that survives being said out loud:
+
+| Override | Why it cannot be shared |
+| --- | --- |
+| `agent`, `esmfold` | Driven end-to-end through the Viewer web server, which is out of scope for this port. Stubs that explain, instead of an AttributeError inside a web backend. |
+| `zoom` | Drives a VisPy camera on a canvas this process has no equivalent of; the headset owns the viewpoint. |
+| `print` | Upstream screen-grabs the canvas. A VR figure has to be rebuilt from the state arrays and projected onto a chosen plane, which is a different command. Disabled until that is designed. |
+| `alignment`, `run` | Upstream opens a Qt file dialog. Identical once the file is chosen; the path is an argument here. |
+| `export` | Upstream pops the system file manager through `desktop.Desktop_App`, which reaches PySide6. Otherwise a verbatim copy — keep it diffable. |
+| `meta` | Web spreadsheet UI. Still diverges beyond that; scheduled for the same treatment. |
+
+Anything not on that list is served from `src/commands`, so it cannot drift.
+
 ## Tests
 
 ```bash

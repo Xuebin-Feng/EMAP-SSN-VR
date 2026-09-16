@@ -69,36 +69,24 @@ class HeadlessViewer:
         self.cluster_labels = None
         self.group_labels = [set() for _ in range(n_nodes)]
         
+        #: Header -> sequence for the FASTA this layout cache was built from.
+        #: Parsed once because two consumers need it: 'Length' metadata below,
+        #: and 'export', which upstream writes straight from the sequence set
+        #: the viewer already holds rather than re-reading the file per run.
+        self.sequences_map = self._load_source_sequences()
+
         # Initialize metadata
         self.metadata = metadata if metadata is not None else {}
         
         # Initialize Length metadata if not already loaded from cache
         if "Length" not in self.metadata:
-            lengths_map = {}
-            fasta_path = getattr(cfg, 'NODE_FASTA_FILE', None) or getattr(cfg, 'SEQUENCES_FILE', '')
-            if fasta_path and fasta_path.startswith('..'):
-                # Relative settings resolve against the submodule root, not
-                # against this module's directory inside src/.
-                fasta_path = os.path.normpath(
-                    os.path.join(_bootstrap_vr.OPT_VR_DIR, fasta_path)
-                )
-                
-            if fasta_path and os.path.exists(fasta_path):
-                try:
-                    from Bio import SeqIO
-                    for rec in SeqIO.parse(fasta_path, "fasta"):
-                        lengths_map[rec.id] = len(rec.seq)
-                        lengths_map[rec.description] = len(rec.seq)
-                except Exception as e:
-                    print(f"Warning: Failed to parse FASTA for sequence lengths: {e}")
-            
             length_values = np.zeros(self.n_nodes, dtype=np.int32)
             for i, h in enumerate(self.full_headers):
-                rec_id = h.split()[0]
-                if h in lengths_map:
-                    length_values[i] = lengths_map[h]
-                elif rec_id in lengths_map:
-                    length_values[i] = lengths_map[rec_id]
+                rec_id = h.split()[0] if h else ""
+                if h in self.sequences_map:
+                    length_values[i] = len(self.sequences_map[h])
+                elif rec_id in self.sequences_map:
+                    length_values[i] = len(self.sequences_map[rec_id])
             
             self.metadata["Length"] = {
                 "type": "number",
@@ -272,6 +260,83 @@ class HeadlessViewer:
             "scale": self.transform_scale,
             "distanceScale": self.distance_scale
         }
+
+    def _load_source_sequences(self):
+        """Header -> sequence for the FASTA this layout cache was built from.
+
+        Both the record id and its full description are keyed, because a cache
+        may carry either spelling and the caller matches on ``full_headers``.
+        A missing or unreadable file is not fatal: it costs 'Length' metadata
+        and leaves 'export' to say it has no sequences, which is what the
+        desktop viewer reports in the same situation.
+        """
+        path = (
+            getattr(cfg, 'NODE_FASTA_FILE', None)
+            or getattr(cfg, 'SEQUENCES_FILE', '')
+        )
+        if path and path.startswith('..'):
+            # Relative settings resolve against the submodule root, not against
+            # this module's directory inside src/.
+            path = os.path.normpath(
+                os.path.join(_bootstrap_vr.OPT_VR_DIR, path)
+            )
+        if not path or not os.path.exists(path):
+            return {}
+
+        records = {}
+        try:
+            from Bio import SeqIO
+
+            for record in SeqIO.parse(path, "fasta"):
+                sequence = str(record.seq)
+                records[record.id] = sequence
+                records[record.description] = sequence
+        except Exception as error:
+            print(f"Warning: Failed to parse the source FASTA ({error}).")
+        return records
+
+    def promote_nodes(self, indices):
+        """Move one node group to the top of the persistent render order.
+
+        Nothing in the headset changes: Unity places nodes in 3D and its own
+        renderer decides what occludes what, and ``update_nodes`` never sends
+        an order. The desktop viewer's logic is mirrored exactly anyway,
+        because ``save`` writes ``node_render_order`` into the layout cache - a
+        session that colours nodes here and saves must reopen on the desktop
+        with the layering the same commands would have produced there. A no-op
+        would silently flatten it.
+        """
+        import Cache_Manifest as cache_manifest
+
+        values = np.asarray(indices)
+        if values.dtype == np.bool_:
+            if values.ndim != 1 or len(values) != self.n_nodes:
+                raise ValueError("Node promotion mask must match the node count.")
+            promoted = np.flatnonzero(values)
+        else:
+            promoted = values.astype(np.int64, copy=False).reshape(-1)
+
+        promoted = np.unique(promoted)
+        if promoted.size == 0:
+            return False
+        if np.any(promoted < 0) or np.any(promoted >= self.n_nodes):
+            raise ValueError("Node promotion indices are outside the network.")
+
+        current_order = getattr(self, 'node_render_order', None)
+        if current_order is None:
+            current_order = np.arange(self.n_nodes, dtype=np.int32)
+        else:
+            current_order = cache_manifest.validate_node_render_order(
+                current_order, self.n_nodes
+            )
+
+        keep_mask = ~np.isin(current_order, promoted)
+        new_order = np.concatenate(
+            (current_order[keep_mask], np.sort(promoted))
+        ).astype(np.int32, copy=False)
+        changed = not np.array_equal(new_order, current_order)
+        self.node_render_order = new_order
+        return changed
 
     def update_nodes(self):
         # Package state into JSON, flattened for Unity JsonUtility

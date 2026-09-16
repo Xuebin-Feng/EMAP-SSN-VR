@@ -9,7 +9,13 @@ import unittest
 from types import SimpleNamespace
 from unittest import mock
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+#: Guarded, like every other test module here. An unconditional insert put a
+#: second copy of opt_vr/src on sys.path, and because unittest discovery runs
+#: every module in one interpreter, that duplicate was still there when
+#: BootstrapTests later asserted the path holds exactly one.
+VR_SRC = str(Path(__file__).resolve().parents[1] / "src")
+if VR_SRC not in sys.path:
+    sys.path.insert(0, VR_SRC)
 import Layout_Launcher_VR as launcher
 
 

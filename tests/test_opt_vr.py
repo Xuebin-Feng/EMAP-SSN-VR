@@ -30,8 +30,10 @@ import io
 import json
 import os
 import pathlib
+import subprocess
 import sys
 import tempfile
+import textwrap
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 
@@ -61,6 +63,11 @@ with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
     import EMAPSSN_Viewer_VR as vr_viewer  # noqa: E402
 
 _bootstrap_vr.install_settings_alias(cfg)
+
+
+def for_name():
+    """A figure name that would be written if `print` were not disabled."""
+    return "parity_check"
 
 
 def build_viewer(n_nodes=12, seed=0):
@@ -105,6 +112,70 @@ class BootstrapTests(unittest.TestCase):
         )
         # And it must appear exactly once, or a stale duplicate could shadow it.
         self.assertEqual(sys.path.count(_bootstrap_vr.VR_SRC_DIR), 1)
+
+    def test_command_package_is_bound_at_bootstrap(self):
+        """The override mechanism must not be left to resolve lazily."""
+        self.assertIn("commands", sys.modules)
+        self.assertEqual(
+            os.path.abspath(sys.modules["commands"].__path__[0]),
+            os.path.abspath(os.path.join(_bootstrap_vr.VR_SRC_DIR, "commands")),
+        )
+
+    def _bootstrap_subprocess(self, body):
+        """Run `body` in a fresh interpreter and return its CompletedProcess.
+
+        These assertions are about a new process's module cache, which this
+        one has already populated by importing _bootstrap_vr at module scope.
+        """
+        preamble = (
+            "import sys, os, importlib" + chr(10)
+            + "os.environ.setdefault('MPLBACKEND', 'Agg')" + chr(10)
+        )
+        return subprocess.run(
+            [sys.executable, "-c", preamble + textwrap.dedent(body)],
+            capture_output=True, text=True, cwd=OPT_VR,
+        )
+
+    def test_late_sys_path_reorder_cannot_steal_the_overrides(self):
+        """The hazard this bootstrap exists to prevent, exercised end to end.
+
+        sys.path is global and mutable, and `commands` used to be imported
+        only when the user typed their first command. Anything that put the
+        parent's src back in front in the meantime silently bound the main
+        program's package - no error, just the desktop `zoom` reaching for a
+        VisPy canvas this process does not have. Binding `commands` during
+        bootstrap puts it in sys.modules, where a later path edit cannot
+        reach it.
+        """
+        result = self._bootstrap_subprocess(f"""
+            sys.path.insert(0, {_bootstrap_vr.VR_SRC_DIR!r})
+            import _bootstrap_vr
+            # Hostile reorder, after the bootstrap has had its say.
+            sys.path.insert(0, {_bootstrap_vr.SRC_DIR!r})
+            import commands
+            print(importlib.import_module("commands.zoom").__file__)
+            """)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            os.path.abspath(result.stdout.strip()),
+            os.path.abspath(
+                os.path.join(_bootstrap_vr.VR_SRC_DIR, "commands", "zoom.py")
+            ),
+            "a late sys.path reorder swapped the VR overrides for upstream's",
+        )
+
+    def test_preimported_upstream_command_package_is_refused(self):
+        """Losing the race before bootstrap runs must be loud, not silent."""
+        result = self._bootstrap_subprocess(f"""
+            sys.path.insert(0, {_bootstrap_vr.SRC_DIR!r})
+            import commands
+            sys.path.insert(0, {_bootstrap_vr.VR_SRC_DIR!r})
+            import _bootstrap_vr
+            """)
+        self.assertNotEqual(
+            result.returncode, 0, "bootstrap accepted a shadowed package"
+        )
+        self.assertIn("imported before", result.stderr)
 
     def test_settings_alias_is_registered_for_upstream_modules(self):
         """Importing Settings_VR must be enough to register the alias.
@@ -165,8 +236,19 @@ class CommandPackageTests(unittest.TestCase):
         import commands
 
         self.assertGreaterEqual(len(commands.__path__), 2)
-        local = importlib.import_module("commands.color")
+
+        # `zoom` is overridden here and has no plausible route back to
+        # upstream's: it drives a VisPy camera on a canvas this process does
+        # not have. Naming a command that could later be handed back to
+        # upstream - as `color` and `spectrum` were - makes this test fail for
+        # the wrong reason on the day that happens.
+        local = importlib.import_module("commands.zoom")
         self.assertIn("opt_vr", local.__file__)
+
+        # And the other half of the contract: something with no local copy must
+        # resolve to the main program's.
+        shared = importlib.import_module("commands.select")
+        self.assertNotIn("opt_vr", shared.__file__)
 
     def test_every_local_command_exposes_run(self):
         import importlib
@@ -305,14 +387,177 @@ class CommandEngineAPITests(unittest.TestCase):
         )
         self.assertEqual(sorted(np.flatnonzero(red).tolist()), [0, 1])
 
-    def test_selection_token_without_a_mask_is_empty_not_an_error(self):
+    def test_selection_grammar_is_upstream_not_a_fork(self):
+        """The whole grammar must be the main program's objects, not copies.
+
+        opt_vr used to adopt the classifier while keeping a local
+        regex-rewrite-and-eval evaluator. The two disagreed: `(RHK)71` and
+        `K(-1)` classified as valid and then failed to evaluate, `#Kinase#`
+        matched case-sensitively, and a misspelled label selected nothing
+        instead of naming the labels that exist. Identity - not merely equal
+        behaviour - is asserted so a future edit cannot quietly re-fork one
+        predicate and leave the rest shared.
+        """
+        upstream = Command_Engine._upstream_engine()
+        for name in (
+            "classify_selection_expression",
+            "parse_selection_expression",
+            "evaluate_selection_expression",
+            "parse_advanced_expression",
+            "resolve_label_target",
+            "evaluate_string_mask",
+            "evaluate_file_mask",
+            "evaluate_label_mask",
+            "evaluate_aa_mask",
+            "evaluate_aa_group_mask",
+            "evaluate_metadata_mask",
+            "SelectionExpressionError",
+            "SelectionContextError",
+            "SelectionClassificationKind",
+        ):
+            with self.subTest(name=name):
+                self.assertIs(
+                    getattr(Command_Engine, name),
+                    getattr(upstream, name),
+                    f"Command_Engine.{name} is a local fork of the main program's",
+                )
+
+    def test_empty_selection_yields_an_empty_mask(self):
         viewer = build_viewer()
+        viewer.selected_indices = []
         mapping, valid = Command_Engine.get_alignment_mapping(viewer)
         mask = Command_Engine.parse_advanced_expression(
-            "$sele$", mapping, valid, viewer.full_headers
+            "$sele$",
+            mapping,
+            valid,
+            viewer.full_headers,
+            selection_mask=Command_Engine.get_selected_mask(viewer),
         )
         self.assertEqual(int(mask.sum()), 0)
 
+    def test_omitting_the_selection_mask_is_an_error(self):
+        """"Nothing selected" is a zero mask, not an absent one.
+
+        The forked evaluator this module used to carry treated a missing
+        ``selection_mask`` as an empty selection, so a caller that simply forgot
+        to pass one got a silent no-match instead of a diagnosis. Upstream
+        raises, and every call site in both command sets passes
+        ``get_selected_mask(viewer)``, which returns a zero mask when nothing is
+        selected - so the raise is unreachable in normal use and only fires on a
+        genuine wiring mistake. Asserted here so the two engines cannot drift
+        apart on it again.
+        """
+        viewer = build_viewer()
+        mapping, valid = Command_Engine.get_alignment_mapping(viewer)
+        with self.assertRaises(Command_Engine.SelectionContextError):
+            Command_Engine.parse_advanced_expression(
+                "$sele$", mapping, valid, viewer.full_headers
+            )
+
+
+class DesktopParityTests(unittest.TestCase):
+    """Commands handed back to upstream must answer the desktop grammar."""
+
+    def _populated(self):
+        viewer = build_viewer()
+        viewer.cluster_labels = np.array([0] * 5 + [1] * 5 + [-1] * 2)
+        viewer.group_labels = [set() for _ in range(viewer.n_nodes)]
+        for index in range(3):
+            viewer.group_labels[index].add("kinase")
+        return viewer
+
+    def test_color_accepts_the_desktop_syntax(self):
+        """Trailing-x scale and shape names, not the old leading-x fork."""
+        viewer = self._populated()
+        run_command(viewer, "select #cluster_0#")
+        run_command(viewer, "color red 2x triangle")
+
+        red = np.flatnonzero(
+            np.all(np.isclose(viewer.current_colors[:, :3], [1.0, 0.0, 0.0]), axis=1)
+        )
+        self.assertEqual(red.tolist(), [0, 1, 2, 3, 4])
+        self.assertEqual(sorted(set(viewer.current_sizes.tolist())), [10.0, 20.0])
+
+    def test_shapes_are_recorded_but_never_reach_unity(self):
+        """Unity has no shape vocabulary, so a shape must be visually inert.
+
+        The desktop grammar is accepted in full - refusing `triangle` would
+        make the same script behave differently in the two front ends - but
+        the only channel to the headset is update_nodes(), and it must not
+        start carrying a field the client cannot render.
+        """
+        viewer = self._populated()
+        run_command(viewer, "select #cluster_0#")
+        before = viewer.current_colors.copy()
+        run_command(viewer, "color triangle")
+
+        self.assertIn("triangle_up", set(viewer.current_shapes.tolist()))
+        # A shape alone changes nothing a viewer can see.
+        np.testing.assert_array_equal(viewer.current_colors, before)
+
+        while not viewer.update_queue.empty():
+            viewer.update_queue.get()
+        viewer.update_nodes()
+        packet = viewer.update_queue.get()
+        self.assertEqual(
+            sorted(packet),
+            ["colors", "globalSettings", "sizes", "transformState", "visible"],
+            "update_nodes() grew a field the Unity client cannot render",
+        )
+
+    def test_promote_nodes_tracks_render_order_without_a_renderer(self):
+        """Order is inert here but `save` writes it into the layout cache."""
+        viewer = self._populated()
+        run_command(viewer, "select #cluster_0#")
+        run_command(viewer, "color red")
+        self.assertEqual(
+            viewer.node_render_order.tolist(),
+            [5, 6, 7, 8, 9, 10, 11, 0, 1, 2, 3, 4],
+        )
+
+    def test_spectrum_uses_the_desktop_grammar_and_stays_quiet(self):
+        """Braced property, and no spurious error from the meta follow-up.
+
+        Upstream `spectrum` calls `meta display <prop>` on success. Before
+        meta learned that verb it was read as a filename, so a working
+        spectrum ended in "Could not find file 'display Length.xlsx'".
+        """
+        viewer = self._populated()
+        output = run_command(viewer, "spectrum {Length}")
+        self.assertIn("Spectrum coloring applied", output)
+        self.assertNotIn("Could not find file", output)
+
+        legacy = run_command(viewer, "spectrum prop:Length")
+        self.assertIn("Legacy spectrum prefixes", legacy)
+
+    def test_export_uses_label_targets_not_the_legacy_prefix(self):
+        viewer = self._populated()
+        self.assertIn(
+            "Legacy export group:NAME syntax",
+            run_command(viewer, "export group:kinase"),
+        )
+        # A label that does not exist is diagnosed, not silently skipped.
+        self.assertIn("does not exist", run_command(viewer, "export #nope#"))
+
+
+class DisabledCommandTests(unittest.TestCase):
+    """Commands that refuse must refuse cleanly, not half-run."""
+
+    def test_print_is_disabled_and_writes_nothing(self):
+        viewer = build_viewer()
+        with tempfile.TemporaryDirectory() as folder:
+            before = os.listdir(folder)
+            output = run_command(viewer, f"print {os.path.join(folder, for_name())}")
+            self.assertIn("not available in the VR viewer yet", output)
+            self.assertEqual(os.listdir(folder), before)
+
+    def test_alignment_requires_a_path(self):
+        viewer = build_viewer()
+        self.assertIn("Please name the alignment file", run_command(viewer, "alignment"))
+        self.assertIn(
+            "not found (checked absolute, relative",
+            run_command(viewer, "alignment no_such_file.fasta"),
+        )
 
 class LayoutCacheConsumerTests(unittest.TestCase):
     """opt_vr consumes a cache; it must never generate one."""

@@ -1,125 +1,114 @@
+# Copyright 2026 Xuebin Feng
+# Author affiliation: University of Toronto
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Switch the active MSA, matching the desktop viewer's loading rules.
+
+One deliberate difference from upstream: **the file is named on the command
+line**. Upstream takes no argument and opens a Qt file dialog on
+``viewer.canvas.native``; there is no Qt and no canvas here, so the path is
+required. Path resolution is upstream's - absolute, relative to the working
+directory, or relative to ``MSA_DIR``, with the ``.fasta``/``.h5`` extension
+optional - and so is everything that happens once the file is chosen.
+
+That last part is the substantive fix. This command used to carry its own
+loading rules, and they were stricter than the loader's: the help promised
+that the viewer's sequences had to be a *strict subset* of the new MSA, and a
+failure was re-attempted with the reference dropped. Neither matches the main
+program. ``Alignment_Manager`` accepts partial coverage - unmatched nodes stay
+visible and sit out alignment-dependent analyses - and it reports how many
+nodes aligned. A reference that is absent from the new file is not an error
+either; the alignment simply loads in occupancy mode. Both are now reported
+the way the desktop viewer reports them, so the same file gives the same
+verdict in either front end.
+"""
+
 import os
-import fnmatch
+
 import Settings_VR as cfg
 import Command_Engine
 
-def print_help():
-    print("""
-    Alignment Switcher Tool (VR version)
-    =======================================
+
+def print_help(msa_dir):
+    print(f"""
+    Alignment Switcher Tool
+    =======================
     Usage:
-      alignment <alignment_identifier>
-          Loads the MSA file matching the identifier (index or filename query) 
-          from the Multiple Alignments folder.
-      alignment list
-          Lists all available alignments in the Multiple Alignments folder.
+      alignment <filename.fasta / filename.h5>
+          Loads the specified MSA file. The path may be absolute, relative to
+          the current directory, or relative to the configured MSA directory:
+          {msa_dir}
+          The .fasta / .h5 extension may be omitted.
       alignment help
           Displays this help message.
 
+    Note:
+      The desktop viewer opens a file explorer when 'alignment' is typed alone.
+      This viewer is headless, so the file is named on the command line.
+
     Loading Rules:
-      To load successfully, the FASTA subset currently representing the nodes in the viewer 
-      must be a strict subset of the sequence headers present in the new MSA file. 
-      If any node is missing, the load fails and the system automatically rolls back 
-      to the previously active alignment to ensure session stability.
+      The MSA may contain all, some, or none of the nodes currently plotted in the viewer.
+      Missing nodes remain visible but are excluded from alignment-dependent analyses.
+      Coverage is matched by exact full headers and reported when the alignment loads.
+      Unreadable or malformed files still fail and restore the previous alignment.
     """)
 
-def run(viewer, args):
-    if args and args[0].lower() in ['help', '-h', '--help']:
-        print_help()
-        if hasattr(viewer, 'console_text'):
-            viewer.console_text.text = "Help printed to console."
-        return
 
-    msa_dir = getattr(cfg, 'MSA_DIR', os.path.join("Input_Files", "Multiple_Alignments"))
-
-    if not args:
-        msg = "Error: Please specify an alignment or type 'alignment list' to see available alignments."
-        Command_Engine.print_help(viewer, msg)
-        return
-
-    # Check if list is requested
-    if args[0].lower() == 'list':
-        if not os.path.exists(msa_dir):
-            msg = f"Error: MSA directory '{msa_dir}' does not exist."
-            Command_Engine.print_help(viewer, msg)
-            return
-        files = sorted([f for f in os.listdir(msa_dir) if f.endswith('.fasta') or f.endswith('.h5')])
-        if not files:
-            msg = f"No alignment files found in '{msa_dir}'."
-            Command_Engine.print_help(viewer, msg)
-            return
-        print("\nAvailable alignments:")
-        print("=====================")
-        current_base = os.path.basename(cfg.MSA_FILE) if cfg.MSA_FILE else ""
-        for i, file in enumerate(files, 1):
-            is_active = "[ACTIVE]" if file == current_base else ""
-            print(f"  {i: >2}. {file} {is_active}")
-        print("\nTo load an alignment, type: alignment <index> or alignment <filename_query>")
-        if hasattr(viewer, 'console_text'):
-            viewer.console_text.text = f"Listed {len(files)} alignments in console."
-        return
-
-    identifier = " ".join(args).strip()
-
-    # Accept a direct path first (absolute, relative, or a bare name inside the
-    # MSA folder, with the .fasta/.h5 extension optional). The index / substring
-    # catalogue lookup below is only used when the identifier is not a real file.
-    selected_file = None
-    new_path = None
+def _resolve(identifier, msa_dir):
+    """Upstream's search order: as given, inside MSA_DIR, then with extensions."""
     candidates = [identifier, os.path.join(msa_dir, identifier)]
-    for ext in ('.fasta', '.h5'):
-        candidates.append(identifier + ext)
-        candidates.append(os.path.join(msa_dir, identifier + ext))
+    for extension in ('.fasta', '.h5'):
+        candidates.append(identifier + extension)
+        candidates.append(os.path.join(msa_dir, identifier + extension))
     for candidate in candidates:
         if os.path.isfile(candidate):
-            new_path = os.path.abspath(candidate).replace("\\", "/")
-            selected_file = os.path.basename(candidate)
-            break
+            return os.path.abspath(candidate).replace("\\", "/")
+    return None
 
-    if new_path is None and not os.path.exists(msa_dir):
-        msg = f"Error: MSA directory '{msa_dir}' does not exist."
-        Command_Engine.print_help(viewer, msg)
-        return
-        
-    files = [] if new_path is not None else sorted(
-        [f for f in os.listdir(msa_dir) if f.endswith('.fasta') or f.endswith('.h5')])
-    if new_path is None and not files:
-        msg = f"Error: No alignment files found in '{msa_dir}'."
-        Command_Engine.print_help(viewer, msg)
+
+def run(viewer, args):
+    msa_dir = getattr(cfg, 'MSA_DIR', os.path.join("Input_Files", "Multiple_Alignments"))
+
+    if args and args[0].lower() in ['help', '-h', '--help']:
+        print_help(msa_dir)
+        if hasattr(viewer, 'console_text'):
+            viewer.console_text.text = "Help information printed to the terminal"
+        Command_Engine.command_succeeded(viewer, 'Help information printed to the terminal.')
         return
 
-    if new_path is not None:
-        pass  # the identifier already resolved to a file on disk
-    elif identifier.isdigit():
-        idx = int(identifier) - 1
-        if 0 <= idx < len(files):
-            selected_file = files[idx]
-        else:
-            msg = f"Error: Index '{identifier}' is out of range. Range is 1-{len(files)}."
-            Command_Engine.print_help(viewer, msg)
-            return
-    else:
-        # Search by case-insensitive substring
-        matches = [f for f in files if identifier.lower() in f.lower()]
-        if not matches:
-            matches = [f for f in files if fnmatch.fnmatch(f.lower(), identifier.lower())]
-            
-        if len(matches) == 1:
-            selected_file = matches[0]
-        elif len(matches) > 1:
-            print(f"\nMultiple matches found for '{identifier}':")
-            for f in matches:
-                print(f"  - {f}")
-            msg = "Error: Ambiguous query. Please be more specific."
-            Command_Engine.print_help(viewer, msg)
-            return
-        else:
-            msg = f"Error: No alignments matching '{identifier}' found."
-            Command_Engine.print_help(viewer, msg)
-            return
+    if not args:
+        msg = (
+            "Error: Please name the alignment file to load.\n"
+            "Usage: alignment <filename.fasta / filename.h5>\n"
+            f"The path may be absolute, relative, or relative to {msa_dir}."
+        )
+        Command_Engine.command_failed(viewer, msg)
+        Command_Engine.print_help(viewer, msg)
+        return
 
-    if new_path is None:
-        new_path = os.path.join(msa_dir, selected_file).replace("\\", "/")
+    identifier = " ".join(args).strip().strip('"')
+    new_path = _resolve(identifier, msa_dir)
+    if not new_path:
+        msg = (
+            f"Error: Alignment file '{identifier}' not found "
+            f"(checked absolute, relative, and {msa_dir})."
+        )
+        Command_Engine.command_failed(viewer, msg)
+        Command_Engine.print_help(viewer, msg)
+        return
+
+    selected_file = os.path.basename(new_path)
 
     # Load the selected alignment file
     print(f"\nAttempting to load alignment: {selected_file}...")
@@ -136,52 +125,43 @@ def run(viewer, args):
     try:
         viewer.load_global_alignment()
 
-        # Alignment_Manager signals two very different failures the same way
-        # (aln is None), and Viewer.load_global_alignment() swallows the
-        # underlying exception, so they are told apart by valid_cols: it is only
-        # populated once the file has parsed, which means the reference sequence
-        # was the sole problem. A file that never parsed (unreadable, or not a
-        # strict superset of the network's sequence set) fails identically
-        # without a reference, so retrying it only wastes a second full load.
-        parsed_ok = (
-            viewer.alignment is not None
-            and getattr(viewer.alignment, 'valid_cols', None) is not None
-        )
+        # A parseable partial or zero-overlap MSA is valid. Only a genuine loader
+        # failure leaves aln as None and triggers rollback.
         if viewer.alignment is None or viewer.alignment.aln is None:
-            if not parsed_ok:
-                raise ValueError(
-                    f"'{selected_file}' could not be read as an alignment. The "
-                    "loader messages printed above give the reason; the usual "
-                    "cause is a sequence subset violation - every node currently "
-                    "in the viewer must also be present in the new MSA."
-                )
+            raise ValueError("Alignment loader failed to return an alignment.")
 
-            print(f"Warning: Active reference '{viewer.active_reference}' not found in '{selected_file}'.")
-            print("Re-attempting load in Pure Occupancy Mode (no reference sequence)...")
-            viewer.active_reference = None
-            viewer.load_global_alignment()
+        aligned_count = len(getattr(viewer.alignment, 'matched_headers', []))
+        total_count = len(getattr(viewer, 'full_headers', []))
+        reference_suffix = ""
+        if getattr(viewer, 'active_reference', None) and not getattr(
+            viewer.alignment,
+            'has_reference',
+            False,
+        ):
+            reference_suffix = "; reference inactive (occupancy mode)"
 
-            if viewer.alignment is None or viewer.alignment.aln is None:
-                raise ValueError("Alignment loader failed to return an alignment.")
-            else:
-                success_msg = f"Success: Loaded '{selected_file}' in Pure Occupancy Mode."
-                print(f"\n{success_msg}")
-                if hasattr(viewer, 'console_text'):
-                    viewer.console_text.text = f"Loaded {selected_file} (No Ref)"
-        else:
-            success_msg = f"Success: Loaded alignment '{selected_file}'."
-            print(f"\n{success_msg}")
-            if hasattr(viewer, 'console_text'):
-                viewer.console_text.text = f"Loaded {selected_file}"
+        success_msg = (
+            f"Success: Loaded alignment '{selected_file}' "
+            f"({aligned_count}/{total_count} network nodes aligned{reference_suffix})."
+        )
+        print(f"\n{success_msg}")
+        if hasattr(viewer, 'console_text'):
+            viewer.console_text.text = (
+                f"Loaded {selected_file}: {aligned_count}/{total_count} aligned"
+            )
+
+        Command_Engine.command_succeeded(viewer, success_msg)
 
     except Exception as e:
         print(f"\nFailed to load alignment '{selected_file}': {e}")
+        Command_Engine.command_failed(viewer, f"\nFailed to load alignment '{selected_file}': {e}")
         print("Reverting to previous alignment state...")
-        
+
         # Rollback
         cfg.MSA_FILE = backup_msa_file
         viewer.alignment = backup_alignment
         viewer.active_reference = backup_active_ref
-        
+
         if hasattr(viewer, 'console_text'):
             viewer.console_text.text = "Load failed. Reverted to previous alignment."
+            Command_Engine.command_failed(viewer, viewer.console_text.text)
