@@ -14,7 +14,7 @@ git submodule update --init opt_vr
 ```
 
 > [!IMPORTANT]
-> **Windows only.** `VR_App` holds a built Windows Unity player and the viewer
+> **Windows only.** `unity/` holds a built Windows Unity player and the viewer
 > launches it directly, so every VR entry point refuses to start anywhere else
 > rather than failing later on a missing `.exe`. The main program stays
 > cross-platform, and its desktop viewer opens the same layout caches in 2D.
@@ -48,7 +48,7 @@ Qt/VisPy stack.
 ```
 opt_vr/
 ├── install_vr.bat                       # writes the EMAP-SSN VR shortcut
-├── VR_App/                              # the built Windows Unity player
+├── unity/                               # the built Windows Unity player
 ├── Cache_Files/                         # runtime working directory (ignored)
 ├── viewer_settings_vr.json              # per-user settings (ignored)
 ├── docs/PROTOCOL.md                     # Python/Unity wire protocol
@@ -256,7 +256,7 @@ Windows-only.
 
 ## The Unity client
 
-`VR_App/` holds the built Windows player. Python listens on `127.0.0.1:5005`;
+`unity/` holds the built Windows player. Python listens on `127.0.0.1:5005`;
 the client connects, receives a binary handshake carrying node count,
 positions (`float32` x, y, z), and the rendered and full edge lists, then
 exchanges newline-delimited JSON for per-node colour, size and visibility

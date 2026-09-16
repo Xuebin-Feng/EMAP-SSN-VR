@@ -24,7 +24,7 @@ import _bootstrap_vr
 
 if __name__ == "__main__":
     # Windows-only, like every other VR entry point: Save & Run hands off
-    # to a viewer that drives the Windows Unity build in VR_App.
+    # to a viewer that drives the Windows Unity build in unity/.
     _bootstrap_vr.require_windows("The EMAP-SSN VR Configuration GUI")
 
 if __name__ == "__main__" and "--headless" in sys.argv:
@@ -281,7 +281,7 @@ VR_PROFILE_DEFAULTS = {
     # it would silently lose whatever the user picked.
     "ENABLE_EDGE_FILTERING": True,
     "MAX_RENDER_EDGES": 500000,
-    "VR_APP_DIR": "VR_App",
+    "VR_APP_DIR": "unity",
     "EXIT_WITH_UNITY": True,
 }
 
@@ -3613,7 +3613,7 @@ if __name__ == "__main__":
                 return label
 
             # --- Row 1: which build, and where it connects --------------------
-            app_dir = QLineEdit(str(globals().get("VR_APP_DIR", "VR_App")))
+            app_dir = QLineEdit(str(globals().get("VR_APP_DIR", "unity")))
             browse = QPushButton("Browse")
             browse.setToolTip(VR_CONTROL_TIPS["VR_APP_DIR"])
             self._unity_browse_button = browse

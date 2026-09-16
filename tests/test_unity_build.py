@@ -36,7 +36,7 @@ if VR_SRC not in sys.path:
 
 import Unity_Build_VR as unity  # noqa: E402
 
-SHIPPED_BUILD = os.path.join(OPT_VR, "VR_App")
+SHIPPED_BUILD = os.path.join(OPT_VR, "unity")
 
 
 def field(host, port):
@@ -138,12 +138,12 @@ class ReadEndpointTests(unittest.TestCase):
         )
         self.assertEqual(unity.read_endpoint(build_with(payload)), ("127.0.0.1", 5005))
 
-    @unittest.skipUnless(os.path.isdir(SHIPPED_BUILD), "VR_App is not checked out")
+    @unittest.skipUnless(os.path.isdir(SHIPPED_BUILD), "unity/ is not checked out")
     def test_the_shipped_build_reports_its_baked_endpoint(self):
         """The whole point: the GUI never has to ask for this."""
         self.assertEqual(unity.read_endpoint(SHIPPED_BUILD), ("127.0.0.1", 5005))
 
-    @unittest.skipUnless(os.path.isdir(SHIPPED_BUILD), "VR_App is not checked out")
+    @unittest.skipUnless(os.path.isdir(SHIPPED_BUILD), "unity/ is not checked out")
     def test_the_shipped_build_exposes_a_scene_to_scan(self):
         names = [os.path.basename(path) for path in unity.scan_files(SHIPPED_BUILD)]
         self.assertIn("level0", names)

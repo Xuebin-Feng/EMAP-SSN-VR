@@ -1001,10 +1001,10 @@ _NOT_THE_PLAYER = ("unitycrashhandler",)
 
 def vr_app_search_dirs():
     """Directories that may hold the built Unity player, most specific first."""
-    # VR_App sits at the submodule root beside src/, the way the main
+    # unity/ sits at the submodule root beside src/, the way the main
     # program keeps its own resource directories out of the module tree.
     script_dir = _bootstrap_vr.OPT_VR_DIR
-    configured = getattr(cfg, "VR_APP_DIR", "VR_App")
+    configured = getattr(cfg, "VR_APP_DIR", "unity")
     return [
         # The setting wins, resolved against opt_vr when it is relative.
         configured if os.path.isabs(configured)
@@ -1012,6 +1012,10 @@ def vr_app_search_dirs():
         # The build lives inside opt_vr, not beside it. Looking one level up
         # only worked back when the viewer sat in a subdirectory of the old
         # standalone repository.
+        #
+        # VR_App was this directory's name before the Unity backend was
+        # rebuilt. Kept as a fallback so a checkout that still holds one keeps
+        # working without editing its settings.
         os.path.join(script_dir, "VR_App"),
         os.path.join(os.getcwd(), "VR_App"),
     ]
@@ -1205,7 +1209,7 @@ def start_server(host=None, port=None):
         server_socket.close()
 
 if __name__ == "__main__":
-    # The server exists to drive the Windows Unity player in VR_App, so it
+    # The server exists to drive the Windows Unity player in unity/, so it
     # refuses to start elsewhere rather than binding a socket nothing can
     # ever connect to.
     _bootstrap_vr.require_windows("The EMAP-SSN VR Viewer")

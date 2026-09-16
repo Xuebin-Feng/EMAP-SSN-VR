@@ -111,7 +111,7 @@ class WindowsOnlyTests(unittest.TestCase):
 
     def test_no_posix_launcher_is_shipped(self):
         # The main program ships .sh and .command launchers beside its .bat
-        # ones. opt_vr deliberately ships none: VR_App is a Windows build.
+        # ones. opt_vr deliberately ships none: unity/ is a Windows build.
         for pattern in ("*.sh", "*.command"):
             stray = [
                 path.name
