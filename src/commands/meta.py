@@ -1,450 +1,272 @@
-import Command_Engine
-import os
-import re
-import numpy as np
-import pandas as pd
-import h5py
-import Viewer_Utils_VR as utils
-import Settings_VR as cfg
+# Copyright 2026 Xuebin Feng
+# Author affiliation: University of Toronto
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
-def print_help(meta_dir_help):
+"""Metadata manager, sharing the desktop viewer's implementation.
+
+Upload, download and column deletion are not reimplemented here: they are the
+main program's ``Metadata_Core`` functions, called with the same arguments the
+desktop ``commands/meta.py`` passes. A spreadsheet uploaded in VR is parsed by
+the same code, matched by the same strict full-header rule, and reported with
+the same message as one uploaded on the desktop.
+
+That module exists because of this command. The logic had always been Qt-free,
+but it sat in ``web_ui/meta_backend.py`` behind a module-level PySide6 import,
+so a headless process could not reach it and this command carried its own
+parallel implementation - which had drifted into a different set of verbs
+(``list``, index-based upload) and a different file format default.
+
+What is not shared, and why:
+
+* **The web spreadsheet UI.** ``meta`` alone opens a browser page on the
+  desktop and registers a sidebar button. There is no web server here and the
+  web UI is out of scope for this port, so bare ``meta`` prints help instead.
+
+* **The file dialog.** There is none upstream for ``meta`` - paths are already
+  typed - so upload resolution is upstream's, unchanged.
+
+* **``show`` / ``display``.** Upstream attaches a HUD that prints the property
+  beside the status indicators on node click. The headset has no HUD and no
+  click, so the verb is accepted and acknowledged rather than refused:
+  ``spectrum`` issues it automatically after every run.
+
+One addition: ``download`` accepts a trailing selection expression.
+``Metadata_Core.download_metadata`` has always taken an ``expr`` filter and
+evaluates it with the shared selection grammar; the desktop CLI simply never
+exposed it, and this command did. Keeping it costs nothing and forks nothing.
+"""
+
+import os
+
+import Command_Engine
+import Settings_VR as cfg
+from Metadata_Core import (
+    MetadataColumnDeleteError,
+    delete_metadata_columns,
+    download_metadata,
+    upload_metadata,
+)
+
+#: Characters that make a token unambiguously a selection expression rather
+#: than a filename. ``classify_selection_expression`` alone would read a bare
+#: ``x2`` as an amino-acid predicate, and that is a plausible file name.
+_EXPRESSION_MARKERS = '{}#@&|!^"$'
+
+
+def print_help(meta_dir):
     print(f"""
-    Node Metadata Manager Tool (VR version)
-    ==========================================
+    Node Metadata Manager
+    =====================
     Usage:
-      meta <index> or meta <filename_query>
-          Uploads the metadata file matching the index or query from the default metadata folder.
-      meta list
-          Lists all available metadata files in the default metadata folder.
-      meta retrieve/download/export <filename> [expression]
-          Downloads the current session metadata to the specified filename inside the metadata folder.
-          An optional boolean logic expression can be provided at the end to filter 
-          which nodes are exported (e.g., #cluster_1#, {{Length>500}}, or $sele$).
+      meta <filename> [<filename> ...]
+      meta upload/import <filename> [<filename> ...]
+          Uploads and merges the specified metadata file(s) (.xlsx, .xls, .csv)
+          into the current viewer session. Each path can be absolute, relative,
+          or located inside the metadata directory: {meta_dir}
+          The extension may be omitted.
+      meta download
+          Downloads the current session metadata to a generic file (metadata.csv,
+          or metadata1.csv if already taken) in {meta_dir}.
+      meta download <filename>
+          Downloads using the specified filename (defaults to .csv if no
+          extension is given). Overwrites the file if it already exists.
+      meta download <filename> <expression>
+          Downloads only the nodes matching a selection expression, for example
+          {{Length>500}}, #cluster_1# or $sele$. The expression comes last.
       meta show/display <property_name>
           Accepted for compatibility with the desktop viewer. The VR viewer has
           no on-canvas HUD, so nothing is displayed.
+      meta delete/remove/clear <property_name> [property_name ...]
+          Atomically deletes one or more metadata columns from the current
+          session. Property matching is case-insensitive. Node ID/Sequence
+          Header cannot be deleted; Length is deletable metadata. Deleting
+          every column with "all" is not supported.
       meta help
           Displays this help message.
 
+    Note:
+      The desktop viewer opens an HTML5 metadata spreadsheet when 'meta' is
+      typed alone. This viewer is headless, so that prints this help instead.
+
     Examples:
-      meta 2
-      meta my_metadata
-      meta list
-      meta download my_data.xlsx
-      meta download filtered.xlsx {{Length>500}}
-      meta export filtered_meta.xlsx #cluster_1#
-      meta export selected_meta.xlsx $sele$
+      meta my_data.xlsx
+      meta download
+      meta download my_exported_data
+      meta download filtered.csv {{Length>500}}
+      meta download cluster_one.csv #cluster_1#
+      meta delete Organism Taxonomy
     """)
 
-def export_metadata_value(value):
-    """Keep whole numbers whole on export.
 
-    Numeric metadata is stored as float64, so a Length of 350 used to be
-    written back to the spreadsheet as 350.0.
-    """
-    if isinstance(value, (float, np.floating)) and float(value).is_integer():
-        return int(value)
-    return value
+def _is_expression(token):
+    """True when ``token`` is meant as a selection expression, not a filename."""
+    if not token or not any(marker in token for marker in _EXPRESSION_MARKERS):
+        return False
+    classification = Command_Engine.classify_selection_expression(token)
+    return (
+        classification.kind
+        is Command_Engine.SelectionClassificationKind.VALID_EXPRESSION
+    )
 
-def is_logic_expression(arg):
-    if any(c in arg for c in '{}#@&|!^"'):
-        return True
-    if arg.lower() == '$sele$':
-        return True
-    if re.match(r'^[a-zA-Z_][\d\.]+$', arg):
-        return True
-    return False
+
+def _resolve_upload_paths(viewer, tokens, meta_dir):
+    """Upstream's search order, per file: as given, in META_DIR, then extensions."""
+    file_paths = []
+    for token in tokens:
+        path = token.strip()
+        if os.path.exists(path):
+            file_paths.append(os.path.abspath(path))
+            continue
+
+        path_in_dir = os.path.join(meta_dir, path)
+        if os.path.exists(path_in_dir):
+            file_paths.append(os.path.abspath(path_in_dir))
+            continue
+
+        found = False
+        for ext in ['.xlsx', '.xls', '.csv']:
+            if os.path.exists(path + ext):
+                file_paths.append(os.path.abspath(path + ext))
+                found = True
+                break
+            elif os.path.exists(os.path.join(meta_dir, path + ext)):
+                file_paths.append(os.path.abspath(os.path.join(meta_dir, path + ext)))
+                found = True
+                break
+        if not found:
+            msg = (
+                f"Error: Metadata file '{path}' not found "
+                f"(checked absolute, relative, and {meta_dir})."
+            )
+            Command_Engine.print_help(viewer, msg)
+            Command_Engine.command_failed(viewer, msg)
+            return None
+    return file_paths
+
 
 def run(viewer, args):
-    meta_dir = getattr(cfg, 'METADATA_DIR', os.path.join("Cache_Files", "Meta_Data"))
+    meta_dir = getattr(cfg, 'METADATA_DIR', os.path.join("Input_Files", "Meta_Data"))
     os.makedirs(meta_dir, exist_ok=True)
 
-    if not args or args[0].lower() in ['help', '-h', '--help']:
+    # Upstream registers the sidebar button for the web spreadsheet here. There
+    # is nothing to register without a web server, and the viewer issues this
+    # at startup, so it succeeds quietly rather than reporting an error.
+    if args and args[0] == '--register-only':
+        Command_Engine.command_succeeded(
+            viewer, 'No metadata interface to register in the VR viewer.'
+        )
+        return
+
+    # Upstream opens the spreadsheet in a browser when called alone.
+    if not args:
         print_help(meta_dir)
         Command_Engine.command_succeeded(viewer, 'Help information printed to the terminal.')
         return
 
-    # 'meta display <property>' / 'meta show <property>' asks the desktop viewer
-    # to print a property beside the on-canvas status indicators when a node is
-    # clicked. There is no canvas and no click here, so the request is accepted
-    # and acknowledged rather than refused: 'spectrum' issues it automatically
-    # after every successful run, and treating it as a filename made a working
-    # spectrum end in "Could not find file 'display Length.xlsx'".
-    if args[0].lower() in ['show', 'display']:
+    first_arg = args[0].lower()
+
+    if first_arg in ['help', '-h', '--help']:
+        print_help(meta_dir)
+        if hasattr(viewer, 'console_text'):
+            viewer.console_text.text = "Help information printed to the terminal"
+        Command_Engine.command_succeeded(viewer, 'Help information printed to the terminal.')
+        return
+
+    # --- Delete metadata columns ---
+    if first_arg in ['delete', 'remove', 'clear']:
+        if len(args) < 2:
+            Command_Engine.command_failed(viewer, "Missing metadata command arguments")
+            Command_Engine.print_help(
+                viewer,
+                f"Usage: meta {first_arg} <property_name> [property_name ...]",
+            )
+            return
+        try:
+            deleted = delete_metadata_columns(viewer, args[1:], broadcast=False)
+        except MetadataColumnDeleteError as error:
+            Command_Engine.print_help(viewer, f"Error: {error}")
+            Command_Engine.command_failed(viewer, f'Error: {error}')
+            return
+        msg = "Deleted metadata columns: " + ", ".join(deleted) + "."
+        Command_Engine.print_help(viewer, msg)
+        Command_Engine.command_succeeded(viewer, msg)
+        return
+
+    # --- Display / show: accepted, but there is no HUD to show it on ---
+    if first_arg in ['display', 'show']:
         target = " ".join(args[1:]).strip()
-        if target.lower() in ('', 'clear', 'off'):
+        if not target:
+            Command_Engine.command_failed(viewer, "Missing metadata command arguments")
+            Command_Engine.print_help(
+                viewer, "Usage: meta show <property_name> OR meta show clear/off"
+            )
+            return
+        if target.lower() in ('clear', 'off'):
             msg = "Metadata display is not used in the VR viewer; nothing to clear."
         else:
             msg = (
                 f"Noted '{target}' for metadata display. The VR viewer has no "
                 "on-canvas HUD to show it on - the headset renders the network "
-                "and the terminal is the only text surface - so nothing "
-                "changes here. Use 'meta download <file>' to take the property "
-                "out, or open the layout in the desktop viewer to see it on "
-                "node click."
+                "and the terminal is the only text surface - so nothing changes "
+                "here. Use 'meta download <file>' to take the property out, or "
+                "open the layout in the desktop viewer to see it on node click."
             )
         Command_Engine.print_help(viewer, msg)
         Command_Engine.command_succeeded(viewer, msg)
         return
 
-    # --- 2. Resolve Directory & Path ---
-    is_download = False
-    filepath = None
-    filename = ""
-    expr = None
+    # --- Download ---
+    if first_arg in ['download', 'retrieve', 'export']:
+        rest = list(args[1:])
+        expr = None
+        if rest and _is_expression(rest[-1]):
+            expr = rest[-1]
+            rest = rest[:-1]
 
-    if args[0].lower() in ['retrieve', 'download', 'export']:
-        is_download = True
-        if len(args) < 2:
-            msg = "Error: Please specify a filename for downloading metadata (e.g., 'meta download data.xlsx')."
-            Command_Engine.print_help(viewer, msg)
-            return
-
-        # Check if filename or expression is provided
-        if len(args) >= 2:
-            if len(args) >= 3 and is_logic_expression(args[1]) and not is_logic_expression(args[-1]):
-                filename = args[-1]
-                expr = " ".join(args[1:-1]).strip()
-            elif is_logic_expression(args[1]):
-                # If only expression, filename is missing, print error
-                msg = "Error: Please specify a filename for downloading metadata (e.g., 'meta download data.xlsx expression')."
-                Command_Engine.print_help(viewer, msg)
-                return
-            else:
-                filename = args[1]
-                if len(args) >= 3:
-                    expr = " ".join(args[2:]).strip()
-
+        filename = " ".join(rest).strip()
         if filename:
             _, ext = os.path.splitext(filename)
             if not ext:
-                filename += ".xlsx"
-                ext = ".xlsx"
-            if os.path.isabs(filename) or "/" in filename or "\\" in filename:
-                filepath = filename
-            else:
-                filepath = os.path.join(meta_dir, filename)
-    else:
-        # Upload mode
-        files = sorted([f for f in os.listdir(meta_dir) if f.endswith('.xlsx') or f.endswith('.xls') or f.endswith('.csv')])
-        
-        if args[0].lower() == 'list':
-            if not files:
-                msg = f"No metadata files found in '{meta_dir}'."
-                Command_Engine.print_help(viewer, msg)
-                Command_Engine.command_succeeded(viewer, msg)
-                return
-            print("\nAvailable metadata files:")
-            print("=========================")
-            for i, file in enumerate(files, 1):
-                print(f"  {i: >2}. {file}")
-            print("\nTo upload a metadata file, type: meta <index> or meta <filename_query>")
-            Command_Engine.command_succeeded(
-                viewer, f"Listed {len(files)} metadata files in the terminal."
-            )
-            return
-
-        identifier = " ".join(args).strip()
-        selected_file = None
-        
-        if identifier.isdigit():
-            idx = int(identifier) - 1
-            if 0 <= idx < len(files):
-                selected_file = files[idx]
-            else:
-                msg = f"Error: Index '{identifier}' is out of range. Range is 1-{len(files)}."
-                Command_Engine.print_help(viewer, msg)
-                return
-        else:
-            matches = [f for f in files if identifier.lower() in f.lower()]
-            if not matches:
-                import fnmatch
-                matches = [f for f in files if fnmatch.fnmatch(f.lower(), identifier.lower())]
-                
-            if len(matches) == 1:
-                selected_file = matches[0]
-            elif len(matches) > 1:
-                print(f"\nMultiple matches found for '{identifier}':")
-                for f in matches:
-                    print(f"  - {f}")
-                msg = "Error: Ambiguous query. Please be more specific."
-                Command_Engine.print_help(viewer, msg)
-                return
-            else:
-                # Direct check
-                filename = identifier
-                _, ext = os.path.splitext(filename)
-                if not ext:
-                    filename += ".xlsx"
-                    ext = ".xlsx"
-                if os.path.isabs(filename) or "/" in filename or "\\" in filename:
-                    filepath = filename
-                else:
-                    filepath = os.path.join(meta_dir, filename)
-
-        if selected_file:
-            filename = selected_file
+                filename += ".csv"
             filepath = os.path.join(meta_dir, filename)
-        
-        _, ext = os.path.splitext(filename)
-
-    # --- 3. Execute Download Mode ---
-    if is_download:
-        if not getattr(viewer, 'metadata', None):
-            msg = "Error: No metadata available in the viewer to download."
-            Command_Engine.print_help(viewer, msg)
-            Command_Engine.command_failed(viewer, msg)
-            return
-
-        try:
-            mask = np.ones(viewer.n_nodes, dtype=bool)
-            if expr:
-                # The command line is whitespace-split, so {key op value} has to
-                # be re-tightened before the expression parser sees it.
-                expr_cleaned = re.sub(r'\{([^}]+)\}', lambda m: '{' + m.group(1).replace(' ', '') + '}', expr)
-
-                # $sele$ is understood natively now; it no longer has to be
-                # round-tripped through Input_Files/Header_Lists/_sele.txt,
-                # which clobbered that file as a side effect of an export.
-                viewer_to_aln, valid_indices = Command_Engine.get_alignment_mapping(viewer)
-
-                try:
-                    mask = Command_Engine.parse_advanced_expression(
-                        expr_cleaned,
-                        viewer_to_aln,
-                        valid_indices,
-                        viewer.full_headers,
-                        getattr(viewer, 'cluster_labels', None),
-                        getattr(viewer, 'group_labels', None),
-                        getattr(viewer, 'alignment', None),
-                        metadata=viewer.metadata,
-                        selection_mask=Command_Engine.get_selected_mask(viewer)
-                    )
-                except ValueError as error:
-                    Command_Engine.report_selection_error(
-                        viewer, expr, error, "Metadata export"
-                    )
-                    return
-
-                if np.sum(mask) == 0:
-                    msg = f"Error: No nodes matched the expression '{expr}'."
-                    Command_Engine.print_help(viewer, msg)
-                    Command_Engine.command_failed(viewer, msg)
-                    return
-
-            # Every property is exported, Length included: excluding it meant a
-            # downloaded sheet could not be re-uploaded without losing it.
-            prop_names = list(viewer.metadata.keys())
-            row_0 = [""] + prop_names
-            row_1 = [""] + [viewer.metadata[p]["type"] for p in prop_names]
-            
-            rows = [row_0, row_1]
-            for i in range(viewer.n_nodes):
-                if not mask[i]:
-                    continue
-                has_valid_prop = False
-                row_val = [viewer.full_headers[i]]
-                for p in prop_names:
-                    val = viewer.metadata[p]["values"][i]
-                    if viewer.metadata[p]["type"] == "number":
-                        if pd.notna(val):
-                            has_valid_prop = True
-                            row_val.append(export_metadata_value(val))
-                        else:
-                            row_val.append("")
-                    else:
-                        if val is not None and str(val).strip() != "":
-                            has_valid_prop = True
-                            row_val.append(val)
-                        else:
-                            row_val.append("")
-                
-                if has_valid_prop or expr:
-                    rows.append(row_val)
-
-            df = pd.DataFrame(rows)
-
-            if ext.lower() == ".csv":
-                df.to_csv(filepath, header=False, index=False)
-            else:
-                df.to_excel(filepath, header=False, index=False)
-
-            msg = f"Metadata successfully downloaded to {filepath}"
-            if expr:
-                msg += f" (filtered by: {expr})"
-            Command_Engine.print_help(viewer, msg)
-            Command_Engine.command_artifact(viewer, filepath)
-            Command_Engine.command_succeeded(viewer, msg)
-        except Exception as e:
-            msg = f"Error downloading metadata: {e}"
-            Command_Engine.print_help(viewer, msg)
-            Command_Engine.command_failed(viewer, msg)
-        return
-
-    # --- 4. Execute Upload Mode ---
-    if not filepath or not os.path.exists(filepath):
-        msg = f"Error: Could not find file '{filename}'."
-        Command_Engine.print_help(viewer, msg)
-        Command_Engine.command_failed(viewer, msg)
-        return
-
-    try:
-        if ext.lower() == ".csv":
-            df = pd.read_csv(filepath, header=None, dtype=str)
         else:
-            df = pd.read_excel(filepath, header=None)
+            base_name = "metadata"
+            ext = ".csv"
+            candidate = f"{base_name}{ext}"
+            filepath = os.path.join(meta_dir, candidate)
+            counter = 1
+            while os.path.exists(filepath):
+                candidate = f"{base_name}{counter}{ext}"
+                filepath = os.path.join(meta_dir, candidate)
+                counter += 1
+            filepath = os.path.abspath(filepath)
 
-        if df.shape[0] < 3 or df.shape[1] < 2:
-            msg = "Error: Invalid file format. Must contain at least sequence headers and one property column."
+        download_metadata(viewer, filepath, expr)
+        return
+
+    # --- Upload (the first argument is a filename unless it named a verb) ---
+    upload_args = list(args)
+    if first_arg in ['upload', 'import']:
+        upload_args = args[1:]
+        if not upload_args:
+            msg = "Error: Please specify a file path or filename to upload."
             Command_Engine.print_help(viewer, msg)
             Command_Engine.command_failed(viewer, msg)
             return
 
-        prop_names = []
-        valid_cols = []
-        for col_idx in range(1, df.shape[1]):
-            val = df.iloc[0, col_idx]
-            if pd.notna(val) and str(val).strip():
-                prop_names.append(str(val).strip())
-                valid_cols.append(col_idx)
+    file_paths = _resolve_upload_paths(viewer, upload_args, meta_dir)
+    if file_paths is None:
+        return
 
-        if not prop_names:
-            msg = "Error: No valid property names found in the first row."
-            Command_Engine.print_help(viewer, msg)
-            Command_Engine.command_failed(viewer, msg)
-            return
-
-        illegal_props = [p for p in prop_names if not re.match(r'^[a-zA-Z0-9_\-\.]+$', p)]
-        if illegal_props:
-            msg = (
-                f"Error: Property names {', '.join(repr(p) for p in illegal_props)} contain "
-                "illegal characters. Allowed characters are: letters, numbers, underscores (_), "
-                "hyphens (-), and periods (.)"
-            )
-            Command_Engine.print_help(viewer, msg)
-            Command_Engine.command_failed(viewer, msg)
-            return
-
-        prop_types = []
-        for col_idx in valid_cols:
-            val = df.iloc[1, col_idx]
-            if pd.notna(val) and str(val).strip():
-                t = str(val).strip().lower()
-                if t in ['number', 'num', 'numerical']:
-                    prop_types.append('number')
-                else:
-                    prop_types.append('text')
-            else:
-                prop_types.append('text')
-
-        header_to_idx = {h: idx for idx, h in enumerate(viewer.full_headers)}
-        node_updates = {}
-        matched_count = 0
-        unmatched_count = 0
-
-        for df_row_idx in range(2, df.shape[0]):
-            header_val = df.iloc[df_row_idx, 0]
-            if pd.isna(header_val):
-                unmatched_count += 1
-                continue
-            header_str = str(header_val).strip()
-            
-            if header_str in header_to_idx:
-                node_idx = header_to_idx[header_str]
-                node_updates[node_idx] = df_row_idx
-                matched_count += 1
-            else:
-                unmatched_count += 1
-
-        if matched_count == 0:
-            msg = "Error: No matching sequence headers found. Enforced strict exact matching against full headers."
-            Command_Engine.print_help(viewer, msg)
-            Command_Engine.command_failed(viewer, msg)
-            return
-
-        viewer._save_state()
-
-        for p_idx, prop_name in enumerate(prop_names):
-            prop_type = prop_types[p_idx]
-            col_idx = valid_cols[p_idx]
-
-            if prop_name not in viewer.metadata:
-                if prop_type == 'number':
-                    values = np.full(viewer.n_nodes, np.nan, dtype=np.float64)
-                else:
-                    values = np.full(viewer.n_nodes, "", dtype=object)
-                viewer.metadata[prop_name] = {
-                    "type": prop_type,
-                    "values": values
-                }
-            else:
-                old_type = viewer.metadata[prop_name]["type"]
-                viewer.metadata[prop_name]["type"] = prop_type
-                
-                if old_type != prop_type:
-                    old_vals = viewer.metadata[prop_name]["values"]
-                    if prop_type == 'number':
-                        new_vals = np.full(viewer.n_nodes, np.nan, dtype=np.float64)
-                        for i in range(viewer.n_nodes):
-                            try:
-                                if str(old_vals[i]).strip():
-                                    new_vals[i] = float(old_vals[i])
-                            except ValueError:
-                                pass
-                        viewer.metadata[prop_name]["values"] = new_vals
-                    else:
-                        new_vals = np.full(viewer.n_nodes, "", dtype=object)
-                        for i in range(viewer.n_nodes):
-                            if pd.notna(old_vals[i]):
-                                new_vals[i] = str(old_vals[i])
-                        viewer.metadata[prop_name]["values"] = new_vals
-
-            values_arr = viewer.metadata[prop_name]["values"]
-            for node_idx, df_row_idx in node_updates.items():
-                cell_val = df.iloc[df_row_idx, col_idx]
-                if pd.isna(cell_val) or str(cell_val).strip() == "" or str(cell_val).strip().lower() == "nan":
-                    continue
-                
-                if prop_type == 'number':
-                    try:
-                        values_arr[node_idx] = float(cell_val)
-                    except (ValueError, TypeError):
-                        pass
-                else:
-                    values_arr[node_idx] = str(cell_val)
-
-        # The session may not be bound to a cache file at all; os.path.exists
-        # used to raise TypeError on None *after* the merge had been applied.
-        cache_path, _ = utils.get_cache_filename()
-        if cache_path and os.path.exists(cache_path):
-            try:
-                with h5py.File(cache_path, "a") as hf:
-                    if "metadata" in hf:
-                        del hf["metadata"]
-                    meta_group = hf.create_group("metadata")
-                    for p_name, p_data in viewer.metadata.items():
-                        p_type = p_data["type"]
-                        vals = p_data["values"]
-                        if p_type == "number":
-                            ds = meta_group.create_dataset(p_name, data=vals, compression="gzip")
-                        else:
-                            dt_str = h5py.string_dtype(encoding='utf-8')
-                            ds = meta_group.create_dataset(p_name, data=np.array(vals, dtype=object), dtype=dt_str, compression="gzip")
-                        ds.attrs["type"] = p_type
-            except Exception as e:
-                print(f"Warning: Failed to write metadata to cache file: {e}")
-
-        msg = (
-            f"Successfully uploaded metadata: matched {matched_count} nodes, "
-            f"ignored {unmatched_count} rows. Merged {len(prop_names)} properties: "
-            f"{', '.join(prop_names)}."
-        )
-        Command_Engine.print_help(viewer, msg)
-        Command_Engine.command_succeeded(viewer, msg)
-
-    except Exception as e:
-        msg = f"Error uploading metadata: {e}"
-        Command_Engine.print_help(viewer, msg)
-        Command_Engine.command_failed(viewer, msg)
-        import traceback
-        traceback.print_exc()
+    upload_metadata(viewer, file_paths)

@@ -235,9 +235,17 @@ override needs a reason that survives being said out loud:
 | `print` | Upstream screen-grabs the canvas. A VR figure has to be rebuilt from the state arrays and projected onto a chosen plane, which is a different command. Disabled until that is designed. |
 | `alignment`, `run` | Upstream opens a Qt file dialog. Identical once the file is chosen; the path is an argument here. |
 | `export` | Upstream pops the system file manager through `desktop.Desktop_App`, which reaches PySide6. Otherwise a verbatim copy — keep it diffable. |
-| `meta` | Web spreadsheet UI. Still diverges beyond that; scheduled for the same treatment. |
+| `meta` | The web spreadsheet UI, and nothing else. Upload, download and column deletion are the main program's `Metadata_Core` functions, called directly. |
 
 Anything not on that list is served from `src/commands`, so it cannot drift.
+
+Where a command is overridden only because upstream's module reaches a toolkit,
+the fix is to move the toolkit-free part somewhere both front ends can import
+rather than to copy it. `src/Metadata_Core.py` in the parent checkout is that:
+the metadata data model used to sit in `web_ui/meta_backend.py` behind a
+module-level PySide6 import, so `meta` here could not upload, download or delete
+without duplicating some four hundred lines. `meta_backend` re-exports every
+name, so the desktop viewer is unchanged.
 
 ## Tests
 

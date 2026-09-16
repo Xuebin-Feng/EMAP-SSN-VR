@@ -30,6 +30,8 @@ import io
 import json
 import os
 import pathlib
+import shutil
+import importlib
 import subprocess
 import sys
 import tempfile
@@ -54,6 +56,7 @@ _NEUTRAL.close()
 os.environ["SSN_VIEWER_SETTINGS_PATH"] = _NEUTRAL.name
 
 import numpy as np  # noqa: E402
+import pandas as pd  # noqa: E402
 
 import _bootstrap_vr  # noqa: E402
 import Command_Engine  # noqa: E402
@@ -539,6 +542,94 @@ class DesktopParityTests(unittest.TestCase):
         # A label that does not exist is diagnosed, not silently skipped.
         self.assertIn("does not exist", run_command(viewer, "export #nope#"))
 
+
+class MetadataCommandTests(unittest.TestCase):
+    """`meta` runs the desktop viewer's own implementation, not a copy."""
+
+    def setUp(self):
+        self.folder = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.folder, True)
+        settings = importlib.import_module("Settings_VR")
+        self.original_dir = getattr(settings, "METADATA_DIR", None)
+        settings.METADATA_DIR = self.folder
+        if self.original_dir is not None:
+            self.addCleanup(setattr, settings, "METADATA_DIR", self.original_dir)
+
+        self.viewer = build_viewer()
+        self.viewer.cluster_labels = np.array([0] * 5 + [1] * 5 + [-1] * 2)
+        self.viewer.group_labels = [set() for _ in range(self.viewer.n_nodes)]
+
+        frame = pd.DataFrame(
+            [["", "Organism", "Score"], ["", "text", "number"]]
+            + [[h, f"E. coli {i}", 10 * i]
+               for i, h in enumerate(self.viewer.full_headers)]
+        )
+        self.sheet = os.path.join(self.folder, "extra.csv")
+        frame.to_csv(self.sheet, header=False, index=False)
+
+    def test_meta_uses_the_shared_implementation(self):
+        """Not a lookalike: the very objects the desktop command calls."""
+        import Metadata_Core
+
+        module = importlib.import_module("commands.meta")
+        self.assertIs(module.upload_metadata, Metadata_Core.upload_metadata)
+        self.assertIs(module.download_metadata, Metadata_Core.download_metadata)
+        self.assertIs(
+            module.delete_metadata_columns, Metadata_Core.delete_metadata_columns
+        )
+
+    def test_upload_accepts_absolute_relative_and_bare_names(self):
+        for spelling in (self.sheet, "extra.csv", "extra"):
+            with self.subTest(spelling=spelling):
+                viewer = build_viewer()
+                output = run_command(viewer, f"meta {spelling}")
+                self.assertIn("Successfully uploaded metadata", output)
+                self.assertIn("Organism", viewer.metadata)
+                self.assertIn("Score", viewer.metadata)
+
+    def test_upload_reports_a_missing_file_the_way_upstream_does(self):
+        output = run_command(self.viewer, "meta upload no_such_file.csv")
+        self.assertIn("not found (checked absolute, relative", output)
+
+    def test_download_auto_names_and_does_not_overwrite(self):
+        run_command(self.viewer, "meta extra.csv")
+        run_command(self.viewer, "meta download")
+        run_command(self.viewer, "meta download")
+        written = sorted(os.listdir(self.folder))
+        self.assertIn("metadata.csv", written)
+        self.assertIn("metadata1.csv", written)
+
+    def test_download_accepts_a_trailing_selection_expression(self):
+        """The filter is upstream's `expr` parameter, not a VR grammar."""
+        run_command(self.viewer, "meta extra.csv")
+        run_command(self.viewer, "meta download filtered.csv #cluster_1#")
+        rows = pd.read_csv(
+            os.path.join(self.folder, "filtered.csv"), header=None
+        )
+        # Two header rows, then only the five nodes in cluster 1.
+        self.assertEqual(len(rows) - 2, 5)
+
+    def test_a_filename_is_not_mistaken_for_an_expression(self):
+        run_command(self.viewer, "meta extra.csv")
+        run_command(self.viewer, "meta download plain_name.csv")
+        self.assertIn("plain_name.csv", os.listdir(self.folder))
+
+    def test_delete_matches_upstream_rules(self):
+        run_command(self.viewer, "meta extra.csv")
+        # Case-insensitive resolution.
+        self.assertIn("Deleted metadata columns", run_command(self.viewer, "meta delete organism"))
+        self.assertNotIn("Organism", self.viewer.metadata)
+        # Upstream refuses these two outright.
+        self.assertIn("not found: Nope", run_command(self.viewer, "meta delete Nope"))
+        self.assertIn(
+            "Deleting all metadata columns at once is not supported",
+            run_command(self.viewer, "meta delete all"),
+        )
+
+    def test_display_is_still_an_acknowledged_no_op(self):
+        output = run_command(self.viewer, "meta display Length")
+        self.assertIn("no on-canvas HUD", output)
+        self.assertNotIn("Could not find file", output)
 
 class DisabledCommandTests(unittest.TestCase):
     """Commands that refuse must refuse cleanly, not half-run."""
