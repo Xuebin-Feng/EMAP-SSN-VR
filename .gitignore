@@ -198,3 +198,11 @@ viewer_settings_vr.json
 # parent project ignores its own Cache_Files/ identically.
 Cache_Files/
 VR_Test/
+
+# Microsoft debug C runtime DLLs are not redistributable. Unity copies
+# ucrtbased.dll from Valve's OpenVR Unity XR package into every Windows player
+# build, and nothing in the player loads it.
+ucrtbased.dll
+vcruntime140d.dll
+vcruntime140_1d.dll
+msvcp140d.dll

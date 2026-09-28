@@ -365,4 +365,8 @@ Until then, reading the build is what keeps the two ends from drifting.
 
 ## Licence
 
-Apache License 2.0 — see [LICENSE](LICENSE).
+Apache License 2.0 — see [LICENSE](LICENSE). This covers the project's own
+code. The prebuilt player in `unity/` also contains third-party components
+under their own terms: see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md),
+and [END_USER_NOTICE.md](END_USER_NOTICE.md) for the terms that apply to
+using the player.
