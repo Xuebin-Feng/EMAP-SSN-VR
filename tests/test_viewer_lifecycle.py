@@ -13,10 +13,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Tests for the VR viewer's lifecycle: one instance, and following Unity out.
+"""Tests for the VR viewer's lifecycle: one instance, and following the client out.
 
-Two viewers cannot usefully coexist - they drive the same Unity client through
-an endpoint compiled into its build - so the second one has to refuse rather
+Two viewers cannot usefully coexist - they drive the same headset, and by
+default through the same endpoint - so the second one has to refuse rather
 than race the first for the port. And because the viewer exists to serve the
 headset, it follows the client out by default, with a control to keep it alive
 for debugging.
@@ -114,12 +114,12 @@ class SingleInstanceTests(unittest.TestCase):
         self.assertNotIn("Loading layout cache", result.stdout)
 
 
-class ExitWithUnityTests(unittest.TestCase):
+class ExitWithClientTests(unittest.TestCase):
     def setUp(self):
         self._saved = getattr(cfg, "EXIT_WITH_UNITY", None)
         self.addCleanup(setattr, cfg, "EXIT_WITH_UNITY", self._saved)
 
-    def test_the_viewer_follows_unity_out_by_default(self):
+    def test_the_viewer_follows_the_client_out_by_default(self):
         self.assertIs(cfg.VR_DEFAULTS["EXIT_WITH_UNITY"], True)
         del cfg.EXIT_WITH_UNITY
         self.addCleanup(setattr, cfg, "EXIT_WITH_UNITY", self._saved)
@@ -149,7 +149,7 @@ class ExitWithUnityTests(unittest.TestCase):
                 self.addCleanup(client.close)
                 self.addCleanup(peer.close)
                 # A real EOF from the peer drives client_reader_loop and the
-                # production server's disconnect path, without a Unity app.
+                # production server's disconnect path, without a VR client.
                 peer.shutdown(socket.SHUT_WR)
                 state = SimpleNamespace(
                     running=True, is_connected=False,
@@ -199,7 +199,8 @@ class PortOwnershipTests(unittest.TestCase):
     def test_a_busy_port_is_explained(self):
         source = self.viewer_source()
         self.assertIn("Could not listen on", source)
-        self.assertIn("rebuild the client to match", source)
+        # The viewer tells the client the port, so any free one works.
+        self.assertIn("choose another VR Client Port", source)
 
 
 if __name__ == "__main__":

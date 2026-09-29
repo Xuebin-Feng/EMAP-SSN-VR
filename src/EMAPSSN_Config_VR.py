@@ -24,7 +24,7 @@ import _bootstrap_vr
 
 if __name__ == "__main__":
     # Windows-only, like every other VR entry point: Save & Run hands off
-    # to a viewer that drives the Windows Unity build in unity/.
+    # to a viewer that drives the Windows VR client in player/.
     _bootstrap_vr.require_windows("The EMAP-SSN VR Configuration GUI")
 
 if __name__ == "__main__" and "--headless" in sys.argv:
@@ -51,7 +51,7 @@ from desktop.Desktop_App import (
     configure_linux_qt_desktop_identity,
 )
 from Layout_Cache_Generator import LayoutGenerationSettings
-import Unity_Build_VR
+import Player_Build_VR
 from desktop.Viewer_State import (
     INPUT_PROFILE_DEFAULTS, VISUAL_PROFILE_DEFAULTS, PHYSICS_PROFILE_DEFAULTS, DIRECTORY_PROFILE_DEFAULTS, LEGACY_DEFAULT_DIRECTORY_PATHS, PROFILE_ENUM_VALUES, PROFILE_RANGES
 )
@@ -79,23 +79,23 @@ def application_icon_path():
     return None
 
 
-#: The Unity connection tooltip. The endpoint cannot be negotiated - the client
-#: dials before Python has any way to tell it where to dial - so the GUI reads
-#: it out of the build and reports whether the two ends agree.
-BRIDGE_NOTE_UNREADABLE = (
-    "Unity Host and Unity Port are where this program listens. The client "
-    "dials an address compiled into its own scene; no address could be read "
-    "out of the selected build, so the two have to be matched by hand."
+#: The VR client connection tooltip. The viewer passes VR Client Host and
+#: Port to the client it launches, so the two ends always agree; the endpoint
+#: recorded in the build is only where a client started by hand dials.
+BRIDGE_NOTE_MISSING = (
+    "No VR client is installed in this folder (vr_client.json is missing or "
+    "unreadable). Run install_vr.bat to download it into player/, or choose "
+    "the folder that holds EMAP-SSN-VR.exe."
 )
 
 VR_CONTROL_TIPS = {
-    "VR_APP_DIR": "Unity Build: Folder containing the Unity application. Relative paths start in opt_vr.\nThe build is parsed on every GUI launch and when the build or profile changes. A readable endpoint fills and locks Unity Host and Unity Port; otherwise they can be entered manually.",
-    "VR_HOST": "Unity Host: Local address where the Python viewer listens for Unity.\nThis must match the address compiled into the selected Unity build.",
-    "VR_PORT": "Unity Port: TCP port where the Python viewer listens for Unity (1–65535).\nThis must match the port compiled into the selected Unity build.",
-    "ENABLE_EDGE_FILTERING": "Limit Rendered Edges: ON caps the edges sent to Unity at Max Edges; OFF sends all retained edges.\nReducing the rendered edges can improve VR performance.",
-    "MAX_RENDER_EDGES": "Max Edges: Maximum number of edges sent to Unity when Limit Rendered Edges is ON.\nAbove this limit, the viewer samples edges with a preference for weaker connections. Zero sends no edges.",
-    "DISTANCE_SCALE": "Distance Scale: Saved distance-scale value.\nThe current VR viewer starts at 1.0 and accepts scale updates from Unity; it does not yet apply this saved value at startup.",
-    "EXIT_WITH_UNITY": "Quit with Unity: ON closes the Python viewer when the Unity app closes.\nOFF keeps the viewer and its command console running for debugging.",
+    "VR_APP_DIR": "VR Client Build: Folder containing the VR client (EMAP-SSN-VR.exe). Relative paths start in opt_vr.\ninstall_vr.bat installs the client in player/.",
+    "VR_HOST": "VR Client Host: Local address where the Python viewer listens for the VR client.\nSave & Run passes it to the client it starts.",
+    "VR_PORT": "VR Client Port: TCP port where the Python viewer listens for the VR client (1–65535).\nSave & Run passes it to the client it starts.",
+    "ENABLE_EDGE_FILTERING": "Limit Rendered Edges: ON caps the edges sent to the VR client at Max Edges; OFF sends all retained edges.\nReducing the rendered edges can improve VR performance.",
+    "MAX_RENDER_EDGES": "Max Edges: Maximum number of edges sent to the VR client when Limit Rendered Edges is ON.\nAbove this limit, the viewer samples edges with a preference for weaker connections. Zero sends no edges.",
+    "DISTANCE_SCALE": "Distance Scale: Saved distance-scale value.\nThe current VR viewer starts at 1.0 and accepts scale updates from the VR client; it does not yet apply this saved value at startup.",
+    "EXIT_WITH_UNITY": "Quit with VR Client: ON closes the Python viewer when the VR client closes.\nOFF keeps the viewer and its command console running for debugging.",
 }
 
 
@@ -116,22 +116,17 @@ def style_toggle_switch(button, checked):
 
 
 def bridge_note_text(endpoint, host, port):
-    """Say whether the build and the fields name the same endpoint."""
+    """Describe the selected client and the endpoint Save & Run gives it."""
     if endpoint is None:
-        return BRIDGE_NOTE_UNREADABLE, False
+        return BRIDGE_NOTE_MISSING
     build_host, build_port = endpoint
-    if (host, port) == (build_host, build_port):
-        return (
-            f"This build dials {build_host}:{build_port}, which is where "
-            "Unity Host and Unity Port listen.",
-            False,
+    note = f"Save & Run starts this VR client dialling {host}:{port}."
+    if (host, port) != (build_host, build_port):
+        note += (
+            f" Started by hand, it dials its default {build_host}:{build_port} "
+            "instead."
         )
-    return (
-        f"This build dials {build_host}:{build_port}, but Unity Host and Unity "
-        f"Port listen on {host}:{port}. The client will never connect. Change "
-        "the fields to match the build, or rebuild the client.",
-        True,
-    )
+    return note
 
 
 #: Layout dimensionality is fixed: the VR viewer has no 2D mode, exactly as
@@ -270,7 +265,7 @@ DIRECTORY_DISPLAY_NAMES = {
     "SETTING_EXPORT_DIR": "Setting Export Directory",
 }
 
-#: Settings that belong to the Python/Unity bridge. The desktop program has no
+#: Settings that belong to the Python/VR client bridge. The desktop program has no
 #: equivalent, so they are declared here rather than in the shared schema.
 VR_PROFILE_DEFAULTS = {
     "VR_HOST": "127.0.0.1",
@@ -281,20 +276,21 @@ VR_PROFILE_DEFAULTS = {
     # it would silently lose whatever the user picked.
     "ENABLE_EDGE_FILTERING": True,
     "MAX_RENDER_EDGES": 500000,
-    "VR_APP_DIR": "unity",
+    "VR_APP_DIR": Player_Build_VR.DEFAULT_CLIENT_DIR,
+    # Named for the Unity client; saved settings and profiles use the key.
     "EXIT_WITH_UNITY": True,
 }
 
 for _vr_key, _vr_value in VR_PROFILE_DEFAULTS.items():
     globals().setdefault(_vr_key, _vr_value)
 
-#: Settings the desktop viewer draws but the Unity client does not. Keeping a
+#: Settings the desktop viewer draws but the VR client does not. Keeping a
 #: control for them would invite tuning something with no effect: nothing in
 #: the VR runtime reads any of these, and no shared command does either.
 UNUSED_IN_VR = frozenset({
     "TEXT_SIZE",          # no HUD text is rendered in the headset
     "TEXT_COLOR",         # ditto
-    "LOW_RESOURCE_MODE",  # a VisPy canvas optimisation; Unity does the drawing
+    "LOW_RESOURCE_MODE",  # a VisPy canvas optimisation; the VR client draws
     "PACKING_GEOMETRY",   # 3D packs onto spherical shells, ignoring Square/Circle
 })
 
@@ -510,6 +506,8 @@ def apply_viewer_settings(settings_dict):
             v = _migrate_saved_config_dir(v)
         if k in DIRECTORY_PROFILE_DEFAULTS:
             v = _migrate_default_directory_path(k, v)
+        if k == "VR_APP_DIR":
+            v = Player_Build_VR.migrate_client_dir(v)
         if k in globals() and v is not None and (str(v).strip() != "" or k in ["MSA_FILE", "ALIGNMENT_REFERENCE"]):
             orig = globals()[k]
             if isinstance(orig, int) and not isinstance(orig, bool):
@@ -625,7 +623,7 @@ def _create_viewer_settings_snapshot(settings):
     """Write one private settings file for a single Viewer process."""
     from desktop.Viewer_State import DEFAULTS
     # This private VR snapshot uses the same flat mapping as the VR settings
-    # file. The desktop encoder silently omits every Unity-specific setting.
+    # file. The desktop encoder silently omits every VR-specific setting.
     settings = {**DEFAULTS, **VR_PROFILE_DEFAULTS, **settings}
     descriptor, path = tempfile.mkstemp(prefix="ssn_viewer_", suffix=".json")
     try:
@@ -734,7 +732,7 @@ if __name__ == "__main__":
         qt_monospace_font,
         show_window_in_front,
     )
-    from PySide6.QtCore import Qt, QUrl, QThread, Signal, QSignalBlocker
+    from PySide6.QtCore import Qt, QUrl, QThread, Signal
     from PySide6.QtGui import (
         QColor,
         QDesktopServices,
@@ -1331,6 +1329,8 @@ if __name__ == "__main__":
                 value = raw_data[key]
                 if tab_id == "directories":
                     value = _migrate_default_directory_path(key, value)
+                if key == "VR_APP_DIR":
+                    value = Player_Build_VR.migrate_client_dir(value)
                 default = defaults[key]
                 try:
                     if default is None:
@@ -1452,8 +1452,8 @@ if __name__ == "__main__":
                 self.update_norm_mode_options()
             self._set_profile_content_enabled(tab_id, not read_only)
             if tab_id == "visual_effects":
-                # Resolve after all profile values have been applied: a saved
-                # endpoint must not overwrite the selected build's endpoint.
+                # Describe the client once every profile value is in place,
+                # so the note names the loaded folder and endpoint together.
                 self._refresh_bridge_endpoint_note()
             if hasattr(self, "update_live_validators"):
                 self.update_live_validators()
@@ -3124,7 +3124,7 @@ if __name__ == "__main__":
             # 2. Colors Setup
             # TEXT_COLOR is gone with the HUD text it coloured. INITIAL_NODE_COLOR
             # stays: Settings_VR republishes it as NEIGHBOR_COLOR, which is the key
-            # the Unity client actually reads.
+            # the VR client actually reads.
             color_keys = ["INITIAL_NODE_COLOR", "HOVER_COLOR", "CONNECTED_NODE_COLOR", "EDGE_COLOR", "NODE_BOUNDARY_COLOR"]
             self.visual_defaults = VISUAL_PROFILE_DEFAULTS
 
@@ -3187,7 +3187,7 @@ if __name__ == "__main__":
             # --- Low Resource Mode Toggle ---
             main_layout.addLayout(self._responsive_grid_rows(visual_grid, "visual"))
 
-            # --- Unity bridge -------------------------------------------------
+            # --- VR client bridge -------------------------------------------
             # These have no desktop counterpart, but they are display settings
             # like the ones above, so they live here rather than on a tab of
             # their own.
@@ -3558,13 +3558,13 @@ if __name__ == "__main__":
             self._add_scroll_tab(tab, "Simulation && Physics")
             
         def _build_lifecycle_field(self):
-            """Whether the viewer follows the Unity client out when it closes."""
+            """Whether the viewer follows the VR client out when it closes."""
             content = QWidget()
             row = QHBoxLayout(content)
             row.setContentsMargins(0, 0, 0, 0)
             row.setSpacing(CONFIG_FIELD_HORIZONTAL_SPACING)
 
-            label = QLabel("Quit with Unity:")
+            label = QLabel("Quit with VR Client:")
             toggle = QPushButton()
             toggle.setCheckable(True)
             toggle.setFixedSize(60, 28)
@@ -3584,7 +3584,7 @@ if __name__ == "__main__":
             return content
 
         def _build_bridge_fields(self):
-            """Two equal halves with shared columns across the Unity rows."""
+            """Two equal halves with shared columns across the VR client rows."""
             content = QWidget()
             content.setObjectName("vrBridgeFields")
             layout = QHBoxLayout(content)
@@ -3613,17 +3613,17 @@ if __name__ == "__main__":
                 return label
 
             # --- Row 1: which build, and where it connects --------------------
-            app_dir = QLineEdit(str(globals().get("VR_APP_DIR", "unity")))
+            app_dir = QLineEdit(str(globals().get("VR_APP_DIR", Player_Build_VR.DEFAULT_CLIENT_DIR)))
             browse = QPushButton("Browse")
             browse.setToolTip(VR_CONTROL_TIPS["VR_APP_DIR"])
-            self._unity_browse_button = browse
+            self._client_browse_button = browse
 
             def choose_app_dir(_checked=False, field=app_dir):
                 start = field.text().strip() or str(PROJECT_ROOT)
                 if not os.path.isabs(start):
                     start = os.path.join(str(PROJECT_ROOT), start)
                 chosen = QFileDialog.getExistingDirectory(
-                    self, "Unity Build Directory", start
+                    self, "VR Client Build Directory", start
                 )
                 if chosen:
                     try:
@@ -3632,7 +3632,7 @@ if __name__ == "__main__":
                         relative = chosen
                     field.setText(chosen if relative.startswith("..") else relative)
                     # Also re-read when the same folder is selected again;
-                    # its build may have been replaced since the last parse.
+                    # its client may have been replaced since the last read.
                     refresh_endpoint_note()
 
             browse.clicked.connect(choose_app_dir)
@@ -3643,13 +3643,13 @@ if __name__ == "__main__":
             port.setRange(1, 65535)
             port.setValue(int(globals().get("VR_PORT", 5005) or 5005))
 
-            build_label = label_for("VR_APP_DIR", "Unity Build:", app_dir)
+            build_label = label_for("VR_APP_DIR", "VR Client Build:", app_dir)
             build_label.setFixedWidth(CONFIG_FIELD_LABEL_WIDTH)
             left.addWidget(build_label, 0, 0)
             left.addWidget(app_dir, 0, 1, 1, 3)
             left.addWidget(browse, 0, 4)
-            host_label = label_for("VR_HOST", "Unity Host:", host)
-            port_label = label_for("VR_PORT", "Unity Port:", port)
+            host_label = label_for("VR_HOST", "VR Client Host:", host)
+            port_label = label_for("VR_PORT", "VR Client Port:", port)
             right.addWidget(host_label, 0, 0)
             right.addWidget(host, 0, 1)
             right.addWidget(port_label, 0, 2)
@@ -3686,7 +3686,9 @@ if __name__ == "__main__":
             left.addWidget(budget, 1, 3, 1, 2)
             scale_label = label_for("DISTANCE_SCALE", "Distance Scale:", scale)
             # Matching label widths keep the endpoint groups equal-sized.
-            right_label_width = scale_label.sizeHint().width()
+            right_label_width = max(
+                label.sizeHint().width() for label in (host_label, port_label, scale_label)
+            )
             for label in (host_label, port_label, scale_label):
                 label.setFixedWidth(right_label_width)
             right.addWidget(scale_label, 1, 0)
@@ -3710,7 +3712,7 @@ if __name__ == "__main__":
             gate_budget(initial_filtering)
 
             def refresh_endpoint_note():
-                """Use the build's endpoint when readable; allow manual fallback."""
+                """Describe the selected client; Host and Port stay the user's."""
                 if self._profile_loading:
                     return
                 value = app_dir.text().strip()
@@ -3720,33 +3722,17 @@ if __name__ == "__main__":
                     else os.path.join(str(PROJECT_ROOT), value)
                 ) if value else ""
                 try:
-                    endpoint = Unity_Build_VR.read_endpoint(build_dir)
+                    endpoint = Player_Build_VR.read_endpoint(build_dir)
                 except OSError:
                     endpoint = None
-                parsed = endpoint is not None
-                if parsed:
-                    # Updating both fields atomically avoids recursive parsing
-                    # through their textChanged/valueChanged signals.
-                    with QSignalBlocker(host), QSignalBlocker(port):
-                        host.setText(endpoint[0])
-                        port.setValue(endpoint[1])
-                for key in ("VR_HOST", "VR_PORT"):
-                    self.inputs[key].setEnabled(not parsed)
-                    self.labels[key].setEnabled(not parsed)
-                self._bridge_endpoint_parsed = parsed
-                text, warning = bridge_note_text(
+                self._bridge_client_found = endpoint is not None
+                text = bridge_note_text(
                     endpoint,
                     host.text().strip(),
                     int(port.value()),
                 )
-                status = (
-                    "Parsing succeeded. Unity Host and Unity Port are filled from the build and locked."
-                    if parsed else
-                    "Parsing failed: no unique endpoint could be read. Unity Host and Unity Port can be entered manually in an editable profile."
-                )
-                self._bridge_endpoint_warning = warning
                 for key in ("VR_APP_DIR", "VR_HOST", "VR_PORT"):
-                    tip = VR_CONTROL_TIPS[key] + "\n" + status + "\n" + text
+                    tip = VR_CONTROL_TIPS[key] + "\n" + text
                     targets = [self.inputs[key], self.labels[key]]
                     if key == "VR_APP_DIR":
                         targets.append(browse)

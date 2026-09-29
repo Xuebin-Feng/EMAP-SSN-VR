@@ -15,12 +15,11 @@
 
 """Let only one VR viewer run at a time.
 
-Two viewers cannot usefully coexist. They drive the same headset through the
-same Unity client, and they listen on the same endpoint - which the client
-dials by an address compiled into its build, so it cannot be told to reach the
-other one. A second viewer therefore does not give you a second view; it gives
-you two processes fighting over one client, with whichever won the bind
-receiving the connection.
+Two viewers cannot usefully coexist. They drive the same headset, and the
+OpenXR runtime gives it to one application at a time; with the default
+settings they also listen on the same endpoint. A second viewer therefore
+does not give you a second view; it gives you two processes fighting over
+one headset, with whichever won the bind receiving the connection.
 
 The desktop program takes the opposite position deliberately: its Config and
 Tools windows guard themselves with Qt's ``SingleInstanceController``, and its
@@ -51,7 +50,7 @@ _ERROR_ALREADY_EXISTS = 183
 
 BUSY_MESSAGE = (
     "Another EMAP-SSN VR viewer is already running.\n"
-    "Only one can run at a time: both would drive the same Unity client and "
+    "Only one can run at a time: both would drive the same headset and "
     "listen on the same endpoint.\n"
     "Close the other viewer, then start this one again."
 )

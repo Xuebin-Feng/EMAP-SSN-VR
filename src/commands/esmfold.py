@@ -39,7 +39,8 @@ Why:
   Folding is driven through the Viewer web server: the background worker
   reports progress back to a /api/action URL, and the predicted structure is
   displayed in the Mol* viewer in a browser tab. The VR viewer is headless -
-  no web server, no browser, and no channel to Unity for 3D structures - and
+  no web server, no browser, and no channel to the VR client for 3D
+  structures - and
   the web UI is out of scope for this port.
 
 What to use instead:

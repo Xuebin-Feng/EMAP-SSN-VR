@@ -74,7 +74,7 @@ def for_name():
 
 
 def build_viewer(n_nodes=12, seed=0):
-    """A populated HeadlessViewer, with no socket and no Unity process."""
+    """A populated HeadlessViewer, with no socket and no VR client process."""
     rng = np.random.default_rng(seed)
     headers = [f"sp|P{index:05d}|PROT{index}_TEST" for index in range(n_nodes)]
     full_headers = [f"{h} Test protein {i}" for i, h in enumerate(headers)]
@@ -223,7 +223,7 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(cfg._coerce("TOP_EDGE_PERCENT", "5.0"), 5.0)
 
     def test_renamed_upstream_key_is_republished(self):
-        """The VR code and Unity client still use NEIGHBOR_COLOR."""
+        """The VR code and the VR client still use NEIGHBOR_COLOR."""
         self.assertIn("NEIGHBOR_COLOR", cfg.LEGACY_KEY_SOURCES)
         self.assertEqual(cfg.LEGACY_KEY_SOURCES["NEIGHBOR_COLOR"], "INITIAL_NODE_COLOR")
 
@@ -481,8 +481,8 @@ class DesktopParityTests(unittest.TestCase):
         self.assertEqual(red.tolist(), [0, 1, 2, 3, 4])
         self.assertEqual(sorted(set(viewer.current_sizes.tolist())), [10.0, 20.0])
 
-    def test_shapes_are_recorded_but_never_reach_unity(self):
-        """Unity has no shape vocabulary, so a shape must be visually inert.
+    def test_shapes_are_recorded_but_never_reach_the_client(self):
+        """The VR client has no shape vocabulary, so a shape must be visually inert.
 
         The desktop grammar is accepted in full - refusing `triangle` would
         make the same script behave differently in the two front ends - but
@@ -505,7 +505,7 @@ class DesktopParityTests(unittest.TestCase):
         self.assertEqual(
             sorted(packet),
             ["colors", "globalSettings", "sizes", "transformState", "visible"],
-            "update_nodes() grew a field the Unity client cannot render",
+            "update_nodes() grew a field the VR client cannot render",
         )
 
     def test_promote_nodes_tracks_render_order_without_a_renderer(self):
@@ -687,7 +687,7 @@ class LayoutCacheConsumerTests(unittest.TestCase):
             self.assertEqual(loaded_headers, headers)
 
     def test_two_dimensional_cache_is_lifted_to_the_z_plane(self):
-        """Unity needs three floats per node, so a 2D cache must not crash."""
+        """The VR client needs three floats per node, so a 2D cache must not crash."""
         with tempfile.TemporaryDirectory() as folder:
             path = os.path.join(folder, "version_00.h5")
             self._write_cache(path, 2)
@@ -704,7 +704,7 @@ class LayoutCacheConsumerTests(unittest.TestCase):
             self.assertTrue(np.all(positions[:, 2] == 0.0))
             self.assertIn("2D layout cache", buffer.getvalue())
 
-    def test_positions_serialise_to_the_unity_payload_size(self):
+    def test_positions_serialise_to_the_client_payload_size(self):
         viewer = build_viewer(n_nodes=7)
         payload = viewer.pos.astype("<f4").tobytes()
         self.assertEqual(len(payload), 12 * viewer.n_nodes)
@@ -868,7 +868,7 @@ class ViewerStateTests(unittest.TestCase):
         self.assertTrue(hasattr(viewer, "pos"))
         self.assertEqual(viewer.pos.shape[1], 3)
 
-    def test_terminal_run_flag_is_independent_of_the_unity_connection(self):
+    def test_terminal_run_flag_is_independent_of_the_client_connection(self):
         viewer = build_viewer()
         self.assertTrue(viewer.running)
         self.assertFalse(getattr(viewer, "is_connected", False))

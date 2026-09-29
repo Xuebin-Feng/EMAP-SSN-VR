@@ -18,7 +18,7 @@
 ``EMAPSSN_Config_VR.py`` is a copy of the main program's Config GUI, rebased onto the
 submodule. These tests pin the handful of things that copy had to change -
 where settings are stored, which viewer is launched, that layouts are always
-three dimensional, and that the Unity bridge settings exist - rather than
+three dimensional, and that the VR client bridge settings exist - rather than
 re-testing the GUI behaviour the main program already covers.
 
 The window is built in a subprocess on the offscreen platform. That is not
@@ -31,6 +31,7 @@ repository's own offscreen config test does.
 
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -125,12 +126,12 @@ class ConfigWindowTests(unittest.TestCase):
              "Directories"],
         )
 
-    def test_unity_bridge_settings_exist(self):
+    def test_client_bridge_settings_exist(self):
         for key in ("VR_HOST", "VR_PORT", "DISTANCE_SCALE",
                     "ENABLE_EDGE_FILTERING", "MAX_RENDER_EDGES", "VR_APP_DIR"):
             self.assertIn(key, self.report["inputs"], key)
 
-    def test_settings_the_unity_client_ignores_are_gone(self):
+    def test_settings_the_client_ignores_are_gone(self):
         """A control with no effect is worse than no control."""
         for key in ("TEXT_SIZE", "TEXT_COLOR", "LOW_RESOURCE_MODE"):
             self.assertNotIn(key, self.report["inputs"], key)
@@ -341,7 +342,7 @@ class VRSettingsSourceTests(unittest.TestCase):
             "SAVED_LAYOUT_DIR": r"$cache_file$\Saved_Layouts",
             "INPUT_FILE_DIR": "Input_Files",
             "ANALYSIS_RESULT_DIR": "Analysis_Results",
-            "VR_APP_DIR": "unity",
+            "VR_APP_DIR": "player",
         }
         values = self._settings_from(relative)
         for key in relative:
@@ -391,15 +392,24 @@ class VRSettingsSourceTests(unittest.TestCase):
         self.assertEqual(Settings_VR.VR_DEFAULTS["LAYOUT_DIMENSIONS"], 3)
 
 
-class UnityEndpointTests(unittest.TestCase):
-    """The GUI reads the endpoint out of the build instead of asking for it.
+class ClientEndpointTests(unittest.TestCase):
+    """The GUI describes the selected client; Host and Port stay the user's.
 
-    Every case drives the build path and the fields explicitly. Reading the
-    live settings file would make these describe whichever build the user last
-    selected rather than the behaviour.
+    The viewer passes VR Client Host and Port to the client it launches, so the
+    fields are never locked to the endpoint the build records: that is only
+    where a client started by hand dials. Every case drives the folder and the
+    fields explicitly. Reading the live settings file would make these describe
+    whichever folder the user last chose rather than the behaviour.
     """
 
-    SHIPPED_BUILD = os.path.join(OPT_VR, "unity")
+    def client_folder(self, host="127.0.0.1", port=5005):
+        """A throwaway client folder whose vr_client.json names host:port."""
+        folder = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, folder, ignore_errors=True)
+        with open(os.path.join(folder, "vr_client.json"), "w", encoding="utf-8") as handle:
+            json.dump({"client": "EMAP-SSN-VR Godot client", "version": "0.1.0",
+                       "protocol": 1, "host": host, "port": port}, handle)
+        return folder
 
     def note_for(self, build_dir, host="127.0.0.1", port=5005):
         return report_from(
@@ -409,7 +419,7 @@ class UnityEndpointTests(unittest.TestCase):
             window.inputs["VR_PORT"].setValue({port!r})
             print("@@" + json.dumps({{
                 "text": window.inputs["VR_APP_DIR"].toolTip(),
-                "warning": window._bridge_endpoint_warning,
+                "found": window._bridge_client_found,
                 "host": window.inputs["VR_HOST"].text(),
                 "port": window.inputs["VR_PORT"].value(),
                 "editable": [window.inputs[key].isEnabled() for key in ("VR_HOST", "VR_PORT")],
@@ -423,49 +433,33 @@ class UnityEndpointTests(unittest.TestCase):
             """
             decide = namespace["bridge_note_text"]
             print("@@" + json.dumps({
-                "unknown": decide(None, "127.0.0.1", 5005),
+                "missing": decide(None, "127.0.0.1", 5005),
                 "match": decide(("127.0.0.1", 5005), "127.0.0.1", 5005),
-                "host_differs": decide(("127.0.0.1", 5005), "10.0.0.5", 5005),
-                "port_differs": decide(("127.0.0.1", 5005), "127.0.0.1", 6000),
+                "differs": decide(("127.0.0.1", 5005), "127.0.0.1", 6000),
             }))
             """
         )
-        self.assertFalse(report["unknown"][1], "an unreadable build is not an error")
-        self.assertFalse(report["match"][1])
-        for key in ("host_differs", "port_differs"):
-            with self.subTest(case=key):
-                text, warning = report[key]
-                self.assertTrue(warning)
-                self.assertIn("127.0.0.1:5005", text, "must name what the build dials")
-                self.assertIn("never connect", text)
+        self.assertIn("install_vr.bat", report["missing"])
+        self.assertIn("127.0.0.1:5005", report["match"])
+        self.assertNotIn("by hand", report["match"])
+        self.assertIn("127.0.0.1:6000", report["differs"], "must name what Save & Run passes")
+        self.assertIn("127.0.0.1:5005", report["differs"], "must name the build's own default")
 
-    @unittest.skipUnless(
-        os.path.isdir(os.path.join(OPT_VR, "unity")), "unity/ is not checked out"
-    )
-    def test_agreement_with_the_shipped_build_is_reported(self):
-        report = self.note_for(self.SHIPPED_BUILD)
+    def test_a_client_never_overrides_or_locks_the_fields(self):
+        report = self.note_for(self.client_folder(port=5005), port=6000)
+        self.assertTrue(report["found"])
+        self.assertEqual((report["host"], report["port"]), ("127.0.0.1", 6000))
+        self.assertEqual(report["editable"], [True, True])
+        self.assertIn("127.0.0.1:6000", report["text"])
         self.assertIn("127.0.0.1:5005", report["text"])
-        self.assertFalse(report["warning"])
 
-    @unittest.skipUnless(
-        os.path.isdir(os.path.join(OPT_VR, "unity")), "unity/ is not checked out"
-    )
-    def test_a_mismatch_is_corrected_and_locked(self):
-        report = self.note_for(self.SHIPPED_BUILD, port=6000)
-        self.assertFalse(report["warning"])
-        self.assertIn("127.0.0.1:5005", report["text"])
-        self.assertIn("Parsing succeeded", report["text"])
-        self.assertEqual((report["host"], report["port"]), ("127.0.0.1", 5005))
-        self.assertEqual(report["editable"], [False, False])
-
-    def test_an_unreadable_build_falls_back_to_the_typed_values(self):
+    def test_a_folder_without_a_client_says_how_to_install_one(self):
         report = self.note_for(os.path.join(OPT_VR, "no_such_build"))
-        self.assertFalse(report["warning"], "an unreadable build is not a mismatch")
-        self.assertIn("matched by hand", report["text"])
-        self.assertIn("Parsing failed", report["text"])
+        self.assertFalse(report["found"])
+        self.assertIn("install_vr.bat", report["text"])
         self.assertEqual(report["editable"], [True, True])
 
-    def test_profile_changes_switch_between_parsed_and_manual_endpoints(self):
+    def test_profiles_keep_their_own_endpoint(self):
         report = report_from(
             """
             tab = "visual_effects"
@@ -476,54 +470,48 @@ class UnityEndpointTests(unittest.TestCase):
                     "host": window.inputs["VR_HOST"].text(),
                     "port": window.inputs["VR_PORT"].value(),
                     "enabled": [window.inputs[k].isEnabled() for k in ("VR_HOST", "VR_PORT")],
-                    "label_enabled": [window.labels[k].isEnabled() for k in ("VR_HOST", "VR_PORT")],
+                    "tip": window.inputs["VR_APP_DIR"].toolTip(),
                 }
-            with mock.patch.object(namespace["Unity_Build_VR"], "read_endpoint", return_value=("localhost", 7777)):
+            with mock.patch.object(namespace["Player_Build_VR"], "read_endpoint", return_value=("localhost", 7777)):
                 window._apply_profile_data(tab, profile)
-                parsed = state()
+                found = state()
                 saved = window._collect_tab_profile_data(tab)
-                window._apply_profile_data(tab, profile, read_only=True)
+            with mock.patch.object(namespace["Player_Build_VR"], "read_endpoint", return_value=None):
                 window._apply_profile_data(tab, profile)
-                after_default = state()
-            with mock.patch.object(namespace["Unity_Build_VR"], "read_endpoint", return_value=None):
-                window._apply_profile_data(tab, profile)
-                manual = state()
+                missing = state()
                 window._apply_profile_data(tab, profile, read_only=True)
                 read_only = state()
-            with mock.patch.object(namespace["Unity_Build_VR"], "read_endpoint", side_effect=PermissionError("unreadable build")):
+            with mock.patch.object(namespace["Player_Build_VR"], "read_endpoint", side_effect=PermissionError("unreadable build")):
                 window._apply_profile_data(tab, profile)
                 unreadable = state()
-            print("@@" + json.dumps({"parsed": parsed, "saved": saved,
-                "after_default": after_default, "manual": manual,
+            print("@@" + json.dumps({"found": found, "saved": saved, "missing": missing,
                 "read_only": read_only, "unreadable": unreadable}))
             """
         )
-        parsed = report["parsed"]
-        self.assertEqual((parsed["host"], parsed["port"]), ("localhost", 7777))
-        self.assertEqual(parsed["enabled"], [False, False])
-        self.assertEqual(parsed["label_enabled"], [False, False])
-        self.assertEqual(report["after_default"], parsed)
-        self.assertEqual(report["saved"]["VR_HOST"], "localhost")
-        self.assertEqual(int(report["saved"]["VR_PORT"]), 7777)
-        self.assertEqual(report["manual"]["enabled"], [True, True])
-        self.assertEqual((report["manual"]["host"], report["manual"]["port"]), ("10.0.0.5", 6000))
+        found = report["found"]
+        self.assertEqual((found["host"], found["port"]), ("10.0.0.5", 6000))
+        self.assertEqual(found["enabled"], [True, True])
+        self.assertIn("localhost:7777", found["tip"])
+        self.assertEqual(report["saved"]["VR_HOST"], "10.0.0.5")
+        self.assertEqual(int(report["saved"]["VR_PORT"]), 6000)
+        missing = report["missing"]
+        self.assertEqual((missing["host"], missing["port"]), ("10.0.0.5", 6000))
+        self.assertIn("install_vr.bat", missing["tip"])
         self.assertEqual(report["read_only"]["enabled"], [False, False])
-        self.assertEqual(report["unreadable"], report["manual"])
+        self.assertEqual(report["unreadable"], missing)
 
-    def test_each_new_window_rereads_the_build_before_using_saved_values(self):
+    def test_each_new_window_rereads_the_client(self):
         report = report_from(
             """
-            import tempfile, struct
+            import tempfile
             from pathlib import Path
             reports = []
             with tempfile.TemporaryDirectory() as folder:
-                scene = Path(folder) / "Player_Data" / "level0"
-                scene.parent.mkdir()
+                manifest = Path(folder) / "vr_client.json"
                 custom = dict(window._custom_settings)
                 custom.update(VR_APP_DIR=folder, VR_HOST="10.0.0.5", VR_PORT=6000)
                 for port in (7001, 7002):
-                    host = b"127.0.0.1"
-                    scene.write_bytes(struct.pack("<i", len(host)) + host + b"\\x00" * (-len(host) % 4) + struct.pack("<i", port))
+                    manifest.write_text(json.dumps({"host": "127.0.0.1", "port": port}), encoding="utf-8")
                     with mock.patch.object(type(window), "_read_custom_settings", return_value=custom):
                         fresh = type(window)()
                     try:
@@ -535,16 +523,15 @@ class UnityEndpointTests(unittest.TestCase):
             print("@@" + json.dumps(reports))
             """
         )
-        self.assertEqual([item["port"] for item in report], [7001, 7002])
-        for item in report:
-            self.assertFalse(item["enabled"])
-            self.assertIn("Parsing succeeded", item["tooltip"])
+        for item, port in zip(report, (7001, 7002)):
+            with self.subTest(port=port):
+                self.assertEqual(item["port"], 6000, "the saved port is the user's")
+                self.assertTrue(item["enabled"])
+                self.assertIn(f"127.0.0.1:{port}", item["tooltip"])
 
-    @unittest.skipUnless(
-        os.path.isdir(os.path.join(OPT_VR, "unity")), "unity/ is not checked out"
-    )
-    def test_choosing_a_build_fills_the_endpoint_in(self):
-        """Picking a build is the moment the user says which client they mean."""
+    def test_choosing_a_folder_describes_its_client(self):
+        """Picking a folder is the moment the user says which client they mean."""
+        folder = self.client_folder(host="127.0.0.1", port=5005)
         report = report_from(
             """
             from PySide6.QtWidgets import QFileDialog, QPushButton
@@ -561,17 +548,33 @@ class UnityEndpointTests(unittest.TestCase):
                 "browse_buttons": len(browse),
                 "host": window.inputs["VR_HOST"].text(),
                 "port": window.inputs["VR_PORT"].value(),
-                "warning": window._bridge_endpoint_warning,
+                "found": window._bridge_client_found,
+                "tooltip": field.toolTip(),
             }}))
-            """.format(build=os.path.join(OPT_VR, "unity"))
+            """.format(build=folder)
         )
         self.assertEqual(report["browse_buttons"], 1)
-        self.assertEqual(report["host"], "127.0.0.1")
-        self.assertEqual(report["port"], 5005)
-        self.assertFalse(report["warning"])
+        self.assertEqual((report["host"], report["port"]), ("10.0.0.5", 6000))
+        self.assertTrue(report["found"])
+        self.assertIn("127.0.0.1:5005", report["tooltip"])
+
+    def test_a_unity_era_folder_setting_moves_to_the_installed_client(self):
+        """Settings saved before the Godot client name the old unity/ folder."""
+        report = report_from(
+            """
+            normalized = window._normalize_profile_data("visual_effects", {"VR_APP_DIR": "unity"})
+            custom = window._normalize_profile_data("visual_effects", {"VR_APP_DIR": "E:/elsewhere/unity"})
+            print("@@" + json.dumps({"migrated": normalized["VR_APP_DIR"],
+                                     "chosen": custom["VR_APP_DIR"],
+                                     "default": namespace["VR_PROFILE_DEFAULTS"]["VR_APP_DIR"]}))
+            """
+        )
+        self.assertEqual(report["migrated"], "player")
+        self.assertEqual(report["chosen"], "E:/elsewhere/unity", "a chosen folder is left alone")
+        self.assertEqual(report["default"], "player")
 
 
-class QuitWithUnityTests(unittest.TestCase):
+class QuitWithClientTests(unittest.TestCase):
     """The VR-only control for whether the viewer outlives the headset app."""
 
     def test_it_is_a_switch_with_its_own_label(self):
@@ -589,7 +592,7 @@ class QuitWithUnityTests(unittest.TestCase):
         )
         self.assertTrue(report["is_button"], "asked for a button, not a checkbox")
         self.assertTrue(report["checkable"])
-        self.assertEqual(report["label"], "Quit with Unity:")
+        self.assertEqual(report["label"], "Quit with VR Client:")
         self.assertIs(report["declared_default"], True, "killing is the default")
 
     def test_both_positions_round_trip(self):
@@ -612,11 +615,11 @@ class QuitWithUnityTests(unittest.TestCase):
         self.assertEqual(report["False"]["text"], "OFF")
         self.assertEqual(report["True"]["text"], "ON")
 
-    def test_launch_snapshot_preserves_unity_settings_in_a_fresh_viewer_process(self):
+    def test_launch_snapshot_preserves_client_settings_in_a_fresh_viewer_process(self):
         report = report_from(
             """
             import subprocess
-            window.inputs["VR_APP_DIR"].setText("test_custom_unity_build")
+            window.inputs["VR_APP_DIR"].setText("test_custom_client_build")
             window.inputs["VR_HOST"].setText("localhost")
             window.inputs["VR_PORT"].setValue(6123)
             window.inputs["DISTANCE_SCALE"].setValue(2.5)
@@ -653,7 +656,7 @@ class QuitWithUnityTests(unittest.TestCase):
                 self.assertEqual(item["values"]["DISTANCE_SCALE"], 2.5)
                 self.assertIs(item["values"]["ENABLE_EDGE_FILTERING"], False)
                 self.assertEqual(item["values"]["MAX_RENDER_EDGES"], 12345)
-                self.assertEqual(item["values"]["VR_APP_DIR"], os.path.join(OPT_VR, "test_custom_unity_build"))
+                self.assertEqual(item["values"]["VR_APP_DIR"], os.path.join(OPT_VR, "test_custom_client_build"))
 
     def test_it_belongs_to_the_visual_effects_profile(self):
         """Otherwise a saved profile would silently drop it."""

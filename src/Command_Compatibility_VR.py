@@ -83,7 +83,7 @@ SRC_DIR = _bootstrap_vr.SRC_DIR
 UPSTREAM_COMMAND_DIR = os.path.join(SRC_DIR, "commands")
 LOCAL_COMMAND_DIR = os.path.join(VR_SRC_DIR, "commands")
 
-#: Toolkits that cannot exist in a process whose renderer is the Unity client.
+#: Toolkits that cannot exist in a process whose renderer is the VR client.
 GUI_PACKAGES = ("PySide6", "PyQt5", "PyQt6", "vispy")
 
 #: Modules that attach attributes to the viewer object at runtime.

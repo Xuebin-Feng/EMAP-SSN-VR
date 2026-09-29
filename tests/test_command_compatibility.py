@@ -333,7 +333,7 @@ class CommandSetIntegrationTests(unittest.TestCase):
         self.assertEqual(report.upstream_blocker.kind, cc.GUI)
 
     def test_desktop_render_commands_are_detected(self):
-        """zoom drives the VisPy camera, which the Unity client replaces."""
+        """zoom drives the VisPy camera, which the VR client replaces."""
         self.assertTrue(self.by_name["zoom"].upstream_missing)
 
     def test_table_renders(self):

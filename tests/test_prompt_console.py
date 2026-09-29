@@ -13,9 +13,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Tests for keeping Unity's background messages off the command prompt.
+"""Tests for keeping the VR server's background messages off the command prompt.
 
-The Unity server thread prints while the main thread is sitting on "> " with a
+The VR server thread prints while the main thread is sitting on "> " with a
 possibly half-typed command. Printed straight to stdout, the message lands
 after the prompt, so the prompt scrolls away and the cursor is left on a bare
 line - which reads as a terminal that has stopped accepting input.
@@ -66,11 +66,11 @@ class MessageAroundPromptTests(unittest.TestCase):
         terminal, stream = console()
         typed = []
         terminal.show_prompt("> ", typed)
-        terminal.message("Unity connected from ('127.0.0.1', 52546)")
+        terminal.message("VR client connected from ('127.0.0.1', 52546)")
 
         self.assertEqual(
             stream.getvalue(),
-            "> " + "\r  \r" + "Unity connected from ('127.0.0.1', 52546)\n" + "> ",
+            "> " + "\r  \r" + "VR client connected from ('127.0.0.1', 52546)\n" + "> ",
         )
 
     def test_a_half_typed_command_survives_the_message(self):
@@ -81,7 +81,7 @@ class MessageAroundPromptTests(unittest.TestCase):
         for character in "colo":
             typed.append(character)
             terminal.echo(character)
-        terminal.message("Unity connected")
+        terminal.message("VR client connected")
 
         rendered = stream.getvalue()
         self.assertTrue(rendered.endswith("> colo"))
@@ -96,8 +96,8 @@ class MessageAroundPromptTests(unittest.TestCase):
         terminal.end_prompt()
         stream.truncate(0)
         stream.seek(0)
-        terminal.message("Unity client disconnected")
-        self.assertEqual(stream.getvalue(), "Unity client disconnected\n")
+        terminal.message("VR client disconnected")
+        self.assertEqual(stream.getvalue(), "VR client disconnected\n")
 
     def test_a_message_before_any_prompt_is_printed_plainly(self):
         terminal, stream = console()

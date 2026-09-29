@@ -17,12 +17,21 @@ REM limitations under the License.
 REM =========================================================================
 REM Installation and Shortcut Generation Script for EMAP-SSN VR (opt_vr)
 REM =========================================================================
-REM The VR counterpart of the main program's install.bat. It generates one
+REM The VR counterpart of the main program's install.bat. It installs the VR
+REM client that player_release.json pins into player\, generates one
 REM shortcut, "EMAP-SSN VR.lnk", pointing at the visible-startup desktop
 REM launcher, and optionally copies it to the Desktop.
 REM
-REM There is no install.sh counterpart, by design: unity/ holds a Windows
-REM Unity build, so the VR front end is Windows-only. Run the parent
+REM The client is not tracked in git: src\bin\Install_Client_VR.ps1 downloads
+REM it from this repository's GitHub release and checks its SHA-256 before
+REM unpacking it. To install without network access, download the release
+REM asset yourself and run:
+REM     set EMAPSSN_VR_CLIENT_ZIP=<path to the zip>
+REM     install_vr.bat
+REM "install_vr.bat --reinstall" replaces a client that is already current.
+REM
+REM There is no install.sh counterpart, by design: the VR client is a
+REM Windows build, so the VR front end is Windows-only. Run the parent
 REM project's installer for the cross-platform desktop program.
 REM
 REM This installer never writes into the parent checkout, and it does not
@@ -30,6 +39,11 @@ REM create the Python environment - the generated shortcut does that on its
 REM first run, through the main program's own launcher.
 REM =========================================================================
 setlocal EnableDelayedExpansion
+
+:: Started from a PowerShell 7 terminal, this script inherits PowerShell 7's
+:: module path, and Windows PowerShell 5.1 - which every powershell call below
+:: runs - cannot load its own modules from it. Unset, it uses its defaults.
+set "PSModulePath="
 
 :: Move to the directory containing this batch script (the submodule root),
 :: then locate the parent checkout one level above it.
@@ -68,7 +82,18 @@ if not exist "!VR_ICON!" (
     set "VR_ICON="
 )
 
-:: 3. Create a visible-startup Windows shortcut for the VR Configuration GUI.
+:: 3. Install the VR client pinned in player_release.json into player\. A
+::    failure here is reported, but the shortcut is still created: running
+::    this installer again later finishes the job.
+echo.
+echo Installing the VR client...
+set "CLIENT_FORCE="
+if /i "%~1"=="--reinstall" set "CLIENT_FORCE=-Force"
+powershell -NoProfile -ExecutionPolicy Bypass -File "!OPT_VR_ROOT!\src\bin\Install_Client_VR.ps1" -OptVr "!OPT_VR_ROOT!" !CLIENT_FORCE!
+set "CLIENT_STATUS=!ERRORLEVEL!"
+echo.
+
+:: 4. Create a visible-startup Windows shortcut for the VR Configuration GUI.
 ::    The launcher's terminal closes itself once the Qt window is on screen.
 echo Creating shortcut for EMAP-SSN VR...
 powershell -ExecutionPolicy Bypass -Command "$q = [char]34; $WshShell = New-Object -ComObject WScript.Shell; $Shortcut = $WshShell.CreateShortcut($env:OPT_VR_ROOT + '\EMAP-SSN VR.lnk'); $Shortcut.TargetPath = $env:WINDIR + '\System32\cmd.exe'; $Shortcut.Arguments = '/d /c ' + $q + $q + $env:OPT_VR_ROOT + '\src\bin\EMAPSSN_Desktop_Launcher_VR.bat' + $q + $q; $Shortcut.WorkingDirectory = $env:OPT_VR_ROOT; $Shortcut.Description = 'EMAP-SSN VR Configuration'; if ($env:VR_ICON) { $Shortcut.IconLocation = $env:VR_ICON }; $Shortcut.Save();"
@@ -80,7 +105,7 @@ if exist "EMAP-SSN VR.lnk" (
     exit /b 1
 )
 
-:: 4. Optional: Copy the shortcut to the Desktop
+:: 5. Optional: Copy the shortcut to the Desktop
 echo.
 choice /M "Would you like to copy this shortcut to your Desktop"
 if %ERRORLEVEL% equ 1 (
@@ -101,7 +126,14 @@ if %ERRORLEVEL% equ 1 (
 )
 
 echo.
+if not "!CLIENT_STATUS!"=="0" (
+    echo [WARNING] The VR client is not installed; the message above says why.
+    echo           The shortcut works, but Save ^& Run needs the client.
+    echo           Run install_vr.bat again once that is fixed.
+    echo.
+)
 echo Setup complete. Open EMAP-SSN VR with the "EMAP-SSN VR" shortcut.
 echo The first launch creates and validates the parent project's managed
 echo Python environment, so it takes noticeably longer than later ones.
 pause
+exit /b !CLIENT_STATUS!

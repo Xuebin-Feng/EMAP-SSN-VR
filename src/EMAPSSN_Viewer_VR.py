@@ -34,6 +34,7 @@ import Settings_VR as cfg
 _bootstrap_vr.install_settings_alias(cfg)
 
 import Viewer_Utils_VR as utils
+import Player_Build_VR
 import Alignment_Manager
 from desktop.Viewer_State import resolve_selected_cache
 
@@ -64,7 +65,7 @@ class HeadlessViewer:
         self.current_shapes = np.full(n_nodes, 'disc', dtype=object)
         self.visible_mask = np.ones(n_nodes, dtype=bool)
         
-        # The terminal runs until the user exits, not until Unity drops.
+        # The terminal runs until the user exits, not until the VR client drops.
         self.running = True
         self.cluster_labels = None
         self.group_labels = [set() for _ in range(n_nodes)]
@@ -298,9 +299,9 @@ class HeadlessViewer:
     def promote_nodes(self, indices):
         """Move one node group to the top of the persistent render order.
 
-        Nothing in the headset changes: Unity places nodes in 3D and its own
-        renderer decides what occludes what, and ``update_nodes`` never sends
-        an order. The desktop viewer's logic is mirrored exactly anyway,
+        Nothing in the headset changes: the VR client places nodes in 3D, its
+        depth buffer decides what occludes what, and ``update_nodes`` never
+        sends an order. The desktop viewer's logic is mirrored exactly anyway,
         because ``save`` writes ``node_render_order`` into the layout cache - a
         session that colours nodes here and saves must reopen on the desktop
         with the layering the same commands would have produced there. A no-op
@@ -339,7 +340,7 @@ class HeadlessViewer:
         return changed
 
     def update_nodes(self):
-        # Package state into JSON, flattened for Unity JsonUtility
+        # Package state into JSON, flattened as docs/PROTOCOL.md specifies
         packet = {
             "colors": self.current_colors.flatten().tolist(),
             "sizes": self.current_sizes.tolist(),
@@ -350,10 +351,10 @@ class HeadlessViewer:
         self.update_queue.put(packet)
         
     def update_edges(self):
-        pass # Handled implicitly by unity when nodes update
+        pass # Handled implicitly by the VR client when nodes update
 
     def update_selection_visual(self):
-        pass # Selection highlighting is handled locally or not supported in Unity
+        pass # Selection highlighting is handled locally by the VR client
         
     def process_command(self, cmd_str, record_history=True):
         cmd_str = cmd_str.strip()
@@ -419,7 +420,7 @@ class HeadlessViewer:
             traceback.print_exc()
 
 def _as_three_dimensional(positions):
-    """Unity expects three floats per node; lift a 2D cache onto z = 0."""
+    """The VR client expects three floats per node; lift a 2D cache onto z = 0."""
     if positions.ndim != 2 or positions.shape[1] not in (2, 3):
         sys.exit(
             f"Unsupported cache positions shape {positions.shape}; "
@@ -699,7 +700,7 @@ def _simple_terminal_loop(viewer):
     """Line-based fallback for hosts without msvcrt (Linux, macOS).
 
     No arrow-key history, but the viewer stays usable. input() blocks, so a
-    Unity disconnect is noticed on the next command rather than immediately.
+    VR client disconnect is noticed on the next command rather than immediately.
     """
     while viewer.running:
         try:
@@ -718,7 +719,7 @@ def _simple_terminal_loop(viewer):
 def terminal_loop(viewer):
     print("--- Terminal Ready. Type 'help' for a list of commands ---")
     if not viewer.is_connected:
-        print("    (Unity is not connected yet; commands still work and "
+        print("    (The VR client is not connected yet; commands still work and "
               "the view syncs on connect.)")
     
     # We use msvcrt for low-level keyboard polling to completely bypass the 
@@ -817,7 +818,7 @@ def client_reader_loop(client, viewer):
                     viewer.transform_scale = data.get("scale", viewer.transform_scale)
                     viewer.distance_scale = data.get("distanceScale", viewer.distance_scale)
             except Exception as ex:
-                CONSOLE.message(f"[Warning] Failed to parse Unity client JSON: {ex}")
+                CONSOLE.message(f"[Warning] Failed to parse VR client JSON: {ex}")
                 CONSOLE.message(f"Raw line: {repr(line)}")
     except Exception as e:
         CONSOLE.message(f"[Warning] Client reader loop encountered exception: {e}")
@@ -827,7 +828,7 @@ def client_reader_loop(client, viewer):
 class PromptConsole:
     """Serialise terminal output so a message never lands on the prompt.
 
-    The Unity server runs in its own thread and prints whenever a client
+    The VR server runs in its own thread and prints whenever a client
     connects, receives the layout, or drops, while the main thread is sitting
     on "> " with a possibly half-typed command. Printing straight to stdout
     puts the message *after* that prompt, so the prompt scrolls away and the
@@ -903,21 +904,29 @@ CONSOLE = PromptConsole()
 
 
 def should_exit_with_unity():
-    """Whether losing the Unity client should end the viewer.
+    """Whether losing the VR client should end the viewer.
 
     On by default: the viewer exists to drive the headset, so it follows the
     client out rather than leaving an orphaned process holding the port. Off
     keeps the command console alive after the app closes, which is the point
     while debugging.
+
+    The name and the EXIT_WITH_UNITY key predate the Godot client; saved
+    settings and profiles still use them.
     """
     return bool(getattr(cfg, "EXIT_WITH_UNITY", True))
 
 
 def unity_server_loop(server_socket, viewer, pos, edges_to_send, n_nodes, n_edges_to_send, unfiltered_edges):
+    """Serve VR clients one at a time; docs/PROTOCOL.md is the contract.
+
+    Named for the Unity client it first served. The tests and tools/ drive
+    this loop by name, so it keeps it.
+    """
     try:
         while True:
             client, addr = server_socket.accept()
-            CONSOLE.message(f"Unity connected from {addr}")
+            CONSOLE.message(f"VR client connected from {addr}")
             
             try:
                 # 1. Send Node Count
@@ -979,8 +988,8 @@ def unity_server_loop(server_socket, viewer, pos, edges_to_send, n_nodes, n_edge
                     pass
                 if should_exit_with_unity():
                     CONSOLE.message(
-                        f"Unity client {addr} disconnected. Closing the viewer.\n"
-                        '         Turn "Quit With Unity" off in the VR '
+                        f"VR client {addr} disconnected. Closing the viewer.\n"
+                        '         Turn "Quit with VR Client" off in the VR '
                         "Configuration GUI to keep the console running instead."
                     )
                     viewer.running = False
@@ -990,39 +999,39 @@ def unity_server_loop(server_socket, viewer, pos, edges_to_send, n_nodes, n_edge
                     _thread.interrupt_main()
                     return
                 CONSOLE.message(
-                    f"Unity client {addr} disconnected. Waiting for a new connection..."
+                    f"VR client {addr} disconnected. Waiting for a new connection..."
                 )
     except Exception as e:
         CONSOLE.message(f"Server loop shutting down: {e}")
 
-#: Unity ships these alongside the player; neither is the application.
-_NOT_THE_PLAYER = ("unitycrashhandler",)
+#: Where install_vr.bat unpacks the VR client, relative to opt_vr.
+DEFAULT_PLAYER_DIR = Player_Build_VR.DEFAULT_CLIENT_DIR
 
 
 def vr_app_search_dirs():
-    """Directories that may hold the built Unity player, most specific first."""
-    # unity/ sits at the submodule root beside src/, the way the main
-    # program keeps its own resource directories out of the module tree.
+    """Directories that may hold the VR client, most specific first."""
     script_dir = _bootstrap_vr.OPT_VR_DIR
-    configured = getattr(cfg, "VR_APP_DIR", "unity")
-    return [
+    configured = getattr(cfg, "VR_APP_DIR", DEFAULT_PLAYER_DIR) or DEFAULT_PLAYER_DIR
+    dirs = [
         # The setting wins, resolved against opt_vr when it is relative.
         configured if os.path.isabs(configured)
         else os.path.join(script_dir, configured),
-        # The build lives inside opt_vr, not beside it. Looking one level up
-        # only worked back when the viewer sat in a subdirectory of the old
-        # standalone repository.
-        #
-        # VR_App was this directory's name before the Unity backend was
-        # rebuilt. Kept as a fallback so a checkout that still holds one keeps
-        # working without editing its settings.
-        os.path.join(script_dir, "VR_App"),
-        os.path.join(os.getcwd(), "VR_App"),
     ]
+    # A folder chosen by hand may hold no client; fall through to where
+    # install_vr.bat puts it.
+    default = os.path.join(script_dir, DEFAULT_PLAYER_DIR)
+    if os.path.normcase(os.path.normpath(dirs[0])) != os.path.normcase(os.path.normpath(default)):
+        dirs.append(default)
+    return dirs
+
+
+def _is_player(path):
+    # Godot names a console wrapper <name>.console.exe; it is not the player.
+    return "console" not in os.path.basename(path).lower()
 
 
 def find_vr_app():
-    """Return the built VR player executable, or None if there is no build."""
+    """Return the VR client executable, or None if none is installed."""
     for search_dir in vr_app_search_dirs():
         search_dir = os.path.normpath(search_dir)
         if not os.path.isdir(search_dir):
@@ -1030,14 +1039,32 @@ def find_vr_app():
         candidates = sorted(
             path
             for path in glob.glob(os.path.join(glob.escape(search_dir), "*.exe"))
-            # A Unity build directory also contains the crash handler, so the
-            # first .exe found is not necessarily the player.
-            if not os.path.basename(path).lower().startswith(_NOT_THE_PLAYER)
+            if _is_player(path)
         )
         if candidates:
             return os.path.abspath(candidates[0])
 
     return None
+
+
+def warn_about_stale_player(exe_path):
+    """Say so when the installed client is not the release this checkout pins.
+
+    A `git pull` can move the pin to a newer client while player/ keeps the
+    old one. It is started anyway; the note says how to update it. Returns the
+    installed version, or None when the build does not say.
+    """
+    info = Player_Build_VR.read_client_info(os.path.dirname(exe_path)) or {}
+    installed = info.get("version")
+    pin = Player_Build_VR.read_release_pin()
+    pinned = pin["version"] if pin else None
+    if pinned and installed and installed != pinned:
+        CONSOLE.message(
+            f"Note: the installed VR client is {installed}, but this checkout pins "
+            f"{pinned}. Run install_vr.bat to update it."
+        )
+    return installed
+
 
 def warn_about_vr_hardware():
     """Say so when the client is about to start on hardware that cannot run it.
@@ -1064,33 +1091,50 @@ def warn_about_vr_hardware():
     return report
 
 
-def launch_vr_app():
-    """Attempt to launch the built VR application.
+#: Listening on every interface is reachable locally through the loopback.
+_WILDCARD_HOSTS = ("", "0.0.0.0")
+
+
+def player_command(exe_path, host, port):
+    """The command line that starts the VR client dialling `host`:`port`.
+
+    Everything after `--` is the client's own; this viewer is the one place
+    that decides the endpoint, so the two ends can never disagree about it.
+    """
+    host = str(host).strip()
+    if host in _WILDCARD_HOSTS:
+        host = "127.0.0.1"
+    return [exe_path, "--", "--host", host, "--port", str(int(port))]
+
+
+def launch_vr_app(host="127.0.0.1", port=5005):
+    """Start the installed VR client, telling it where this viewer listens.
     Returns the subprocess.Popen object if launched, or None if not found.
     """
     exe_path = find_vr_app()
     if exe_path is None:
-        print("VR application not found. Falling back to manual Unity Editor mode.")
-        print("  To build: Unity Editor > File > Build Settings > Build")
+        print("VR client not found. Run install_vr.bat to download it.")
         print("  Searched:")
         for search_dir in vr_app_search_dirs():
             print(f"    {os.path.normpath(search_dir)}")
+        print("  The viewer keeps listening; a client started by hand can still connect.")
         return None
-    
+
     warn_about_vr_hardware()
-    print(f"Launching VR application: {exe_path}")
+    warn_about_stale_player(exe_path)
+    print(f"Launching the VR client: {exe_path}")
     try:
         proc = subprocess.Popen(
-            [exe_path],
+            player_command(exe_path, host, port),
             cwd=os.path.dirname(exe_path),
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL
         )
-        print(f"VR application launched (PID {proc.pid}). Waiting for it to connect...")
+        print(f"VR client launched (PID {proc.pid}). Waiting for it to connect...")
         return proc
     except Exception as e:
-        print(f"Failed to launch VR application: {e}")
-        print("Falling back to manual Unity Editor mode.")
+        print(f"Failed to launch the VR client: {e}")
+        print("The viewer keeps listening; a client started by hand can still connect.")
         return None
 
 def _consume_launch_snapshot():
@@ -1111,8 +1155,8 @@ def _consume_launch_snapshot():
 
 def start_server(host=None, port=None):
     _consume_launch_snapshot()
-    # The endpoint is a setting, but the Unity build has 127.0.0.1:5005
-    # baked into its scene, so changing it also means rebuilding the client.
+    # The endpoint is a setting; launch_vr_app() hands the same one to the
+    # client on its command line.
     host = host or getattr(cfg, 'VR_HOST', '127.0.0.1')
     port = int(port or getattr(cfg, 'VR_PORT', 5005))
     pos, edges, edge_scores, n_nodes, headers, full_headers, metadata = load_layout_cache()
@@ -1126,7 +1170,7 @@ def start_server(host=None, port=None):
     viewer.pos = pos
     viewer.original_pos = pos.copy()
     
-    # --- Intelligent Edge Downsampling for Unity Rendering ---
+    # --- Intelligent Edge Downsampling for VR Rendering ---
     MAX_RENDER_EDGES = int(getattr(cfg, 'MAX_RENDER_EDGES', 500000))
     enable_filtering = getattr(cfg, 'ENABLE_EDGE_FILTERING', True)
     if enable_filtering and len(edges) > MAX_RENDER_EDGES:
@@ -1148,7 +1192,7 @@ def start_server(host=None, port=None):
         edges_to_send = edges[sampled_indices]
     else:
         if not enable_filtering:
-            print(f"Edge downsampling is disabled. Passing all {len(edges)} edges to Unity frontend.")
+            print(f"Edge downsampling is disabled. Passing all {len(edges)} edges to the VR client.")
         edges_to_send = edges
 
     n_edges_to_send = len(edges_to_send)
@@ -1166,26 +1210,25 @@ def start_server(host=None, port=None):
         server_socket.close()
         sys.exit(
             f"Could not listen on {host}:{port}: {error}\n\n"
-            "Something else already holds that endpoint. The Unity client dials "
-            "an address compiled into its build, so this viewer has to own it.\n"
-            "Close whatever is using the port, or change Unity Host and Unity "
-            "Port in the VR Configuration GUI and rebuild the client to match."
+            "Something else already holds that endpoint.\n"
+            "Close whatever is using the port, or choose another VR Client Port "
+            "in the VR Configuration GUI; the viewer passes it to the client."
         )
     server_socket.listen(1)
-    
-    print(f"\nServer listening on {host}:{port}. Waiting for Unity to connect...")
-    
-    # Start the Unity server listener in a background thread (passes both render edges and unfiltered edges)
+
+    print(f"\nServer listening on {host}:{port}. Waiting for the VR client to connect...")
+
+    # Serve the VR client from a background thread (passes both render edges and unfiltered edges)
     t = threading.Thread(target=unity_server_loop, args=(server_socket, viewer, pos, edges_to_send, n_nodes, n_edges_to_send, edges), daemon=True)
     t.start()
-    
-    # Auto-launch the built VR application (falls back gracefully if not found)
-    vr_proc = launch_vr_app()
-    
+
+    # Auto-launch the installed VR client (falls back gracefully if not found)
+    vr_proc = launch_vr_app(host, port)
+
     try:
         while viewer.running:
-            # The terminal is deliberately not gated on Unity: analysis
-            # commands operate on viewer state, and Unity resynchronises
+            # The terminal is deliberately not gated on the VR client: analysis
+            # commands operate on viewer state, and the client resynchronises
             # from that state whenever it connects.
                 
             try:
@@ -1200,7 +1243,7 @@ def start_server(host=None, port=None):
             try:
                 vr_proc.terminate()
                 vr_proc.wait(timeout=5)
-                print("VR application terminated.")
+                print("VR client terminated.")
             except Exception:
                 try:
                     vr_proc.kill()
@@ -1209,7 +1252,7 @@ def start_server(host=None, port=None):
         server_socket.close()
 
 if __name__ == "__main__":
-    # The server exists to drive the Windows Unity player in unity/, so it
+    # The server exists to drive the Windows VR client in player/, so it
     # refuses to start elsewhere rather than binding a socket nothing can
     # ever connect to.
     _bootstrap_vr.require_windows("The EMAP-SSN VR Viewer")

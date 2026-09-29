@@ -18,7 +18,7 @@
 The main program's ``Detect_GPU`` answers a different question: which PyTorch
 backend to install. That is about compute, and its verdict does not carry over
 here - an Intel Arc card is a perfectly good XPU compute target and still
-cannot run SteamVR. The Unity client, not Python, is what renders to the
+cannot run SteamVR. The VR client, not Python, is what renders to the
 headset, so what matters is the display and runtime stack.
 
 The vendor situation as of September 2026:
@@ -68,7 +68,7 @@ _ARC_REASON = (
     "Intel Arc has no SteamVR support - SteamVR refuses to start when it "
     "detects one, for both A-series and B-series, and Intel has announced no "
     "timeline. Only streaming apps such as Virtual Desktop work, and they "
-    "bypass this viewer's Unity client."
+    "bypass this viewer's VR client."
 )
 _INTEL_INTEGRATED_REASON = "Intel integrated graphics cannot drive a headset."
 _UNKNOWN_REASON = "Unrecognised graphics adapter; treating VR support as unknown."
@@ -216,7 +216,7 @@ def summary(report):
         return f"No VR-capable GPU found ({listed}). {reason}"
     return (
         "Could not tell whether this machine can drive a headset. "
-        "The viewer will still start; the Unity client is what needs the GPU."
+        "The viewer will still start; the VR client is what needs the GPU."
     )
 
 

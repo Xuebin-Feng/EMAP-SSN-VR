@@ -19,7 +19,7 @@
 calculation pipeline. Sequence sanitization, embeddings, alignment, network
 construction and layout generation are all the main program's responsibility;
 this package only consumes the layout cache the main program publishes and
-bridges it to the Unity client.
+bridges it to the VR client.
 
 Three things are set up here:
 
@@ -58,7 +58,7 @@ if sys.stderr is not None and hasattr(sys.stderr, "reconfigure"):
 #: ``opt_vr/src`` - this file's own directory, and the VR module tree.
 VR_SRC_DIR = os.path.dirname(os.path.abspath(__file__))
 #: The submodule root. Every relative directory a VR setting names - the
-#: cache folder, the Unity build - resolves against this, not against
+#: cache folder, the VR client build - resolves against this, not against
 #: ``VR_SRC_DIR``, so the layout mirrors the main program's.
 OPT_VR_DIR = os.path.dirname(VR_SRC_DIR)
 #: The parent EMAP-SSN checkout, and its module tree.
@@ -198,15 +198,15 @@ def install_settings_alias(module) -> None:
 # Platform policy
 # ---------------------------------------------------------------------------
 # The main program is cross-platform: it ships .bat, .sh and .app launchers and
-# an installer for each host. This submodule deliberately is not. ``unity/``
-# holds a built Windows Unity player which ``EMAPSSN_Viewer_VR.py`` launches directly, and
+# an installer for each host. This submodule deliberately is not. ``player/``
+# holds the Windows VR client which ``EMAPSSN_Viewer_VR.py`` launches directly, and
 # the headset runtimes it talks to are Windows-only, so there is nothing for a
 # macOS or Linux user to run. Refusing at the entry point states that plainly
 # instead of failing later on a missing ``.exe``.
 #
 # This is a function rather than a module-level guard on purpose: the settings,
 # command and cache layers are ordinary Python and their tests must stay
-# runnable anywhere. Only the entry points that reach the Unity build or the
+# runnable anywhere. Only the entry points that reach the VR client or the
 # Windows desktop launchers call it.
 
 WINDOWS_ONLY_PLATFORM = "win32"
@@ -231,7 +231,7 @@ def windows_only_message(
         f"{component} runs on Windows only.",
         f"This host reports sys.platform={reported!r}.",
         "",
-        "opt_vr drives the built Unity player in unity/, which is a Windows",
+        "opt_vr drives the VR client in player/, which is a Windows",
         "build, so there is no VR runtime to start here. The main EMAP-SSN",
         "program is cross-platform, and its desktop viewer opens the same",
         "layout caches in 2D:",

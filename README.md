@@ -2,7 +2,7 @@
 
 The VR front end for [EMAP-SSN](https://github.com/Xuebin-Feng/EMAP-SSN):
 an alternative viewer that plots a Sequence Similarity Network in 3D and
-renders it through a Unity/SteamVR client.
+renders it in a headset through a Godot 4 / OpenXR client.
 
 This repository is consumed as the `opt_vr` submodule of EMAP-SSN and is not
 designed to run standalone.
@@ -14,25 +14,44 @@ git submodule update --init opt_vr
 ```
 
 > [!IMPORTANT]
-> **Windows only.** `unity/` holds a built Windows Unity player and the viewer
+> **Windows only.** The VR client is a Windows build, and the viewer
 > launches it directly, so every VR entry point refuses to start anywhere else
 > rather than failing later on a missing `.exe`. The main program stays
 > cross-platform, and its desktop viewer opens the same layout caches in 2D.
 > This is why `opt_vr` ships `.bat` launchers and no `.sh` or `.app`
 > counterparts.
 
-Then generate the launcher shortcut:
+Then install the VR client and the launcher shortcut:
 
 ```bat
 opt_vr\install_vr.bat
 ```
 
 This is the VR counterpart of the main program's `install.bat`, suffixed
-like every other mirrored file here. It writes
-`EMAP-SSN VR.lnk` beside this README and offers to copy it to your Desktop. It
-installs nothing itself: the shortcut sets the Python environment up on its
-first run, exactly as the `EMAP-SSN` and `EMAP-SSN Tools` shortcuts do, so that
-first launch takes noticeably longer than later ones.
+like every other mirrored file here. It does two things:
+
+- **Installs the VR client** into `player/`. The client is not in git: it is
+  one asset of a GitHub release of this repository, and `player_release.json`
+  pins which one, with its SHA-256. The installer downloads it, refuses it
+  unless the checksum matches, and only then unpacks it. A client that is
+  already the pinned version is left alone; `install_vr.bat --reinstall`
+  replaces it anyway.
+- **Writes `EMAP-SSN VR.lnk`** beside this README and offers to copy it to
+  your Desktop. The shortcut sets the Python environment up on its first run,
+  exactly as the `EMAP-SSN` and `EMAP-SSN Tools` shortcuts do, so that first
+  launch takes noticeably longer than later ones.
+
+Without network access, download the asset named in `player_release.json`
+from the repository's releases page yourself, then:
+
+```bat
+set EMAPSSN_VR_CLIENT_ZIP=C:\path\to\EMAP-SSN-VR-Client-<version>-win64.zip
+opt_vr\install_vr.bat
+```
+
+After a `git pull` that moves the pin, run `install_vr.bat` again. Until you
+do, the viewer still starts the installed client and says which version the
+checkout expects.
 
 ## Repository layout
 
@@ -47,26 +66,28 @@ Qt/VisPy stack.
 
 ```
 opt_vr/
-├── install_vr.bat                       # writes the EMAP-SSN VR shortcut
-├── unity/                               # the built Windows Unity player
+├── install_vr.bat                       # installs the VR client, writes the shortcut
+├── player_release.json                  # the client release to install, with its SHA-256
+├── player/                              # the installed VR client (ignored)
 ├── Cache_Files/                         # runtime working directory (ignored)
 ├── viewer_settings_vr.json              # per-user settings (ignored)
-├── docs/PROTOCOL.md                     # Python/Unity wire protocol
+├── docs/PROTOCOL.md                     # Python/VR client wire protocol
+├── tools/                               # protocol reference client, fixtures, test servers
 ├── tests/
 └── src/
     ├── _bootstrap_vr.py                 # sys.path and the Windows-only guard
     ├── EMAPSSN_Config_VR.py             # VR Configuration GUI
-    ├── EMAPSSN_Viewer_VR.py             # VR viewer and Unity bridge
+    ├── EMAPSSN_Viewer_VR.py             # VR viewer and VR client bridge
     ├── Settings_VR.py                   # Qt-free settings layer
     ├── Viewer_Utils_VR.py               # sequence and colour helpers
-    ├── Unity_Build_VR.py                 # reads a build's baked endpoint
+    ├── Player_Build_VR.py                # reads the installed client and the pin
     ├── Single_Instance_VR.py             # one VR viewer at a time
     ├── Detect_GPU_VR.py                  # can this machine drive a headset
     ├── Command_Compatibility_VR.py      # shared vs overridden command audit
     ├── Command_Engine.py                # name pinned: upstream imports it
     ├── Viewer_Command_Portal.py         # name pinned: upstream imports it
     ├── commands/                        # name pinned: upstream imports it
-    └── bin/                             # launchers and startup handshake
+    └── bin/                             # launchers, startup handshake, client installer
 ```
 
 ## What lives here, and what does not
@@ -78,7 +99,7 @@ generation are all the main program's responsibility. This package:
 - reads a layout cache published by `src/Layout_Cache_Generator.py`,
 - rebuilds the edge list with the main program's own `prepare_network`, so VR
   edge filtering is identical to the desktop viewer's,
-- streams that state to the Unity client over a local socket, and
+- streams that state to the VR client over a local socket, and
 - exposes a terminal command console for analysis.
 
 Everything scientific is imported from `../src`. Nothing is vendored, so the
@@ -109,7 +130,8 @@ rather than two that can drift apart.
 
 | Script | Role | Upstream counterpart |
 |---|---|---|
-| `install_vr.bat` | writes `EMAP-SSN VR.lnk` | `install.bat` |
+| `install_vr.bat` | installs the VR client, writes `EMAP-SSN VR.lnk` | `install.bat` |
+| `src/bin/Install_Client_VR.ps1` | downloads, checks and unpacks the pinned client | — |
 | `src/bin/EMAPSSN_Desktop_Launcher_VR.bat` | startup terminal; closes once the GUI is ready | `src/bin/EMAPSSN_Desktop_Launcher.bat` |
 | `src/bin/EMAPSSN_VR.bat` | environment validation and repair, then the GUI | `src/bin/EMAPSSN.bat` |
 | `src/bin/Desktop_Launcher_Monitor_VR.py` | detached supervisor and startup handshake | `src/desktop/Desktop_Launcher_Monitor.py` |
@@ -152,7 +174,7 @@ the new VR tab. The rest is small and deliberate:
 | `viewer_settings_vr.json` | the desktop program's settings are never touched |
 | launches `src/EMAPSSN_Viewer_VR.py` | the VR viewer, not the desktop one |
 | `layout_dimensions=3` forced | into cache identity and layout generation |
-| Unity bridge block on **Visual Effects** | host, port, distance scale, edge budget, Unity build |
+| VR client block on **Visual Effects** | host, port, distance scale, edge budget, client folder |
 | removed controls | see below |
 | distinct single-instance key | both windows can be open at once |
 
@@ -162,7 +184,7 @@ in the VR runtime reads them and no shared command does either:
 | Removed | Why |
 |---|---|
 | `TEXT_SIZE`, `TEXT_COLOR` | no HUD text is drawn in the headset |
-| `LOW_RESOURCE_MODE` | a VisPy canvas optimisation; Unity does the drawing |
+| `LOW_RESOURCE_MODE` | a VisPy canvas optimisation; the VR client does the drawing |
 | `PACKING_GEOMETRY` | in 3D `calculate_layout` branches to `pack_components_to_shells`, which arranges components on concentric spherical shells and takes no geometry argument — Square/Circle never reaches it |
 
 `NEIGHBOR_COLOR` has no control of its own either: `Settings` republishes
@@ -195,7 +217,7 @@ Settings are shared with the main program. `viewer_settings.json` in the
 EMAP-SSN project root is the source of truth, and the EMAP-SSN Config GUI is
 what writes it — **the VR runtime only ever reads it**, so no Qt is imported
 into the headless VR process. `src/Settings_VR.py` layers the handful of VR-only
-keys (Unity host/port, edge-render budget) on top of the shared defaults in
+keys (VR client host/port, edge-render budget) on top of the shared defaults in
 the main program's `src/desktop/Viewer_State.py`. Drop a
 `viewer_settings_vr.json` in the submodule root to override any of them
 locally.
@@ -262,41 +284,66 @@ delegated rather than duplicated, that the startup handshake uses upstream's
 file names and exit codes, and that every entry point is guarded as
 Windows-only.
 
-## The Unity client
+The VR client is covered from this side too. `test_protocol_v1.py` drives the
+real server loop with a client written from `docs/PROTOCOL.md`;
+`test_player_release.py` runs the client installer against fabricated
+archives; and `test_player_integration.py` starts the installed player, the
+way the viewer does, against the real server loop, and skips when `player/`
+is empty. The client's own unit tests ship with its source.
 
-`unity/` holds the built Windows player. Python listens on `127.0.0.1:5005`;
-the client connects, receives a binary handshake carrying node count,
-positions (`float32` x, y, z), and the rendered and full edge lists, then
-exchanges newline-delimited JSON for per-node colour, size and visibility
-updates.
+## The VR client
 
-The endpoint cannot be negotiated: the client dials before Python has any way
-to tell it where to dial, so the address is compiled into the build and the
-server has to be told the same one. Getting that wrong produces no error at
-all - Python listens on one port, the player dials another, and the headset
-simply never fills in. So the Config GUI reads the address out of the build
-rather than asking for it. `src/Unity_Build_VR.py` finds it in the serialized
-scene, where Unity stores it as a length-prefixed string followed by the port:
+The headset is driven by a separate program, the VR client, written with
+[Godot Engine](https://godotengine.org) 4.7.2 and licensed Apache-2.0 like the
+rest of the project. It speaks OpenXR, so it uses whichever runtime is active
+(SteamVR, for example), and it has controller bindings for Windows Mixed Reality
+and HP Reverb G2, Oculus and Meta Touch, Valve Index, HTC Vive and Cosmos, and
+generic controllers, and the runtime supplies the model of whichever controller
+is connected. Windows Mixed Reality controllers are the ones the client is
+developed with; the other bindings follow each vendor's published controller
+profile but have not been verified on hardware.
+
+Its source is not in this repository. Every release carries the exact source
+it was built from, so an installed client has its own under
+`player/source/`, with instructions for building and testing it.
+
+**How the two ends meet.** The viewer listens on **VR Client Host** and
+**VR Client Port** (`127.0.0.1:5005` by default) and starts the client with that
+endpoint on its command line:
 
 ```
-09 00 00 00  "127.0.0.1"  00 00 00   8d 13 00 00
-|- length 9  |- utf-8     |- pad     |- int32 5005
+player\EMAP-SSN-VR.exe -- --host 127.0.0.1 --port 5005
 ```
 
-Choosing a build fills **Unity Host** and **Unity Port** in from it, and any
-disagreement between the two is called out above the fields.
+so the two always agree, and any free port works. Once the client connects,
+Python sends a binary handshake - the node count, positions (`float32` x, y,
+z) and the rendered and full edge lists - and then both sides exchange
+newline-delimited JSON: colour, size and visibility updates one way, the
+network's transform the other. [docs/PROTOCOL.md](docs/PROTOCOL.md) is the
+full contract.
+
+The client also records a default endpoint in `player/vr_client.json`, used
+only when it is started by hand. The Config GUI shows it in the tooltip of
+the client fields, next to the endpoint **Save & Run** will pass.
+
+**Developing without the viewer.** `tools/` holds what the client is tested
+against: a reference client written from the protocol document
+(`Protocol_V1_VR.py`), a generator for the byte-stream fixtures the client's own
+tests read (`Protocol_Fixtures_VR.py`), a server that feeds random networks
+through the real server loop (`Synthetic_Server_VR.py`), and a proxy that logs a
+live session (`Protocol_Proxy_VR.py`).
 
 ## Hardware
 
 Not every GPU that runs the main program can run this one. `src/Detect_GPU_VR.py`
 answers that separately, because the main program's `Detect_GPU` is deciding
 which PyTorch backend to install - a compute question whose answer does not
-carry over. The Unity client, not Python, is what renders to the headset.
+carry over. The VR client, not Python, is what renders to the headset.
 
 | Vendor | VR | Notes |
 |---|---|---|
 | NVIDIA | yes | |
-| AMD | yes | SteamVR's stated floor is roughly an RX 480 |
+| AMD | yes | SteamVR's stated floor is roughly an RX 480. Expected to work with the Godot client (Vulkan and OpenXR are vendor-neutral), but not yet verified on AMD hardware |
 | Intel Arc (A- and B-series) | **no** | SteamVR refuses to start when it detects an Arc GPU, and Intel has published no timeline. Streaming apps such as Virtual Desktop are the only route, and they bypass this viewer's client |
 | Intel integrated (UHD, Iris) | no | not a VR part |
 
@@ -317,7 +364,7 @@ so an unsupported verdict is printed and launched past rather than refused.
 Exit codes are 0 ready, 10 no supported GPU, 11 no OpenXR runtime, 12 unknown,
 so a script can branch on it. The desktop launcher runs it after validating the
 Python environment, and the viewer runs it again just before handing over to
-the Unity client, which is the moment an unsupported GPU actually bites.
+the VR client, which is the moment an unsupported GPU actually bites.
 
 What it deliberately does not do is judge whether the hardware is *fast
 enough*. That depends on the headset, the scene and the network size, and a
@@ -325,11 +372,10 @@ checker that guessed would be wrong more often than useful.
 
 ## One viewer at a time
 
-Two VR viewers cannot usefully coexist. They drive the same headset through the
-same Unity client, and they listen on the same endpoint - which the client
-dials by an address compiled into its build, so it cannot be told to reach the
-other one. A second viewer does not give a second view; it gives two processes
-fighting over one client.
+Two VR viewers cannot usefully coexist. They drive the same headset, and the
+OpenXR runtime gives it to one application at a time; with the default
+settings they also listen on the same endpoint. A second viewer does not give
+a second view; it gives two processes fighting over one headset.
 
 So `src/Single_Instance_VR.py` takes a Windows named mutex before anything
 else, and a second viewer exits with an explanation rather than racing for the
@@ -346,27 +392,21 @@ This is the one place opt_vr deliberately differs from the main program, whose
 viewer may legitimately be opened more than once because each instance owns its
 own window. Nothing here owns a window.
 
-**Quit With Unity**, at the bottom of the Visual Effects tab, decides what
+**Quit with VR Client**, at the bottom of the Visual Effects tab, decides what
 happens when the headset app closes. On - the default - the viewer follows it
 out rather than leaving an orphan holding the port. Off keeps the viewer and
 its command console running, which is what you want while debugging the
-client.
-
-This is a heuristic over a serialized asset, not a documented API, so it
-declines rather than guesses: an address merely embedded in a longer string, an
-implausible port, or two endpoints that disagree all read as unknown, and
-whatever you typed stands. A build that stores its endpoint some other way
-costs you the convenience, never the ability to set it by hand.
-
-The cleaner fix is the opposite direction - `EMAPSSN_Viewer_VR.py` launches the
-player itself, so it could pass the endpoint as a launch argument and make
-Python authoritative - but that needs a change on the Unity side and a rebuild.
-Until then, reading the build is what keeps the two ends from drifting.
+client. The setting is stored as `EXIT_WITH_UNITY`, the name it had with the
+Unity client, so saved settings and profiles keep working.
 
 ## Licence
 
-Apache License 2.0 — see [LICENSE](LICENSE). This covers the project's own
-code. The prebuilt player in `unity/` also contains third-party components
-under their own terms: see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md),
-and [END_USER_NOTICE.md](END_USER_NOTICE.md) for the terms that apply to
-using the player.
+Apache License 2.0 — see [LICENSE](LICENSE). This covers everything in this
+repository and the VR client's own code. The client that `install_vr.bat`
+downloads also contains Godot Engine (MIT) and the components compiled into
+it, all under permissive terms: see
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md), which ships inside every
+client release as well.
+
+Revisions before the Godot client shipped a Unity-built player under
+different terms. Its notices are in those revisions.

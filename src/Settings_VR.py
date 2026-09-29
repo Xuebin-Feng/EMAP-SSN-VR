@@ -38,9 +38,10 @@ import re
 import sys
 
 import _bootstrap_vr
+import Player_Build_VR
 from desktop.Viewer_State import ALIASES, DEFAULTS, decode_document
 
-#: Upstream renamed some keys; the VR code and the Unity client still use the
+#: Upstream renamed some keys; the VR code and the VR client still use the
 #: older spellings, so read the current key and publish it under both names.
 LEGACY_KEY_SOURCES = {
     "NEIGHBOR_COLOR": "INITIAL_NODE_COLOR",
@@ -54,7 +55,7 @@ _NULL_TOKENS = {"", "none", "null"}
 PROJECT_ROOT = _bootstrap_vr.PROJECT_ROOT
 OPT_VR_DIR = _bootstrap_vr.OPT_VR_DIR
 
-#: The Unity bridge settings, grouped so the VR Config GUI can offer saved
+#: The VR client bridge settings, grouped so the VR Config GUI can offer saved
 #: profiles for them the way the desktop GUI does for its own tabs.
 VR_BRIDGE_DEFAULTS = {
     "VR_HOST": "127.0.0.1",
@@ -66,16 +67,17 @@ VR_BRIDGE_DEFAULTS = {
     # --- Lifecycle -----------------------------------------------------
     # The viewer exists to drive the headset, so it follows the client out
     # by default. Turning this off keeps the command console alive after
-    # the Unity app closes, which is what you want while debugging.
+    # the VR client closes, which is what you want while debugging. The key
+    # keeps its Unity-era name so saved settings and profiles still apply.
     "EXIT_WITH_UNITY": True,
-    # --- Visual keys the Unity client reads from globalSettings -------
+    # --- Visual keys the VR client reads from globalSettings ----------
     "NEIGHBOR_COLOR": "#4488ff",
 }
 
 #: Keys with no upstream counterpart. Everything else comes from DEFAULTS.
 VR_DEFAULTS = {
     **VR_BRIDGE_DEFAULTS,
-    "VR_APP_DIR": "unity",
+    "VR_APP_DIR": Player_Build_VR.DEFAULT_CLIENT_DIR,
     # --- Alignment ----------------------------------------------------
     "GAP_CHARS": ["-", "."],
     # --- Directories without an upstream profile entry ----------------
@@ -127,7 +129,7 @@ def _read_json(path):
     if not isinstance(stored, dict):
         return {}
     # VR config files and launch snapshots are flat mappings, preserving the
-    # Unity settings absent from the desktop schema. Continue accepting shared
+    # VR bridge settings absent from the desktop schema. Continue accepting shared
     # desktop documents for callers that provide only shared settings.
     if stored.get("schema_version") is not None:
         try:
@@ -259,6 +261,8 @@ def load_settings() -> dict:
     # exactly the choice the user just made in the GUI.
     for key, value in _read_json(_settings_path()).items():
         values[key] = _coerce(key, value)
+    # Settings saved for the Unity client name its old folder.
+    values["VR_APP_DIR"] = Player_Build_VR.migrate_client_dir(values["VR_APP_DIR"])
 
     # Publish renamed upstream keys under the spellings the VR code uses.
     for legacy, current in LEGACY_KEY_SOURCES.items():

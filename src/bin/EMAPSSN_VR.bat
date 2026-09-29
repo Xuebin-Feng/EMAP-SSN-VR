@@ -25,8 +25,8 @@ REM bootstrap, uv venv --python 3.12, Install_Dependencies.py and the
 REM cross-process setup lock - is delegated to the parent launcher, so there
 REM is one implementation and one lock instead of two that can drift apart.
 REM
-REM There is no .sh counterpart, by design. unity/ holds a Windows Unity
-REM build, so the VR front end is Windows-only; the main program stays
+REM There is no .sh counterpart, by design. player/ holds the Windows VR
+REM client, so the VR front end is Windows-only; the main program stays
 REM cross-platform.
 REM
 REM Modes:

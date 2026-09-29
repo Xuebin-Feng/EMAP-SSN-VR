@@ -199,10 +199,10 @@ viewer_settings_vr.json
 Cache_Files/
 VR_Test/
 
-# Microsoft debug C runtime DLLs are not redistributable. Unity copies
-# ucrtbased.dll from Valve's OpenVR Unity XR package into every Windows player
-# build, and nothing in the player loads it.
-ucrtbased.dll
-vcruntime140d.dll
-vcruntime140_1d.dll
-msvcp140d.dll
+# The VR client. install_vr.bat unpacks the release pinned in
+# player_release.json here; the client and its source ship as a GitHub
+# release asset, not in git. The other two are the installer's staging
+# folders, left behind only if it is interrupted.
+/player/
+/player.partial/
+/player.previous/

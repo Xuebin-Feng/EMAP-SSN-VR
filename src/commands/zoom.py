@@ -13,7 +13,7 @@ def run(viewer, args):
            "  canvas). The VR process is headless and has no canvas or camera: the headset\n"
            "  owns the viewpoint, and node positions are sent once in the binary handshake.\n"
            "Instead:\n"
-           "  - Move, or use the controller grip/scale gesture in the Unity client, to zoom.\n"
+           "  - Move, or use the controller grip/scale gesture in the VR client, to zoom.\n"
            "  - hide / select   Narrow the network down to the nodes you care about.\n"
            "  - reset hide      Bring every hidden node back.")
     Command_Engine.print_help(viewer, msg)
