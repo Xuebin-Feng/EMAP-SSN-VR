@@ -79,14 +79,26 @@ class MessageAroundPromptTests(unittest.TestCase):
         typed = []
         terminal.show_prompt("> ", typed)
         for character in "colo":
-            typed.append(character)
-            terminal.echo(character)
+            terminal.type(character)
         terminal.message("VR client connected")
 
         rendered = stream.getvalue()
         self.assertTrue(rendered.endswith("> colo"))
         # Six columns erased: two of prompt, four of command.
         self.assertIn("\r" + " " * 6 + "\r", rendered)
+
+    def test_typing_and_erasing_edit_the_list_the_prompt_was_given(self):
+        """The loop reads the command back from that very list after Enter."""
+        terminal, stream = console()
+        typed = []
+        terminal.show_prompt("> ", typed)
+        terminal.type("colour")
+        terminal.erase(2)
+        self.assertEqual(typed, list("colo"))
+        # Erasing stops at the prompt: backspace on an empty line is a no-op.
+        terminal.erase(9)
+        self.assertEqual(typed, [])
+        self.assertEqual(stream.getvalue(), "> colour" + "\b \b" * 6)
 
     def test_the_prompt_is_not_redrawn_once_the_line_is_finished(self):
         # Between Enter and the next prompt the terminal is printing command
@@ -135,8 +147,7 @@ class ConcurrencyTests(unittest.TestCase):
 
         def type_command():
             for character in "spectrum":
-                typed.append(character)
-                terminal.echo(character)
+                terminal.type(character)
 
         def announce():
             for index in range(8):
@@ -173,11 +184,15 @@ class TerminalLoopTests(unittest.TestCase):
     def test_the_loop_writes_only_through_the_console(self):
         self.assertNotIn("sys.stdout.write", self.loop_source())
 
-    def test_history_recall_keeps_the_list_the_console_holds(self):
-        # Rebinding cmd_chars would leave the console redrawing a stale line.
+    def test_the_loop_edits_the_command_only_through_the_console(self):
+        # The console changes cmd_chars and the screen under one lock. An edit
+        # made here could be redrawn by a message and then echoed again, and
+        # rebinding cmd_chars would leave the console redrawing a stale line.
         source = self.loop_source()
-        self.assertNotIn("cmd_chars = list(new_cmd)", source)
-        self.assertIn("cmd_chars[:] = list(new_cmd)", source)
+        for edit in ("cmd_chars.append(", "cmd_chars.pop(", "cmd_chars[:] =",
+                     "cmd_chars = list("):
+            with self.subTest(edit=edit):
+                self.assertNotIn(edit, source)
 
     def test_the_background_threads_report_through_the_console(self):
         source = pathlib.Path(VR_SRC, "EMAPSSN_Viewer_VR.py").read_text(

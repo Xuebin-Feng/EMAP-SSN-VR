@@ -750,9 +750,7 @@ def terminal_loop(viewer):
                         break
                     # Backspace
                     elif ch == '\x08':
-                        if cmd_chars:
-                            cmd_chars.pop()
-                            CONSOLE.echo('\b \b')
+                        CONSOLE.erase()
                     # Ctrl+C
                     elif ch == '\x03':
                         raise KeyboardInterrupt
@@ -763,12 +761,11 @@ def terminal_loop(viewer):
                             if hasattr(viewer, 'command_history') and viewer.command_history:
                                 viewer.history_index = max(0, viewer.history_index - 1)
                                 new_cmd = viewer.command_history[viewer.history_index]
-                                # Erase current line. cmd_chars is replaced in
-                                # place: CONSOLE holds this very list so it can
-                                # redraw the line a message interrupted.
-                                CONSOLE.echo('\b \b' * len(cmd_chars))
-                                cmd_chars[:] = list(new_cmd)
-                                CONSOLE.echo(new_cmd)
+                                # Swap in the recalled command. CONSOLE edits
+                                # cmd_chars and the screen together, so a
+                                # message always redraws what was on screen.
+                                CONSOLE.erase(len(cmd_chars))
+                                CONSOLE.type(new_cmd)
                         elif scan_code == 'P':  # Down Arrow
                             if hasattr(viewer, 'command_history') and viewer.command_history:
                                 viewer.history_index = min(len(viewer.command_history), viewer.history_index + 1)
@@ -776,13 +773,11 @@ def terminal_loop(viewer):
                                     new_cmd = ""
                                 else:
                                     new_cmd = viewer.command_history[viewer.history_index]
-                                CONSOLE.echo('\b \b' * len(cmd_chars))
-                                cmd_chars[:] = list(new_cmd)
-                                CONSOLE.echo(new_cmd)
+                                CONSOLE.erase(len(cmd_chars))
+                                CONSOLE.type(new_cmd)
                     # Normal characters
                     else:
-                        cmd_chars.append(ch)
-                        CONSOLE.echo(ch)
+                        CONSOLE.type(ch)
                 else:
                     time.sleep(0.01)
                     
@@ -867,10 +862,25 @@ class PromptConsole:
             self._visible = True
             self._write(prompt + "".join(typed))
 
-    def echo(self, text):
-        """Write keystroke feedback without a message cutting into it."""
+    def type(self, text):
+        """Add `text` to the command and echo it, in one step.
+
+        Done apart, a message between the two would redraw the line with
+        `text` already in it, and the echo would then show it twice.
+        """
         with self._lock:
+            self._typed.extend(text)
             self._write(text)
+
+    def erase(self, count=1):
+        """Delete up to `count` characters from the end of the command.
+
+        Stops at the prompt, so a backspace on an empty command does nothing.
+        """
+        with self._lock:
+            count = min(count, len(self._typed))
+            del self._typed[len(self._typed) - count:]
+            self._write("\b \b" * count)
 
     def end_prompt(self, newline=True):
         """The prompt is finished with; messages may print freely again."""
@@ -986,7 +996,9 @@ def unity_server_loop(server_socket, viewer, pos, edges_to_send, n_nodes, n_edge
                     client.close()
                 except Exception:
                     pass
-                if should_exit_with_unity():
+                if _restart_requested_client(viewer):
+                    pass  # its successor connects next; keep accepting
+                elif should_exit_with_unity():
                     CONSOLE.message(
                         f"VR client {addr} disconnected. Closing the viewer.\n"
                         '         Turn "Quit with VR Client" off in the VR '
@@ -998,9 +1010,10 @@ def unity_server_loop(server_socket, viewer, pos, edges_to_send, n_nodes, n_edge
                     # let the existing shutdown path do the cleanup.
                     _thread.interrupt_main()
                     return
-                CONSOLE.message(
-                    f"VR client {addr} disconnected. Waiting for a new connection..."
-                )
+                else:
+                    CONSOLE.message(
+                        f"VR client {addr} disconnected. Waiting for a new connection..."
+                    )
     except Exception as e:
         CONSOLE.message(f"Server loop shutting down: {e}")
 
@@ -1095,47 +1108,90 @@ def warn_about_vr_hardware():
 _WILDCARD_HOSTS = ("", "0.0.0.0")
 
 
-def player_command(exe_path, host, port):
+#: The exit code with which the VR client asks to be started again
+#: (docs/PROTOCOL.md, "Starting the client").
+CLIENT_RESTART_EXIT_CODE = 75
+
+
+def player_command(exe_path, host, port, restartable=True):
     """The command line that starts the VR client dialling `host`:`port`.
 
     Everything after `--` is the client's own; this viewer is the one place
     that decides the endpoint, so the two ends can never disagree about it.
+    `restartable` tells the client it may exit with CLIENT_RESTART_EXIT_CODE
+    to be started again.
     """
     host = str(host).strip()
     if host in _WILDCARD_HOSTS:
         host = "127.0.0.1"
-    return [exe_path, "--", "--host", host, "--port", str(int(port))]
+    command = [exe_path, "--", "--host", host, "--port", str(int(port))]
+    if restartable:
+        command.append("--restartable")
+    return command
 
 
-def launch_vr_app(host="127.0.0.1", port=5005):
+def launch_vr_app(host="127.0.0.1", port=5005, restartable=True, say=print):
     """Start the installed VR client, telling it where this viewer listens.
     Returns the subprocess.Popen object if launched, or None if not found.
+
+    `say` prints the messages; the server thread passes CONSOLE.message so a
+    restart cannot land on the command prompt.
     """
     exe_path = find_vr_app()
     if exe_path is None:
-        print("VR client not found. Run install_vr.bat to download it.")
-        print("  Searched:")
+        say("VR client not found. Run install_vr.bat to download it.")
+        say("  Searched:")
         for search_dir in vr_app_search_dirs():
-            print(f"    {os.path.normpath(search_dir)}")
-        print("  The viewer keeps listening; a client started by hand can still connect.")
+            say(f"    {os.path.normpath(search_dir)}")
+        say("  The viewer keeps listening; a client started by hand can still connect.")
         return None
 
-    warn_about_vr_hardware()
-    warn_about_stale_player(exe_path)
-    print(f"Launching the VR client: {exe_path}")
+    if restartable:
+        # Checked once, at the first launch; a restart is the same hardware.
+        warn_about_vr_hardware()
+        warn_about_stale_player(exe_path)
+    say(f"Launching the VR client: {exe_path}")
     try:
         proc = subprocess.Popen(
-            player_command(exe_path, host, port),
+            player_command(exe_path, host, port, restartable),
             cwd=os.path.dirname(exe_path),
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL
         )
-        print(f"VR client launched (PID {proc.pid}). Waiting for it to connect...")
+        say(f"VR client launched (PID {proc.pid}). Waiting for it to connect...")
         return proc
     except Exception as e:
-        print(f"Failed to launch the VR client: {e}")
-        print("The viewer keeps listening; a client started by hand can still connect.")
+        say(f"Failed to launch the VR client: {e}")
+        say("The viewer keeps listening; a client started by hand can still connect.")
         return None
+
+
+def _restart_requested_client(viewer):
+    """Start the VR client again if it just quit asking for that.
+
+    The client asks, by exiting with CLIENT_RESTART_EXIT_CODE, when SteamVR
+    bound its controllers before it knew them; a fresh start fixes that. It
+    is started again without --restartable, so it asks at most once. Returns
+    True when a new client is on its way.
+    """
+    proc = getattr(viewer, "vr_proc", None)
+    endpoint = getattr(viewer, "vr_endpoint", None)
+    if proc is None or endpoint is None:
+        return False
+    try:
+        # The socket closes as the client quits, so its exit is moments away.
+        code = proc.wait(timeout=3)
+    except subprocess.TimeoutExpired:
+        return False
+    if code != CLIENT_RESTART_EXIT_CODE:
+        return False
+    CONSOLE.message(
+        "SteamVR bound the controllers before it knew them, so the VR client "
+        "is restarting to pick up their own bindings."
+    )
+    host, port = endpoint
+    viewer.vr_proc = launch_vr_app(host, port, restartable=False, say=CONSOLE.message)
+    return viewer.vr_proc is not None
 
 def _consume_launch_snapshot():
     """Delete the per-launch settings snapshot the Config GUI handed us.
@@ -1222,8 +1278,10 @@ def start_server(host=None, port=None):
     t = threading.Thread(target=unity_server_loop, args=(server_socket, viewer, pos, edges_to_send, n_nodes, n_edges_to_send, edges), daemon=True)
     t.start()
 
-    # Auto-launch the installed VR client (falls back gracefully if not found)
-    vr_proc = launch_vr_app(host, port)
+    # Auto-launch the installed VR client (falls back gracefully if not found).
+    # Kept on the viewer: the server thread replaces it if the client restarts.
+    viewer.vr_endpoint = (host, port)
+    viewer.vr_proc = launch_vr_app(host, port)
 
     try:
         while viewer.running:
@@ -1239,6 +1297,7 @@ def start_server(host=None, port=None):
         print("Server shutting down.")
     finally:
         # Terminate the VR app if we launched it
+        vr_proc = getattr(viewer, "vr_proc", None)
         if vr_proc is not None:
             try:
                 vr_proc.terminate()

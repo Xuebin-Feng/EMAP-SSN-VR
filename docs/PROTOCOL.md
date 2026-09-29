@@ -25,12 +25,21 @@ The viewer starts the installed client itself (`launch_vr_app()`), from the
 client's own folder, and passes the endpoint it listens on:
 
 ```
-player\EMAP-SSN-VR.exe -- --host <VR_HOST> --port <VR_PORT>
+player\EMAP-SSN-VR.exe -- --host <VR_HOST> --port <VR_PORT> --restartable
 ```
 
 - Everything after `--` belongs to the client. Engine options, such as
   `--xr-mode off` to keep a headset runtime from starting, go before it.
 - A wildcard listen address (`0.0.0.0`) is passed as `127.0.0.1`.
+- `--restartable` lets the client exit with code **75** to be started again.
+  It does that when SteamVR bound its controllers with a catch-all profile
+  (`khr/generic_controller` or `khr/simple_controller`). SteamVR binds an
+  app's controllers once, when the app starts, and only for controller
+  types it has seen by then, so WMR controllers that connect after the
+  client started SteamVR get a binding without their grip pose or
+  thumbstick. The viewer starts the client once more, without the flag, and
+  a restart does not count as the client closing for "Quit with VR
+  Client".
 - The client dials the first of: `--host` and `--port`; the endpoint in
   `vr_client.json` beside its executable; its built-in `127.0.0.1:5005`. The
   last two only matter for a client started by hand.

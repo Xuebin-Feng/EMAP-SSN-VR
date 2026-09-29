@@ -116,8 +116,13 @@ class LaunchCommandTests(ConfiguredFolderTestCase):
     def test_the_viewer_passes_its_endpoint_after_the_separator(self):
         self.assertEqual(
             vr_viewer.player_command("C:/p/EMAP-SSN-VR.exe", "127.0.0.1", "6123"),
-            ["C:/p/EMAP-SSN-VR.exe", "--", "--host", "127.0.0.1", "--port", "6123"],
+            ["C:/p/EMAP-SSN-VR.exe", "--", "--host", "127.0.0.1", "--port", "6123",
+             "--restartable"],
         )
+
+    def test_a_restarted_client_cannot_ask_again(self):
+        command = vr_viewer.player_command("p.exe", "127.0.0.1", 5005, restartable=False)
+        self.assertNotIn("--restartable", command)
 
     def test_a_wildcard_listen_address_is_dialled_on_the_loopback(self):
         for host in ("0.0.0.0", "", " 0.0.0.0 "):
@@ -133,7 +138,8 @@ class LaunchCommandTests(ConfiguredFolderTestCase):
             process = vr_viewer.launch_vr_app("127.0.0.1", 6123)
         exe = os.path.join(folder, "EMAP-SSN-VR.exe")
         self.assertIs(process, popen.return_value)
-        self.assertEqual(popen.call_args.args[0], [exe, "--", "--host", "127.0.0.1", "--port", "6123"])
+        self.assertEqual(popen.call_args.args[0],
+                         [exe, "--", "--host", "127.0.0.1", "--port", "6123", "--restartable"])
         self.assertEqual(popen.call_args.kwargs["cwd"], folder)
 
     def test_a_missing_client_says_to_run_the_installer(self):

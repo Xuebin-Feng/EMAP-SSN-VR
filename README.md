@@ -312,10 +312,12 @@ it was built from, so an installed client has its own under
 endpoint on its command line:
 
 ```
-player\EMAP-SSN-VR.exe -- --host 127.0.0.1 --port 5005
+player\EMAP-SSN-VR.exe -- --host 127.0.0.1 --port 5005 --restartable
 ```
 
-so the two always agree, and any free port works. Once the client connects,
+so the two always agree, and any free port works. `--restartable` lets the
+client ask to be started once more, which it does when SteamVR bound the
+controllers before it knew them (see [docs/PROTOCOL.md](docs/PROTOCOL.md)). Once the client connects,
 Python sends a binary handshake - the node count, positions (`float32` x, y,
 z) and the rendered and full edge lists - and then both sides exchange
 newline-delimited JSON: colour, size and visibility updates one way, the

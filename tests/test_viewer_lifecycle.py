@@ -171,6 +171,62 @@ class ExitWithClientTests(unittest.TestCase):
                 self.assertEqual(interrupt.call_count, int(quit_with_unity))
                 self.assertEqual(listener.accept.call_count, 1 if quit_with_unity else 2)
 
+    def _disconnect_once(self, state):
+        """Run the production server loop through one client that hangs up."""
+        import socket
+        import numpy as np
+
+        client, peer = socket.socketpair()
+        self.addCleanup(client.close)
+        self.addCleanup(peer.close)
+        peer.shutdown(socket.SHUT_WR)
+        listener = mock.Mock()
+        listener.accept.side_effect = [(client, ("local", 1)), OSError("test listener stopped")]
+        with mock.patch.object(viewer._thread, "interrupt_main") as interrupt, \
+                mock.patch.object(viewer.CONSOLE, "message"):
+            empty_edges = np.empty((0, 2), dtype=np.int32)
+            viewer.unity_server_loop(listener, state, np.zeros((1, 3)), empty_edges, 1, 0, empty_edges)
+        return listener, interrupt
+
+    def _state(self, exit_code):
+        import queue
+        import numpy as np
+
+        process = mock.Mock()
+        process.wait.return_value = exit_code
+        return SimpleNamespace(
+            running=True, is_connected=False,
+            current_colors=np.ones((1, 4)), current_sizes=np.ones(1),
+            visible_mask=np.ones(1, dtype=bool),
+            get_global_settings=lambda: {}, get_transform_state=lambda: {},
+            update_queue=queue.Queue(),
+            vr_proc=process, vr_endpoint=("127.0.0.1", 6123),
+        )
+
+    def test_a_client_that_asks_to_restart_is_started_again_once(self):
+        """SteamVR bound its controllers too early; a fresh client fixes that."""
+        cfg.EXIT_WITH_UNITY = True
+        state = self._state(viewer.CLIENT_RESTART_EXIT_CODE)
+        successor = mock.Mock()
+        with mock.patch.object(viewer, "launch_vr_app", return_value=successor) as launch:
+            listener, interrupt = self._disconnect_once(state)
+        self.assertTrue(state.running, "a restart is not the client closing")
+        interrupt.assert_not_called()
+        self.assertEqual(listener.accept.call_count, 2, "it keeps listening for the new client")
+        launch.assert_called_once()
+        self.assertEqual(launch.call_args.args, ("127.0.0.1", 6123))
+        self.assertIs(launch.call_args.kwargs["restartable"], False, "so it can ask only once")
+        self.assertIs(state.vr_proc, successor, "the viewer terminates the new client at exit")
+
+    def test_any_other_exit_still_closes_the_viewer(self):
+        cfg.EXIT_WITH_UNITY = True
+        state = self._state(0)
+        with mock.patch.object(viewer, "launch_vr_app") as launch:
+            _, interrupt = self._disconnect_once(state)
+        launch.assert_not_called()
+        self.assertFalse(state.running)
+        interrupt.assert_called_once()
+
 
 class PortOwnershipTests(unittest.TestCase):
     """A clash on the endpoint is an error, not a silent takeover."""
