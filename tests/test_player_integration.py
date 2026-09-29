@@ -134,8 +134,10 @@ class LaunchCommandTests(ConfiguredFolderTestCase):
         self.use_folder(folder)
         with mock.patch.object(vr_viewer.subprocess, "Popen") as popen, \
                 mock.patch.object(vr_viewer, "warn_about_vr_hardware"), \
+                mock.patch.object(vr_viewer, "ensure_vr_client") as ensure, \
                 redirect_stdout(io.StringIO()):
             process = vr_viewer.launch_vr_app("127.0.0.1", 6123)
+        ensure.assert_called_once()
         exe = os.path.join(folder, "EMAP-SSN-VR.exe")
         self.assertIs(process, popen.return_value)
         self.assertEqual(popen.call_args.args[0],
@@ -147,6 +149,7 @@ class LaunchCommandTests(ConfiguredFolderTestCase):
         stream = io.StringIO()
         with mock.patch.object(vr_viewer, "DEFAULT_PLAYER_DIR", "no_such_player_dir"), \
                 mock.patch.object(vr_viewer.subprocess, "Popen") as popen, \
+                mock.patch.object(vr_viewer, "ensure_vr_client", return_value=False), \
                 redirect_stdout(stream):
             self.assertIsNone(vr_viewer.launch_vr_app("127.0.0.1", 5005))
         popen.assert_not_called()
@@ -170,6 +173,76 @@ class LaunchCommandTests(ConfiguredFolderTestCase):
                     self.assertIn("install_vr.bat", note)
                 else:
                     message.assert_not_called()
+
+
+class EnsureClientTests(unittest.TestCase):
+    """Save & Run installs or updates the pinned client before launching it."""
+
+    PIN = {"version": "1.2.3", "tag": "vr-client-v1.2.3",
+           "asset": "EMAP-SSN-VR-Client-1.2.3-win64.zip", "sha256": "ab" * 32}
+
+    def setUp(self):
+        self.root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.root, ignore_errors=True)
+        for patcher in (mock.patch.object(vr_viewer._bootstrap_vr, "OPT_VR_DIR", self.root),
+                        mock.patch.object(vr_viewer.Player_Build_VR, "read_release_pin",
+                                          return_value=self.PIN)):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        saved = getattr(cfg, "VR_APP_DIR", None)
+        cfg.VR_APP_DIR = "player"
+        self.addCleanup(setattr, cfg, "VR_APP_DIR", saved)
+
+    def install(self, version):
+        folder = os.path.join(self.root, "player")
+        os.makedirs(folder, exist_ok=True)
+        open(os.path.join(folder, "EMAP-SSN-VR.exe"), "w").close()
+        with open(os.path.join(folder, "vr_client.json"), "w", encoding="utf-8") as handle:
+            json.dump({"version": version}, handle)
+
+    def ensure(self, returncode=0):
+        with mock.patch.object(vr_viewer.subprocess, "run",
+                               return_value=mock.Mock(returncode=returncode)) as run, \
+                redirect_stdout(io.StringIO()):
+            installed = vr_viewer.ensure_vr_client()
+        return installed, run
+
+    def test_a_missing_client_is_installed_by_the_same_installer(self):
+        installed, run = self.ensure()
+        self.assertTrue(installed)
+        command = run.call_args.args[0]
+        self.assertIn(vr_viewer.CLIENT_INSTALLER, command)
+        self.assertEqual(command[-2:], ["-OptVr", self.root])
+        environment = run.call_args.kwargs["env"]
+        self.assertNotIn("PSMODULEPATH", {key.upper() for key in environment})
+
+    def test_a_stale_client_is_updated(self):
+        self.install("1.2.2")
+        _, run = self.ensure()
+        run.assert_called_once()
+
+    def test_the_pinned_client_is_left_alone(self):
+        self.install("1.2.3")
+        installed, run = self.ensure()
+        self.assertTrue(installed)
+        run.assert_not_called()
+
+    def test_a_failed_install_is_reported_not_raised(self):
+        installed, _ = self.ensure(returncode=3)
+        self.assertFalse(installed)
+
+    def test_a_client_folder_the_user_chose_is_not_replaced(self):
+        folder = client_folder("EMAP-SSN-VR.exe")
+        self.addCleanup(shutil.rmtree, folder, ignore_errors=True)
+        cfg.VR_APP_DIR = folder
+        _, run = self.ensure()
+        run.assert_not_called()
+
+    def test_without_a_pin_nothing_is_downloaded(self):
+        with mock.patch.object(vr_viewer.Player_Build_VR, "read_release_pin", return_value=None):
+            installed, run = self.ensure()
+        self.assertFalse(installed)
+        run.assert_not_called()
 
 
 @unittest.skipUnless(sys.platform == "win32" and os.path.isfile(INSTALLED_EXE),

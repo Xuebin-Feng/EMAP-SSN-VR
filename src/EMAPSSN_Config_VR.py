@@ -84,8 +84,8 @@ def application_icon_path():
 #: recorded in the build is only where a client started by hand dials.
 BRIDGE_NOTE_MISSING = (
     "No VR client is installed in this folder (vr_client.json is missing or "
-    "unreadable). Run install_vr.bat to download it into player/, or choose "
-    "the folder that holds EMAP-SSN-VR.exe."
+    "unreadable). Save & Run downloads the pinned release into player/, as "
+    "install_vr.bat does; or choose the folder that holds EMAP-SSN-VR.exe."
 )
 
 VR_CONTROL_TIPS = {

@@ -1,6 +1,6 @@
 {
-    "version": "0.1.4",
-    "tag": "vr-client-v0.1.4",
-    "asset": "EMAP-SSN-VR-Client-0.1.4-win64.zip",
-    "sha256": "08c42dbeb809044810449c823d507226853cdbcb4e9c1fd742fdb03cce459417"
+    "version": "1.0.0",
+    "tag": "vr-client-v1.0.0",
+    "asset": "EMAP-SSN-VR-Client-1.0.0-win64.zip",
+    "sha256": "4d11809c54563118dec5b21de1b8a35d7b23e36e33ac85d67ee7d18fd2d8a7c3"
 }

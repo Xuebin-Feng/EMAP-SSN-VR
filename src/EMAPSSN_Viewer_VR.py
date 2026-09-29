@@ -1130,13 +1130,62 @@ def player_command(exe_path, host, port, restartable=True):
     return command
 
 
+#: Downloads, checks and unpacks the pinned VR client; install_vr.bat runs it too.
+CLIENT_INSTALLER = os.path.join(_bootstrap_vr.VR_SRC_DIR, "bin", "Install_Client_VR.ps1")
+
+
+def ensure_vr_client(say=print):
+    """Install or update the VR client when player/ lacks the pinned release.
+
+    A checkout that was just pulled may pin a client player/ does not hold
+    yet, or player/ may be empty on a first run. Either way this runs the
+    installer install_vr.bat uses, which downloads the pinned release, checks
+    its SHA-256 and unpacks it, so pulling is all an update takes. A client
+    the user pointed VR_APP_DIR at is theirs, and is left alone. If the
+    install fails, for example offline, whatever client is installed is used.
+    Returns True when player/ holds the pinned release afterwards.
+    """
+    pin = Player_Build_VR.read_release_pin()
+    if pin is None:
+        return False
+    player_dir = os.path.join(_bootstrap_vr.OPT_VR_DIR, DEFAULT_PLAYER_DIR)
+    configured = os.path.normcase(os.path.normpath(vr_app_search_dirs()[0]))
+    if configured != os.path.normcase(os.path.normpath(player_dir)) and os.path.isdir(configured) \
+            and any(_is_player(path) for path in glob.glob(os.path.join(glob.escape(configured), "*.exe"))):
+        return False
+    installed = (Player_Build_VR.read_client_info(player_dir) or {}).get("version")
+    if installed == pin["version"] and os.path.isfile(os.path.join(player_dir, "EMAP-SSN-VR.exe")):
+        return True
+    say(f"Installing VR client {pin['version']} into {player_dir}...")
+    # Windows PowerShell cannot load its own modules with PowerShell 7's
+    # module path, which a terminal may pass down; unset, it uses its own.
+    environment = {key: value for key, value in os.environ.items() if key.upper() != "PSMODULEPATH"}
+    try:
+        result = subprocess.run(
+            ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
+             CLIENT_INSTALLER, "-OptVr", _bootstrap_vr.OPT_VR_DIR],
+            env=environment,
+        )
+    except OSError as error:
+        say(f"Could not run the VR client installer: {error}")
+        return False
+    if result.returncode != 0:
+        say("The VR client could not be installed; see above. The installed client, "
+            "if any, is used instead.")
+        return False
+    return True
+
+
 def launch_vr_app(host="127.0.0.1", port=5005, restartable=True, say=print):
     """Start the installed VR client, telling it where this viewer listens.
     Returns the subprocess.Popen object if launched, or None if not found.
 
     `say` prints the messages; the server thread passes CONSOLE.message so a
-    restart cannot land on the command prompt.
+    restart cannot land on the command prompt. The first launch installs or
+    updates the pinned client first (ensure_vr_client).
     """
+    if restartable:
+        ensure_vr_client(say)
     exe_path = find_vr_app()
     if exe_path is None:
         say("VR client not found. Run install_vr.bat to download it.")

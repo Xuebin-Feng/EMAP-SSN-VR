@@ -49,9 +49,11 @@ set EMAPSSN_VR_CLIENT_ZIP=C:\path\to\EMAP-SSN-VR-Client-<version>-win64.zip
 opt_vr\install_vr.bat
 ```
 
-After a `git pull` that moves the pin, run `install_vr.bat` again. Until you
-do, the viewer still starts the installed client and says which version the
-checkout expects.
+Updating needs nothing more than `git pull`. When the pin names a client that
+`player/` does not hold, including on a first run with no client at all,
+**Save & Run** installs it before starting it, with the same download and
+checksum check. Offline, it starts whichever client is installed and says
+which version the checkout expects.
 
 ## Repository layout
 
