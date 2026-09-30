@@ -33,6 +33,7 @@ import sys
 import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
+from unittest import mock
 
 OPT_VR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 VR_SRC = os.path.join(OPT_VR, "src")
@@ -56,6 +57,7 @@ with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
 _bootstrap_vr.install_settings_alias(cfg)
 
 from tests.cache_fixtures import publish_cache, use_inputs  # noqa: E402
+from utilities.Sequence_Utils import load_sanitized_fasta, read_fasta  # noqa: E402
 
 
 def quietly(function, *args, **kwargs):
@@ -165,6 +167,28 @@ class CacheValidationTests(unittest.TestCase):
         export = importlib.import_module("commands.export")
         records = export._get_in_memory_sequence_records(viewer)
         self.assertEqual(sorted(records), sorted(cache.headers))
+
+    def test_select_save_writes_every_canonical_record(self):
+        # The upstream `select save` used to re-read the FASTA and look nodes
+        # up by its raw headers, so only already-canonical headers were saved.
+        raw = [
+            "WP_012345678.1 hypothetical protein [Escherichia coli]",
+            "sp|P69905|HBA_HUMAN Hemoglobin subunit alpha",
+            "plain_header",
+        ]
+        cache = publish_cache(self.root, raw_headers=raw)
+        viewer, _ = self.open(cache)
+        select = importlib.import_module("commands.select")
+        header_dir = os.path.join(self.root, "Header_Lists")
+        viewer.selected_indices = list(range(len(cache.headers)))
+        with mock.patch.object(select.cfg, "HEADER_LIST_DIR", header_dir, create=True):
+            quietly(select.run, viewer, ["save", "picked.fasta"])
+        headers, sequences, _ = load_sanitized_fasta(cache.fasta, report=False)
+        self.assertEqual(list(headers), cache.headers)
+        self.assertEqual(
+            read_fasta(os.path.join(header_dir, "picked.fasta")),
+            (list(headers), list(sequences)),
+        )
 
 
 if __name__ == "__main__":

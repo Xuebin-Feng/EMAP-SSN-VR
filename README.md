@@ -204,8 +204,8 @@ is identical by construction, so every feature — saved-config profiles, networ
 statistics, the score histogram, colour pickers, live field gating, input
 consistency checks — behaves exactly as it does in the main program.
 
-The copy has **4,379 lines** to its source's 4,034. **420** of its lines are
-new or rewritten, replacing **75** of the source's, and most of them are the
+The copy has **4,379 lines** to its source's 4,034. **424** of its lines are
+new or rewritten, replacing **79** of the source's, and most of them are the
 VR client block on the Visual Effects tab. Every difference is deliberate:
 
 | Change | Why |
@@ -217,6 +217,7 @@ VR client block on the Visual Effects tab. Every difference is deliberate:
 | a new cache goes through `src/Layout_Launcher_VR.py` | it generates the 3D cache, then opens the VR viewer; the shared generator's `--launch-viewer` would open the desktop one |
 | flat settings snapshot | `Settings_VR` reads flat keys, and the desktop document encoder would drop every VR-only one |
 | `layout_dimensions=3` forced | into cache identity and layout generation |
+| 3D wording in four tooltips | `TARGET_CACHE_FILE`, `UMAP_MODE`, `SAVED_LAYOUT_DIR` and `PACKING_GRID_SIZE` describe the 3D caches and spherical-shell packing VR uses, where the source's describe 2D layouts and grid packing |
 | VR client block on **Visual Effects** | host, port, distance scale, edge budget, client folder, **Quit with VR Client**; a client folder saved for the Unity client is migrated |
 | removed controls | see below |
 | window, terminal and error titles; icon | name the VR window, and find its icon in the parent checkout |
