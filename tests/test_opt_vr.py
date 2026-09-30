@@ -736,14 +736,33 @@ class LayoutCacheConsumerTests(unittest.TestCase):
             try:
                 cfg.TARGET_CACHE_FILE = None
                 with mock.patch.object(
-                    vr_viewer, "resolve_selected_cache", return_value=(cache, None)
+                    vr_viewer, "resolve_selected_cache", return_value=cache
                 ):
                     self.assertEqual(vr_viewer._resolve_cache_path(), cache)
             finally:
                 cfg.TARGET_CACHE_FILE = original
 
+    def test_unpinned_cache_uses_the_real_shared_resolver(self):
+        """Call the main program's resolve_selected_cache itself, unmocked.
+
+        The mocked tests fix its return value, so they could not notice it change
+        from a (path, reference) pair to a bare path; a stale two-value unpack
+        then made every unpinned launch exit. An explicit TARGET_CACHE_PATH,
+        which the settings loader would normally also pin, takes the resolver's
+        shortest branch, so no network file is needed.
+        """
+        import tempfile
+        import unittest.mock as mock
+
+        with tempfile.TemporaryDirectory() as folder:
+            cache = os.path.join(folder, "version_00.h5")
+            open(cache, "w").close()
+            with mock.patch.object(cfg, "TARGET_CACHE_FILE", None), \
+                    mock.patch.object(cfg, "TARGET_CACHE_PATH", cache, create=True):
+                self.assertEqual(vr_viewer._resolve_cache_path(), cache)
+
     def test_three_dimensional_layouts_prefer_the_3d_folder(self):
-        """The generator appends _3D; the shared resolver does not add it."""
+        """The shared resolver names the _3D folder; the 2D one is the fallback."""
         import tempfile
         import unittest.mock as mock
 
@@ -755,16 +774,26 @@ class LayoutCacheConsumerTests(unittest.TestCase):
             for folder in (flat, solid):
                 os.makedirs(folder)
                 open(os.path.join(folder, "version_00.h5"), "w").close()
+
+            def resolver(settings, layout_dimensions=None):
+                # Mirrors resolve_selected_cache: the keyword overrides the setting.
+                dimensions = layout_dimensions or settings.LAYOUT_DIMENSIONS
+                folder = solid if dimensions == 3 else flat
+                return os.path.join(folder, "version_00.h5")
+
             try:
                 cfg.TARGET_CACHE_FILE = None
                 cfg.LAYOUT_DIMENSIONS = 3
                 with mock.patch.object(
-                    vr_viewer,
-                    "resolve_selected_cache",
-                    return_value=(os.path.join(flat, "version_00.h5"), None),
+                    vr_viewer, "resolve_selected_cache", side_effect=resolver
                 ):
-                    resolved = vr_viewer._resolve_cache_path()
-                self.assertEqual(os.path.dirname(resolved), solid)
+                    self.assertEqual(
+                        os.path.dirname(vr_viewer._resolve_cache_path()), solid
+                    )
+                    os.remove(os.path.join(solid, "version_00.h5"))
+                    self.assertEqual(
+                        os.path.dirname(vr_viewer._resolve_cache_path()), flat
+                    )
             finally:
                 cfg.TARGET_CACHE_FILE = original_target
                 cfg.LAYOUT_DIMENSIONS = original_dims
@@ -784,6 +813,76 @@ class LayoutCacheConsumerTests(unittest.TestCase):
                 self.assertEqual(vr_viewer._resolve_cache_path(), cache)
             finally:
                 cfg.TARGET_CACHE_FILE = original
+
+    def _write_published_cache(self, folder, dimensions):
+        """A cache folder as the layout generator publishes one.
+
+        That is a manifest beside a cache whose provenance names it; the shared
+        `save` checks both before it writes.
+        """
+        import hashlib
+        import h5py
+        import Cache_Manifest
+
+        compatibility = Cache_Manifest.build_compatibility(
+            "a" * 64, "b" * 64, "alignment",
+            alignment_score="global", normalization="alignment_length",
+            similarity_threshold=0.4, layout_dimensions=dimensions,
+        )
+        manifest = Cache_Manifest.build_manifest(
+            {"basename": "set.fasta", "size_bytes": 10, "sha256": "a" * 64},
+            {"basename": "network.h5", "size_bytes": 20, "sha256": "b" * 64},
+            compatibility,
+        )
+        Cache_Manifest.write_manifest_atomic(folder, manifest)
+        path = os.path.join(folder, "version_00.h5")
+        self._write_cache(path, dimensions)
+        with h5py.File(path, "a") as handle:
+            handle.attrs["cache_manifest_id"] = manifest["manifest_id"]
+            handle.attrs["layout_compatibility_json"] = "{}"
+            handle.attrs["layout_compatibility_id"] = hashlib.sha256(b"{}").hexdigest()
+        return path, manifest["manifest_id"]
+
+    def test_opened_3d_session_saves_beside_the_cache_it_loaded(self):
+        """End to end: open a published 3D cache, then run the shared `save`."""
+        import h5py
+        import unittest.mock as mock
+
+        with tempfile.TemporaryDirectory() as root:
+            folder = os.path.join(root, "Network_Score0.4_3D")
+            path, manifest_id = self._write_published_cache(folder, 3)
+            # open_layout_session pins both keys; patching restores them after.
+            with mock.patch.object(cfg, "TARGET_CACHE_FILE", path), \
+                    mock.patch.object(cfg, "TARGET_CACHE_PATH", None, create=True), \
+                    redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+                viewer = vr_viewer.open_layout_session()
+                output = run_command(viewer, "save")
+            saved = [name for name in os.listdir(folder)
+                     if name.endswith(".h5") and name != "version_00.h5"]
+            self.assertEqual(len(saved), 1, output)
+            with h5py.File(os.path.join(folder, saved[0]), "r") as handle:
+                self.assertEqual(handle.attrs["cache_manifest_id"], manifest_id)
+                np.testing.assert_array_equal(handle["positions"][:], viewer.pos)
+
+    def test_lifted_2d_session_leaves_save_unavailable(self):
+        """A 2D cache lifted onto z = 0 must not be saved back as 3D positions."""
+        import unittest.mock as mock
+
+        with tempfile.TemporaryDirectory() as root:
+            folder = os.path.join(root, "Network_Score0.4")
+            path, _ = self._write_published_cache(folder, 2)
+            startup = io.StringIO()
+            with mock.patch.object(cfg, "TARGET_CACHE_FILE", path), \
+                    mock.patch.object(cfg, "TARGET_CACHE_PATH", None, create=True), \
+                    redirect_stdout(startup), redirect_stderr(io.StringIO()):
+                viewer = vr_viewer.open_layout_session()
+                output = run_command(viewer, "save")
+            self.assertIn("save is unavailable for a 2D cache", startup.getvalue())
+            self.assertIn("no cache manifest binding", output)
+            self.assertEqual(
+                [name for name in os.listdir(folder) if name.endswith(".h5")],
+                ["version_00.h5"],
+            )
 
 
 class LaunchHandoffTests(unittest.TestCase):

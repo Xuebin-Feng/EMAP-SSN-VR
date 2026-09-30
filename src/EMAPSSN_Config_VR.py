@@ -1577,7 +1577,7 @@ if __name__ == "__main__":
             
         def run_consistency_check(self):
             import h5py
-            from utilities.Sequence_Utils import sanitize_header
+            from utilities.Sequence_Utils import reference_header_matches
             
             # 1. Define the file names by grabbing them from the UI dropdowns
             fasta_file = self.cb_fasta.currentText()
@@ -1626,7 +1626,8 @@ if __name__ == "__main__":
                     msg = f"ERROR: FASTA is NOT a subset of HDF5.\n{msg}\nMissing examples: {', '.join(missing_nodes[:5])}"
                 else:
                     msg = f"SUCCESS: FASTA is a strict subset of HDF5.\n{msg}"
-                
+
+                msa_headers = None
                 if msa_path and os.path.exists(msa_path):
                     msa_headers = set(_load_consistency_msa_headers(msa_path))
 
@@ -1650,18 +1651,37 @@ if __name__ == "__main__":
                     else:
                         msg += f"\n\nSUCCESS: MSA covers all FASTA nodes.\n{msa_msg}"
                 
-                # Check Reference ID if provided
+                # Check Reference ID if provided. Resolve it exactly as the
+                # Viewer will: the same rules over the same candidates, the
+                # network headers kept by the FASTA, in network order.
                 ref_id = self.line_ref.text().strip()
                 if ref_id:
-                    # Proceed with normal matching only (Case-Insensitive)
-                    ref_id_lower = sanitize_header(ref_id)[0].lower()
-                    matched_refs = [h for h in fasta_headers if ref_id_lower in h.lower()]
-                    if matched_refs:
-                        msg += f"\n\nSUCCESS: Reference ID '{ref_id}' matched {len(matched_refs)} header(s) in FASTA."
-                        for h in matched_refs[:5]:
-                            msg += f"\n  - {h}"
+                    fasta_set = set(fasta_headers)
+                    candidates = [header for header in headers if header in fasta_set]
+                    matched_refs = reference_header_matches(candidates, ref_id)
+                    if not matched_refs:
+                        msg += (
+                            f"\n\nWARNING: Reference ID '{ref_id}' matches no network "
+                            "header, so reference numbering will be inactive."
+                        )
                     else:
-                        msg += f"\n\nWARNING: Reference ID '{ref_id}' NOT found in FASTA headers."
+                        resolved = matched_refs[0]
+                        if msa_headers is not None and resolved not in msa_headers:
+                            msg += (
+                                f"\n\nWARNING: Reference ID '{ref_id}' resolves to "
+                                f"{resolved}, which the MSA lacks, so positions will be "
+                                "numbered by occupancy and the offset ignored."
+                            )
+                        else:
+                            msg += f"\n\nSUCCESS: Reference ID '{ref_id}' resolves to {resolved}."
+                        if len(matched_refs) > 1:
+                            others = ", ".join(matched_refs[1:4])
+                            if len(matched_refs) > 4:
+                                others += ", ..."
+                            msg += (
+                                f"\nIt matches {len(matched_refs)} headers equally; the "
+                                f"first in network order is used. Others: {others}"
+                            )
                 
                 self.tip_panel.setText(msg)
             
@@ -1705,7 +1725,7 @@ if __name__ == "__main__":
                 "INPUT_HDF5": "Network or similarity matrix file (.h5) containing pairwise sequence similarity scores and edge coordinates.\nMust contain alignment metrics for at least all sequences present in the active sequence set.",
                 "ALIGNMENT_SCORE": "(For embedding SSNs) Specifies whether to use global (Needleman-Wunsch) or local (Smith-Waterman) scores.\nLocal alignment is recommended for multi-domain proteins; global alignment is best for full-length comparisons.",
                 "NORM_MODE": "(For embedding SSNs) Normalization strategy for pairwise sequence alignment scores.\nNormalizes by alignment length, shorter sequence, longer sequence, or average sequence length to reduce length bias.",
-                "ALIGNMENT_REFERENCE": "Substring or ID from a sequence header to identify the reference sequence in the alignment.\nUsed to anchor absolute relative residue numbering and mapping offsets across the entire network.",
+                "ALIGNMENT_REFERENCE": "Full header, leading identifier (e.g. WP_0123.1), substring, or wildcard (e.g. WP_01*) naming the reference sequence; an exact header or identifier takes priority.\nUsed to anchor absolute relative residue numbering and mapping offsets across the entire network.",
                 "ALIGNMENT_OFFSET": "Integer offset added to reference-anchored alignment residue positions (e.g. +10 shifts position 1 to 11).\nApplied only when the Alignment Reference ID resolves successfully in the alignment.",
                 "SIMILARITY_THRESHOLD": "Minimum similarity score threshold (identity fraction, normalized score, or -Log10 E-Value) to retain an edge.\nEdges below this cutoff are filtered out and excluded from physics simulation and rendering.",
                 "TOP_EDGE_PERCENT": "Alternative edge filter that retains only the top N% highest-scoring edges in the network.\nMaintains consistent network connectivity and density without manually tuning raw score cutoffs (overrides threshold).",

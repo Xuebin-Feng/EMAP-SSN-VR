@@ -593,7 +593,8 @@ def _resolve_cache_path():
     # predicting the name here. resolve_selected_cache is what the desktop
     # viewer calls, so opt_vr honours whatever the Config GUI last saved.
     try:
-        selected, _reference = resolve_selected_cache(cfg)
+        selected = resolve_selected_cache(cfg)
+        flat = resolve_selected_cache(cfg, layout_dimensions=2)
     except Exception as error:
         sys.exit(
             f"Could not work out which layout cache these settings describe: {error}\n\n"
@@ -604,12 +605,10 @@ def _resolve_cache_path():
             "SSN_TARGET_CACHE environment variable - to choose one explicitly."
         )
 
-    folders = [os.path.dirname(selected)]
-    if int(getattr(cfg, "LAYOUT_DIMENSIONS", 2) or 2) == 3:
-        # resolve_selected_cache does not forward LAYOUT_DIMENSIONS to
-        # build_canonical_cache_name, so it always names the 2D folder. The
-        # generator appends "_3D", so try that sibling first.
-        folders.insert(0, folders[0] + "_3D")
+    # The resolver names the folder LAYOUT_DIMENSIONS selects, the "_3D" one
+    # for a 3D layout. The 2D folder beside it is the fallback; its
+    # coordinates are lifted onto the z = 0 plane.
+    folders = list(dict.fromkeys(os.path.dirname(path) for path in (selected, flat)))
 
     for folder in folders:
         found = _newest_cache_in(folder)
@@ -637,15 +636,16 @@ def _resolve_cache_path():
     )
 
 
-def load_layout_cache():
+def load_layout_cache(cache_path=None):
     """Load a layout cache published by the main EMAP-SSN program.
 
     Coordinates, node order and node metadata all come from the cache; nothing
     here computes a layout. Everything scientific - sanitization, embeddings,
     alignment, network construction, layout generation - is the main program's
     responsibility, and opt_vr is strictly a consumer of its output.
+    CACHE_PATH defaults to the one the settings resolve to.
     """
-    cache_path = _resolve_cache_path()
+    cache_path = cache_path or _resolve_cache_path()
     print(f"Loading layout cache: {cache_path}")
 
     metadata = {}
@@ -694,6 +694,68 @@ def load_layout_cache():
         f"from a {dimensions}D cache."
     )
     return positions, edges, edge_scores, n_nodes, headers, list(headers), metadata
+
+
+def _bind_layout_cache(viewer, cache_path):
+    """Record the cache binding the shared `save` command requires.
+
+    `save` writes a new version into the folder of the cache this session
+    loaded, and refuses unless the viewer carries that folder's manifest ID
+    and the cache's provenance, the binding the desktop viewer records when it
+    opens a cache. A 2D cache is left unbound: its positions were lifted onto
+    z = 0, and saving them would put 3D coordinates in a 2D layout folder.
+    Either way the cache still opens; only `save` is unavailable, and the
+    reason is printed now rather than at save time.
+    """
+    import Cache_Manifest as cache_manifest
+    from utilities.Cache_Metadata import validate_cache_provenance
+
+    try:
+        manifest = cache_manifest.read_manifest(os.path.dirname(cache_path))
+        with h5py.File(cache_path, "r") as hf:
+            dimensions = int(hf.attrs.get("layout_dimensions", hf["positions"].shape[1]))
+            provenance = validate_cache_provenance(hf.attrs, manifest["manifest_id"])
+    except (OSError, ValueError, KeyError) as error:
+        print(f"Note: save is unavailable for this cache ({error}).")
+        return
+    if dimensions != 3:
+        print(
+            "Note: save is unavailable for a 2D cache; its positions were lifted "
+            "onto z = 0. Regenerate with LAYOUT_DIMENSIONS = 3 to save VR edits."
+        )
+        return
+    viewer.cache_manifest = manifest
+    viewer.cache_manifest_id = manifest["manifest_id"]
+    viewer._cache_provenance = provenance
+
+
+def open_layout_session():
+    """Resolve, pin and load this session's layout cache into a bound viewer.
+
+    The resolved path is pinned before the viewer is built, so every later
+    lookup agrees with what is on screen: HeadlessViewer names its command
+    history through utils.get_cache_filename, which reads TARGET_CACHE_FILE,
+    and the shared `save` gets its folder from resolve_selected_cache, which
+    returns TARGET_CACHE_PATH first. Save & Run sets both; a direct launch
+    that resolved the cache here set neither.
+    """
+    cache_path = _resolve_cache_path()
+    cfg.TARGET_CACHE_PATH = cache_path
+    cfg.TARGET_CACHE_FILE = cache_path
+    pos, edges, edge_scores, n_nodes, headers, full_headers, metadata = load_layout_cache(
+        cache_path
+    )
+
+    viewer = HeadlessViewer(n_nodes, headers, full_headers, metadata)
+    viewer.edges = edges  # Retain full edge list for viewing purposes/commands
+    viewer.edge_scores = edge_scores
+    # Commands such as `save` read viewer.pos; without these two lines the
+    # positions existed only as a local and every `save` raised
+    # AttributeError.
+    viewer.pos = pos
+    viewer.original_pos = pos.copy()
+    _bind_layout_cache(viewer, cache_path)
+    return viewer
 
 
 def _simple_terminal_loop(viewer):
@@ -1264,17 +1326,11 @@ def start_server(host=None, port=None):
     # client on its command line.
     host = host or getattr(cfg, 'VR_HOST', '127.0.0.1')
     port = int(port or getattr(cfg, 'VR_PORT', 5005))
-    pos, edges, edge_scores, n_nodes, headers, full_headers, metadata = load_layout_cache()
-    
-    viewer = HeadlessViewer(n_nodes, headers, full_headers, metadata)
-    viewer.edges = edges  # Retain full edge list for viewing purposes/commands
-    viewer.edge_scores = edge_scores
-    # Commands such as `save` read viewer.pos; without these two lines the
-    # positions existed only as a local and every `save` raised
-    # AttributeError.
-    viewer.pos = pos
-    viewer.original_pos = pos.copy()
-    
+    viewer = open_layout_session()
+    pos, edges, edge_scores, n_nodes = (
+        viewer.pos, viewer.edges, viewer.edge_scores, viewer.n_nodes
+    )
+
     # --- Intelligent Edge Downsampling for VR Rendering ---
     MAX_RENDER_EDGES = int(getattr(cfg, 'MAX_RENDER_EDGES', 500000))
     enable_filtering = getattr(cfg, 'ENABLE_EDGE_FILTERING', True)

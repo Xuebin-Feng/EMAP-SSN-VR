@@ -205,7 +205,9 @@ python src/Layout_Cache_Generator.py <layout_settings.json>
 3D caches are published to their own folder, suffixed `_3D`, and carry a
 distinct manifest id, so they never collide with the 2D cache built from the
 same inputs. A 2D cache still opens; its coordinates are lifted onto the
-`z = 0` plane and a warning is printed.
+`z = 0` plane and a warning is printed. `save` is unavailable in that case,
+because it would write 3D coordinates into a 2D layout folder. In a 3D session,
+`save` writes a new version beside the cache the session opened.
 
 To skip the GUI and open the viewer directly against the saved settings, run
 `src/EMAPSSN_Viewer_VR.py`. With nothing pinned it resolves the cache through the main
