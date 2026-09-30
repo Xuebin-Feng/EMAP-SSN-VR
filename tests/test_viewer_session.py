@@ -21,7 +21,6 @@ loader, metadata taken from the cache as it is, the saved session state, the
 saved Distance Scale and the initial node colour.
 """
 
-import hashlib
 import importlib
 import io
 import json
@@ -55,6 +54,8 @@ with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
     import Viewer_Utils_VR  # noqa: E402
 
 _bootstrap_vr.install_settings_alias(cfg)
+
+from tests.cache_fixtures import publish_cache, use_inputs  # noqa: E402
 
 
 def quietly(function, *args, **kwargs):
@@ -193,35 +194,19 @@ class SessionRestoreTests(unittest.TestCase):
         SettingsPatch(self, NODE_SIZE=10.0)
 
     def publish(self, folder):
-        """A 3D cache folder as the layout generator publishes one."""
-        import Cache_Manifest
+        """A 3D cache folder as the layout generator publishes one.
 
-        compatibility = Cache_Manifest.build_compatibility(
-            "a" * 64, "b" * 64, "alignment",
-            alignment_score="global", normalization="alignment_length",
-            similarity_threshold=0.4, layout_dimensions=3,
+        The viewer checks a cache against the files it was built from, so the
+        FASTA and network are written beside it and the settings point at
+        them for the rest of the test.
+        """
+        cache = publish_cache(
+            os.path.dirname(folder),
+            raw_headers=[f"node_{index}" for index in range(self.N_NODES)],
+            folder_name=os.path.basename(folder),
         )
-        manifest = Cache_Manifest.build_manifest(
-            {"basename": "set.fasta", "size_bytes": 10, "sha256": "a" * 64},
-            {"basename": "network.h5", "size_bytes": 20, "sha256": "b" * 64},
-            compatibility,
-        )
-        Cache_Manifest.write_manifest_atomic(folder, manifest)
-        path = os.path.join(folder, "version_00.h5")
-        headers = [f"node_{index}" for index in range(self.N_NODES)]
-        with h5py.File(path, "w") as handle:
-            handle.attrs["layout_dimensions"] = 3
-            handle.attrs["cache_manifest_id"] = manifest["manifest_id"]
-            handle.attrs["layout_compatibility_json"] = "{}"
-            handle.attrs["layout_compatibility_id"] = hashlib.sha256(b"{}").hexdigest()
-            handle.create_dataset(
-                "headers", data=np.asarray(headers, dtype=object),
-                dtype=h5py.string_dtype(encoding="utf-8"),
-            )
-            handle.create_dataset(
-                "positions", data=np.arange(self.N_NODES * 3, dtype=np.float32).reshape(-1, 3)
-            )
-        return path
+        use_inputs(self, cache)
+        return cache.path
 
     def pinned(self, path):
         """Pin `path` for the rest of the test, as Save & Run pins a cache.
@@ -292,10 +277,15 @@ class SessionRestoreTests(unittest.TestCase):
         np.testing.assert_allclose(viewer.current_sizes, 10.0)
 
     def test_a_mismatched_entry_is_skipped_not_half_applied(self):
+        """Colours of the wrong width are skipped; the rest of the session applies.
+
+        An entry of the wrong length never gets this far: the cache check
+        refuses the whole cache, as the desktop viewer's does.
+        """
         folder = os.path.join(self.root, "Network_Score0.4_3D")
         os.makedirs(folder)
         path = self.publish(folder)
-        self.write_state(path, colors=np.ones((self.N_NODES + 1, 4), dtype=np.float32))
+        self.write_state(path, colors=np.ones((self.N_NODES, 3), dtype=np.float32))
         viewer, output = self.open(path)
         self.assertIn("ignoring the cache's saved colours", output)
         self.assertEqual(viewer.current_colors.shape, (self.N_NODES, 4))

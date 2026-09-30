@@ -13,21 +13,26 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Tests for falling back to the edge filter a cache was built with.
+"""Tests for the edge filter and scoring a VR session takes from its cache.
 
 Pinning a cache in the Config GUI leaves both filter fields empty - the cache
-has already answered the question - so the viewer reached ``prepare_network``
-with neither a similarity threshold nor a top-edge percentage and died on
-``float >= None``. The user saw only a warning and a network with no edges.
+has already answered the question - so the viewer once reached
+``prepare_network`` with neither a similarity threshold nor a top-edge
+percentage and died on ``float >= None``. The user saw only a warning and a
+network with no edges.
 
-What matters is the precedence: a filter named in the settings must still win,
-so narrowing the view without regenerating the cache keeps working, and the
-manifest is consulted only where there was no answer at all.
+The viewer now takes every analysis setting from the cache before it checks
+the cache against its inputs, as the desktop viewer's resolve_viewer_document
+does: the edge filter, the alignment score, the normalization and the UMAP
+settings. A filter named in the VR settings no longer overrides the cache's.
+The desktop ignores one too, and narrows the view with its edge-threshold
+slider instead.
 """
 
 import io
 import json
 import os
+import shutil
 import sys
 import tempfile
 import unittest
@@ -53,180 +58,73 @@ _bootstrap_vr.install_settings_alias(cfg)
 with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
     import EMAPSSN_Viewer_VR as viewer  # noqa: E402
 
-import Cache_Manifest as cache_manifest  # noqa: E402
-
-DIGEST = "a" * 64
-OTHER_DIGEST = "b" * 64
+from tests.cache_fixtures import publish_cache, use_inputs  # noqa: E402
 
 
-def cache_folder(**filter_settings):
-    """Write a valid manifest describing `filter_settings` and return its folder."""
-    compatibility = cache_manifest.build_compatibility(
-        DIGEST,
-        OTHER_DIGEST,
-        "alignment",
-        alignment_score="global",
-        normalization="alignment_length",
-        layout_dimensions=3,
-        **filter_settings,
-    )
-    manifest = cache_manifest.build_manifest(
-        {"basename": "seq.fasta", "size_bytes": 1, "sha256": DIGEST},
-        {"basename": "net.h5", "size_bytes": 1, "sha256": OTHER_DIGEST},
-        compatibility,
-    )
-    folder = tempfile.mkdtemp()
-    with open(
-        os.path.join(folder, cache_manifest.MANIFEST_FILENAME), "w", encoding="utf-8"
-    ) as handle:
-        json.dump(manifest, handle)
-    return folder
-
-
-def cache_file(**filter_settings):
-    return os.path.join(cache_folder(**filter_settings), "version_00.h5")
-
-
-class ReadFilterTests(unittest.TestCase):
-    def setUp(self):
-        self._stdout = redirect_stdout(io.StringIO())
-        self._stdout.__enter__()
-        self.addCleanup(lambda: self._stdout.__exit__(None, None, None))
-
-    def test_no_cache_path_reads_as_nothing(self):
-        self.assertIsNone(viewer._cache_edge_filter(None))
-        self.assertIsNone(viewer._cache_edge_filter(""))
-
-    def test_a_folder_without_a_manifest_reads_as_nothing(self):
-        missing = os.path.join(tempfile.mkdtemp(), "version_00.h5")
-        self.assertIsNone(viewer._cache_edge_filter(missing))
-
-    def test_a_corrupt_manifest_reads_as_nothing_rather_than_raising(self):
-        folder = tempfile.mkdtemp()
-        with open(
-            os.path.join(folder, cache_manifest.MANIFEST_FILENAME), "w",
-            encoding="utf-8",
-        ) as handle:
-            handle.write("{ not json")
-        self.assertIsNone(
-            viewer._cache_edge_filter(os.path.join(folder, "version_00.h5"))
-        )
-
-    def test_the_recorded_filter_is_returned(self):
-        found = viewer._cache_edge_filter(cache_file(top_edge_percent=5.0))
-        self.assertEqual(found, {"mode": "top_edge_percent", "value": 5.0})
-
-
-class AdoptFilterTests(unittest.TestCase):
-    """Precedence: the settings answer first, the manifest only fills a gap."""
-
-    FILTER_KEYS = (
-        "TOP_EDGE_PERCENT",
-        "SIMILARITY_THRESHOLD",
-        "UMAP_MODE",
-        "UMAP_NEIGHBORS",
-    )
+class CacheSettingsAdoptionTests(unittest.TestCase):
+    """The cache's own analysis settings are used, as on the desktop."""
 
     def setUp(self):
-        self._saved = {key: getattr(cfg, key, None) for key in self.FILTER_KEYS}
-        cfg.TOP_EDGE_PERCENT = None
-        cfg.SIMILARITY_THRESHOLD = None
-        cfg.UMAP_MODE = False
-        self.addCleanup(self._restore)
-        self._stdout = redirect_stdout(io.StringIO())
-        self._stdout.__enter__()
-        self.addCleanup(lambda: self._stdout.__exit__(None, None, None))
+        self.root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.root, ignore_errors=True)
 
-    def _restore(self):
-        for key, value in self._saved.items():
-            setattr(cfg, key, value)
-
-    def test_top_edge_percent_is_adopted(self):
-        viewer._adopt_cache_edge_filter(cache_file(top_edge_percent=5.0))
-        self.assertEqual(cfg.TOP_EDGE_PERCENT, 5.0)
-        self.assertIsNone(cfg.SIMILARITY_THRESHOLD)
-
-    def test_similarity_threshold_is_adopted(self):
-        viewer._adopt_cache_edge_filter(cache_file(similarity_threshold=42.5))
-        self.assertEqual(cfg.SIMILARITY_THRESHOLD, 42.5)
-        self.assertIsNone(cfg.TOP_EDGE_PERCENT)
-
-    def test_umap_topology_is_adopted(self):
-        viewer._adopt_cache_edge_filter(
-            cache_file(umap_mode=True, umap_neighbors=25)
-        )
-        self.assertTrue(cfg.UMAP_MODE)
-        self.assertEqual(cfg.UMAP_NEIGHBORS, 25)
-
-    def test_a_filter_in_the_settings_wins(self):
-        """Narrowing the view without regenerating the cache must keep working."""
-        cfg.TOP_EDGE_PERCENT = 1.0
-        viewer._adopt_cache_edge_filter(cache_file(top_edge_percent=5.0))
-        self.assertEqual(cfg.TOP_EDGE_PERCENT, 1.0)
-
-    def test_a_threshold_in_the_settings_wins(self):
-        cfg.SIMILARITY_THRESHOLD = 9.0
-        viewer._adopt_cache_edge_filter(cache_file(top_edge_percent=5.0))
-        self.assertEqual(cfg.SIMILARITY_THRESHOLD, 9.0)
-        self.assertIsNone(cfg.TOP_EDGE_PERCENT)
-
-    def test_umap_mode_in_the_settings_is_not_overridden(self):
-        cfg.UMAP_MODE = True
-        viewer._adopt_cache_edge_filter(cache_file(top_edge_percent=5.0))
-        self.assertIsNone(cfg.TOP_EDGE_PERCENT)
-
-    def test_a_filter_with_no_value_adopts_nothing(self):
-        # build_compatibility records similarity_threshold: None when a cache
-        # was generated without either control set.
-        viewer._adopt_cache_edge_filter(cache_file())
-        self.assertIsNone(cfg.TOP_EDGE_PERCENT)
-        self.assertIsNone(cfg.SIMILARITY_THRESHOLD)
-
-    def test_an_unreadable_manifest_adopts_nothing(self):
-        viewer._adopt_cache_edge_filter(None)
-        self.assertIsNone(cfg.TOP_EDGE_PERCENT)
-        self.assertIsNone(cfg.SIMILARITY_THRESHOLD)
-
-
-class EdgeRebuildGuardTests(unittest.TestCase):
-    """With no filter anywhere, say so instead of dying on `float >= None`."""
-
-    def setUp(self):
-        self._saved = (
-            getattr(cfg, "TOP_EDGE_PERCENT", None),
-            getattr(cfg, "SIMILARITY_THRESHOLD", None),
-            getattr(cfg, "UMAP_MODE", False),
-            getattr(cfg, "INPUT_HDF5", None),
-        )
-        cfg.TOP_EDGE_PERCENT = None
-        cfg.SIMILARITY_THRESHOLD = None
-        cfg.UMAP_MODE = False
-        self.addCleanup(self._restore)
-
-    def _restore(self):
-        (
-            cfg.TOP_EDGE_PERCENT,
-            cfg.SIMILARITY_THRESHOLD,
-            cfg.UMAP_MODE,
-            cfg.INPUT_HDF5,
-        ) = self._saved
-
-    def test_the_message_names_the_controls_that_would_fix_it(self):
-        network = tempfile.NamedTemporaryFile(suffix=".h5", delete=False)
-        network.close()
-        self.addCleanup(lambda: os.path.exists(network.name) and os.unlink(network.name))
-        cfg.INPUT_HDF5 = network.name
-
+    def verify(self, cache, **settings):
+        """Run the viewer's cache check with `settings` in place of the saved ones."""
+        use_inputs(self, cache)
+        for name, value in settings.items():
+            setattr(cfg, name, value)
         buffer = io.StringIO()
-        with redirect_stdout(buffer):
-            edges, scores = viewer._edges_for(["a", "b"], cache_file())
+        with redirect_stdout(buffer), redirect_stderr(buffer):
+            verified = viewer.verify_layout_cache(cache.path)
+        return verified, buffer.getvalue()
 
-        self.assertEqual(len(edges), 0)
-        self.assertEqual(len(scores), 0)
-        message = buffer.getvalue()
-        self.assertIn("no edge filter is set", message)
-        self.assertIn("Top Edge Percent", message)
-        self.assertNotIn("Traceback", message)
+    def test_an_empty_filter_takes_the_cache_threshold(self):
+        """Pinning a cache in the Config GUI leaves both filter fields empty."""
+        cache = publish_cache(self.root, similarity_threshold=0.45)
+        verified, output = self.verify(cache, SIMILARITY_THRESHOLD=None, TOP_EDGE_PERCENT=None)
+        self.assertEqual(cfg.SIMILARITY_THRESHOLD, 0.45)
+        self.assertIsNone(cfg.TOP_EDGE_PERCENT)
+        # The four fixture pairs that score at least 0.45.
+        self.assertEqual(len(verified.edges), 4)
+        self.assertIn("Edge filter from the cache manifest: score >= 0.45.", output)
+        self.assertNotIn("Note:", output)
+
+    def test_the_cache_filter_wins_over_the_settings(self):
+        cache = publish_cache(self.root, similarity_threshold=0.45)
+        verified, output = self.verify(cache, SIMILARITY_THRESHOLD=0.65, TOP_EDGE_PERCENT=None)
+        self.assertEqual(cfg.SIMILARITY_THRESHOLD, 0.45)
+        self.assertEqual(len(verified.edges), 4)
+        self.assertIn("the settings name score >= 0.65", output)
+
+    def test_a_top_edge_percentage_is_taken_from_the_cache(self):
+        cache = publish_cache(self.root, top_edge_percent=30.0)
+        verified, _ = self.verify(cache, SIMILARITY_THRESHOLD=0.9, TOP_EDGE_PERCENT=None)
+        self.assertEqual(cfg.TOP_EDGE_PERCENT, 30.0)
+        # 30% of the 10 possible pairs is 3; the tie at the cutoff keeps a fourth.
+        self.assertEqual(len(verified.edges), 4)
+
+    def test_umap_topology_is_taken_from_the_cache(self):
+        cache = publish_cache(self.root, umap_neighbors=2)
+        self.verify(cache, UMAP_MODE=False, SIMILARITY_THRESHOLD=0.5)
+        self.assertIs(cfg.UMAP_MODE, True)
+        self.assertEqual(cfg.UMAP_NEIGHBORS, 2)
+
+    def test_score_settings_are_taken_from_the_cache(self):
+        cache = publish_cache(self.root)
+        self.verify(cache, ALIGNMENT_SCORE="local", NORM_MODE="shorter_sequence")
+        self.assertEqual(cfg.ALIGNMENT_SCORE, "global")
+        self.assertEqual(cfg.NORM_MODE, "alignment_length")
+
+    def test_a_cache_that_names_no_filter_is_refused_with_the_reason(self):
+        """Refused, as on the desktop, instead of dying on `float >= None`."""
+        cache = publish_cache(self.root, similarity_threshold=None)
+        use_inputs(self, cache)
+        buffer = io.StringIO()
+        with self.assertRaises(SystemExit) as raised:
+            with redirect_stdout(buffer), redirect_stderr(buffer):
+                viewer.verify_layout_cache(cache.path)
+        self.assertIn("invalid edge filter", str(raised.exception))
+        self.assertNotIn("Traceback", buffer.getvalue())
 
 
 if __name__ == "__main__":

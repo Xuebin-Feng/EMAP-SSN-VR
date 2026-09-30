@@ -133,6 +133,9 @@ sanitization, embedding generation, alignment, network construction and layout
 generation are all the main program's responsibility. This package:
 
 - reads a layout cache published by `src/Layout_Cache_Generator.py`,
+- checks that cache against the FASTA and network it was built from and takes
+  its analysis settings, edge filter included, from the cache, as the desktop
+  viewer does,
 - rebuilds the edge list with the main program's own `prepare_network`, so VR
   edge filtering is identical to the desktop viewer's,
 - streams that state to the VR client over a local socket, and
@@ -250,6 +253,21 @@ because it would write 3D coordinates into a 2D layout folder. In a 3D session,
 version `save` wrote restores its session as the desktop viewer does: colours,
 sizes, shapes, visibility, render order, clusters, groups, the last clustering
 parameters and custom attributes.
+
+Before a cache opens, the viewer checks it the way the desktop viewer does. It
+takes the cache's own analysis settings (alignment score, normalization, edge
+filter, the UMAP settings and `BOX_SCALE`), so an edge filter in
+`viewer_settings_vr.json` does not override the cache's; the desktop viewer
+ignores one too and narrows an open cache with its edge-threshold slider. With
+no cache pinned, the settings' edge filter selects the cache, so to see another
+filter in VR, change it and use **Save & Run**. The viewer then hashes the files
+`NODE_FASTA_FILE` and `INPUT_HDF5` name, which must be the files the cache was
+built from, byte for byte, and requires the cache's nodes to match that network
+filtered by the FASTA. If a check fails, the viewer exits and names the cause,
+such as an edited FASTA, a regenerated network or a missing file. A cache folder
+copied on its own therefore does not open: copy its FASTA and network with it
+and point the settings at them. As on the desktop, hashing both inputs takes a
+moment at each launch for a large network.
 
 To skip the GUI and open the viewer directly against the saved settings, run
 `src/EMAPSSN_Viewer_VR.py`. With nothing pinned it resolves the cache through the main

@@ -67,6 +67,8 @@ with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
 
 _bootstrap_vr.install_settings_alias(cfg)
 
+from tests.cache_fixtures import publish_cache, use_inputs  # noqa: E402
+
 
 def for_name():
     """A figure name that would be written if `print` were not disabled."""
@@ -653,52 +655,25 @@ class DisabledCommandTests(unittest.TestCase):
 class LayoutCacheConsumerTests(unittest.TestCase):
     """opt_vr consumes a cache; it must never generate one."""
 
-    def _write_cache(self, path, dimensions, n_nodes=4):
-        import h5py
-
-        headers = [f"sp|P{i:05d}|PROT{i}_TEST" for i in range(n_nodes)]
-        positions = np.arange(n_nodes * dimensions, dtype=np.float32).reshape(
-            n_nodes, dimensions
-        )
-        with h5py.File(path, "w") as handle:
-            handle.attrs["layout_dimensions"] = dimensions
-            handle.create_dataset(
-                "headers",
-                data=np.asarray(headers, dtype=object),
-                dtype=h5py.string_dtype(encoding="utf-8"),
-            )
-            handle.create_dataset("positions", data=positions)
-        return headers
-
     def test_three_dimensional_cache_loads(self):
         with tempfile.TemporaryDirectory() as folder:
-            path = os.path.join(folder, "version_00.h5")
-            headers = self._write_cache(path, 3)
-            original = cfg.TARGET_CACHE_FILE
-            try:
-                cfg.TARGET_CACHE_FILE = path
-                with redirect_stdout(io.StringIO()):
-                    result = vr_viewer.load_layout_cache()
-            finally:
-                cfg.TARGET_CACHE_FILE = original
+            cache = publish_cache(folder, dimensions=3)
+            use_inputs(self, cache)
+            with redirect_stdout(io.StringIO()):
+                result = vr_viewer.load_layout_cache()
             positions, _, _, n_nodes, loaded_headers = result[:5]
-            self.assertEqual(positions.shape, (len(headers), 3))
-            self.assertEqual(n_nodes, len(headers))
-            self.assertEqual(loaded_headers, headers)
+            self.assertEqual(positions.shape, (len(cache.headers), 3))
+            self.assertEqual(n_nodes, len(cache.headers))
+            self.assertEqual(loaded_headers, cache.headers)
 
     def test_two_dimensional_cache_is_lifted_to_the_z_plane(self):
         """The VR client needs three floats per node, so a 2D cache must not crash."""
         with tempfile.TemporaryDirectory() as folder:
-            path = os.path.join(folder, "version_00.h5")
-            self._write_cache(path, 2)
-            original = cfg.TARGET_CACHE_FILE
-            try:
-                cfg.TARGET_CACHE_FILE = path
-                buffer = io.StringIO()
-                with redirect_stdout(buffer):
-                    result = vr_viewer.load_layout_cache()
-            finally:
-                cfg.TARGET_CACHE_FILE = original
+            cache = publish_cache(folder, dimensions=2)
+            use_inputs(self, cache)
+            buffer = io.StringIO()
+            with redirect_stdout(buffer):
+                result = vr_viewer.load_layout_cache()
             positions = result[0]
             self.assertEqual(positions.shape[1], 3)
             self.assertTrue(np.all(positions[:, 2] == 0.0))
@@ -814,47 +789,17 @@ class LayoutCacheConsumerTests(unittest.TestCase):
             finally:
                 cfg.TARGET_CACHE_FILE = original
 
-    def _write_published_cache(self, folder, dimensions):
-        """A cache folder as the layout generator publishes one.
-
-        That is a manifest beside a cache whose provenance names it; the shared
-        `save` checks both before it writes.
-        """
-        import hashlib
-        import h5py
-        import Cache_Manifest
-
-        compatibility = Cache_Manifest.build_compatibility(
-            "a" * 64, "b" * 64, "alignment",
-            alignment_score="global", normalization="alignment_length",
-            similarity_threshold=0.4, layout_dimensions=dimensions,
-        )
-        manifest = Cache_Manifest.build_manifest(
-            {"basename": "set.fasta", "size_bytes": 10, "sha256": "a" * 64},
-            {"basename": "network.h5", "size_bytes": 20, "sha256": "b" * 64},
-            compatibility,
-        )
-        Cache_Manifest.write_manifest_atomic(folder, manifest)
-        path = os.path.join(folder, "version_00.h5")
-        self._write_cache(path, dimensions)
-        with h5py.File(path, "a") as handle:
-            handle.attrs["cache_manifest_id"] = manifest["manifest_id"]
-            handle.attrs["layout_compatibility_json"] = "{}"
-            handle.attrs["layout_compatibility_id"] = hashlib.sha256(b"{}").hexdigest()
-        return path, manifest["manifest_id"]
-
     def test_opened_3d_session_saves_beside_the_cache_it_loaded(self):
         """End to end: open a published 3D cache, then run the shared `save`."""
         import h5py
-        import unittest.mock as mock
 
         with tempfile.TemporaryDirectory() as root:
-            folder = os.path.join(root, "Network_Score0.4_3D")
-            path, manifest_id = self._write_published_cache(folder, 3)
-            # open_layout_session pins both keys; patching restores them after.
-            with mock.patch.object(cfg, "TARGET_CACHE_FILE", path), \
-                    mock.patch.object(cfg, "TARGET_CACHE_PATH", None, create=True), \
-                    redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+            cache = publish_cache(root, dimensions=3, folder_name="Network_Score0.45_3D")
+            folder, manifest_id = cache.folder, cache.manifest_id
+            # open_layout_session pins both cache keys; use_inputs restores
+            # them, and every setting the viewer adopts, when the test ends.
+            use_inputs(self, cache)
+            with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
                 viewer = vr_viewer.open_layout_session()
                 output = run_command(viewer, "save")
             saved = [name for name in os.listdir(folder)
@@ -866,15 +811,12 @@ class LayoutCacheConsumerTests(unittest.TestCase):
 
     def test_lifted_2d_session_leaves_save_unavailable(self):
         """A 2D cache lifted onto z = 0 must not be saved back as 3D positions."""
-        import unittest.mock as mock
-
         with tempfile.TemporaryDirectory() as root:
-            folder = os.path.join(root, "Network_Score0.4")
-            path, _ = self._write_published_cache(folder, 2)
+            cache = publish_cache(root, dimensions=2, folder_name="Network_Score0.45")
+            folder = cache.folder
+            use_inputs(self, cache)
             startup = io.StringIO()
-            with mock.patch.object(cfg, "TARGET_CACHE_FILE", path), \
-                    mock.patch.object(cfg, "TARGET_CACHE_PATH", None, create=True), \
-                    redirect_stdout(startup), redirect_stderr(io.StringIO()):
+            with redirect_stdout(startup), redirect_stderr(io.StringIO()):
                 viewer = vr_viewer.open_layout_session()
                 output = run_command(viewer, "save")
             self.assertIn("save is unavailable for a 2D cache", startup.getvalue())

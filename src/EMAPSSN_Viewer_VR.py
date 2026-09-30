@@ -1,3 +1,4 @@
+import collections
 import socket
 import struct
 import math
@@ -115,7 +116,7 @@ class DummyText:
         self.text = ""
 
 class HeadlessViewer:
-    def __init__(self, n_nodes, headers, full_headers, metadata=None):
+    def __init__(self, n_nodes, headers, full_headers, metadata=None, source_records=None):
         self.n_nodes = n_nodes
         self.headers = headers
         self.full_headers = full_headers
@@ -142,7 +143,10 @@ class HeadlessViewer:
         #: The canonical records of the FASTA this layout was built from, and
         #: a header -> sequence index over them. 'export' writes straight from
         #: these, as upstream does, rather than re-reading the file per run.
-        self._selected_fasta_records = self._load_source_records()
+        #: open_layout_session passes the records verify_layout_cache read.
+        if source_records is None:
+            source_records = self._load_source_records()
+        self._selected_fasta_records = list(source_records)
         self.sequences_map = _sequence_lookup(self._selected_fasta_records)
 
         # Layout generation writes the initial metadata group (Length, kDa, pI
@@ -329,16 +333,10 @@ class HeadlessViewer:
         header the cache stores in canonical form. A missing or unreadable
         file is not fatal: 'export' then says it has no sequences.
         """
-        path = (
+        path = _input_path(
             getattr(cfg, 'NODE_FASTA_FILE', None)
             or getattr(cfg, 'SEQUENCES_FILE', '')
         )
-        if path and path.startswith('..'):
-            # Relative settings resolve against the submodule root, not against
-            # this module's directory inside src/.
-            path = os.path.normpath(
-                os.path.join(_bootstrap_vr.OPT_VR_DIR, path)
-            )
         if not path or not os.path.exists(path):
             return []
 
@@ -554,122 +552,148 @@ def _as_three_dimensional(positions):
     return lifted
 
 
-def _cache_edge_filter(cache_path):
-    """The edge filter recorded in the manifest beside `cache_path`, or None."""
-    if not cache_path:
-        return None
-    try:
-        import Cache_Manifest as cache_manifest
+def _input_path(value):
+    """A configured input path, resolved as the VR settings write it.
 
-        folder = os.path.dirname(os.path.abspath(cache_path))
-        manifest = cache_manifest.read_manifest(folder)
-    except Exception as error:
-        print(f"Note: could not read the cache manifest: {error}")
-        return None
-    return (manifest.get("compatibility") or {}).get("edge_filter")
-
-
-def _adopt_cache_edge_filter(cache_path):
-    """Adopt the cache's own edge filter when the settings name none.
-
-    The layout generator records the filter it used in the cache manifest.
-    Nothing in the Config GUI forces one of the two filter controls to hold a
-    value - Similarity Threshold and Top Edge Percent only disable each other -
-    and ``_collect_settings`` writes an empty Top Edge Percent as "None" while
-    dropping an empty Similarity Threshold entirely. A launch with both blank
-    therefore reaches the viewer with no filter at all, prepare_network has
-    nothing to threshold on, and it dies on ``float >= None``, which reaches
-    the user as nothing but a network drawn without edges.
-
-    Live settings still win whenever they name a filter, so narrowing the view
-    without regenerating the cache keeps working exactly as it does for the
-    desktop viewer. This only fills the gap where there was no answer at all.
+    Relative settings that climb out of the submodule resolve against the
+    submodule root, not against this module's directory inside src/.
     """
-    if getattr(cfg, "UMAP_MODE", False):
-        return
-    if getattr(cfg, "TOP_EDGE_PERCENT", None) is not None:
-        return
-    if getattr(cfg, "SIMILARITY_THRESHOLD", None) is not None:
-        return
-
-    edge_filter = _cache_edge_filter(cache_path) or {}
-    mode = edge_filter.get("mode")
-    value = edge_filter.get("value")
-    if value is None:
-        return
-
-    if mode == "top_edge_percent":
-        cfg.TOP_EDGE_PERCENT = float(value)
-        print(f"Edge filter from the cache manifest: top {float(value)}% of edges.")
-    elif mode == "similarity_threshold":
-        cfg.SIMILARITY_THRESHOLD = float(value)
-        print(f"Edge filter from the cache manifest: score >= {float(value)}.")
-    elif mode == "umap_neighbors":
-        cfg.UMAP_MODE = True
-        cfg.UMAP_NEIGHBORS = int(value)
-        print(
-            "Edge filter from the cache manifest: UMAP topology, "
-            f"{int(value)} neighbours per node."
-        )
+    if value and value.startswith('..'):
+        return os.path.normpath(os.path.join(_bootstrap_vr.OPT_VR_DIR, value))
+    return value
 
 
-def _edges_for(cache_headers, cache_path=None):
-    """Rebuild the edge list from the source network.
-
-    The layout generator deliberately does not cache edges, so they are
-    derived here with the shared prepare_network. Using the upstream function
-    rather than a local copy is what keeps VR edge filtering identical to the
-    desktop viewer's.
-    """
-    empty = (np.zeros((0, 2), dtype=np.int32), np.zeros(0, dtype=np.float32))
-    network_path = getattr(cfg, "INPUT_HDF5", None)
-    if not network_path or not os.path.exists(network_path):
-        print(
-            f"Warning: source network {network_path!r} is unavailable; "
-            "showing nodes without edges."
-        )
-        return empty
-
-    _adopt_cache_edge_filter(cache_path)
-    if (
-        not getattr(cfg, "UMAP_MODE", False)
-        and getattr(cfg, "TOP_EDGE_PERCENT", None) is None
-        and getattr(cfg, "SIMILARITY_THRESHOLD", None) is None
-    ):
-        print(
-            "Warning: no edge filter is set and the cache manifest does not "
-            "name one, so edges cannot be rebuilt; showing nodes without "
-            "edges.\n         Set Similarity Threshold or Top Edge Percent in "
-            "the VR Configuration GUI."
-        )
-        return empty
-
+def _edge_filter_label(settings):
+    """Describe the edge filter `settings` name, or None when they name none."""
     try:
-        from desktop.Viewer_State import prepare_network
+        if getattr(settings, "UMAP_MODE", False) is True:
+            return f"UMAP topology, {int(settings.UMAP_NEIGHBORS)} neighbours per node"
+        top = getattr(settings, "TOP_EDGE_PERCENT", None)
+        if top is not None:
+            return f"top {float(top)}% of edges"
+        threshold = getattr(settings, "SIMILARITY_THRESHOLD", None)
+        if threshold is not None:
+            return f"score >= {float(threshold)}"
+    except (TypeError, ValueError):
+        pass
+    return None
 
-        with h5py.File(network_path, "r") as data:
-            network_headers, raw_edges, raw_scores = prepare_network(
-                data, settings=cfg
+
+def _describe_input_mismatch(stored, current):
+    """Name the inputs that differ from the files a cache was built from."""
+    reasons = []
+    for key, setting in (("sequence", "NODE_FASTA_FILE"), ("network", "INPUT_HDF5")):
+        recorded = stored["inputs"][key]
+        found = current["inputs"][key]
+        if recorded.get("sha256") != found["sha256"]:
+            reasons.append(
+                f"{setting} ({found['basename']}, {found['size_bytes']} bytes) is "
+                "not the file this cache was built from "
+                f"({recorded.get('basename', '?')}, {recorded.get('size_bytes', '?')} bytes)."
             )
-    except Exception as error:
-        print(f"Warning: could not rebuild edges from {network_path}: {error}")
-        return empty
+    if not reasons:
+        reasons.append("its manifest does not match the current inputs and settings.")
+    return " ".join(reasons)
 
-    index_of = {header: index for index, header in enumerate(cache_headers)}
-    mapped = []
-    scores = []
-    for position, (source, target) in enumerate(raw_edges):
-        first = index_of.get(network_headers[source])
-        second = index_of.get(network_headers[target])
-        if first is not None and second is not None:
-            mapped.append((first, second))
-            scores.append(raw_scores[position])
 
-    if not mapped:
-        return empty
-    return (
-        np.asarray(mapped, dtype=np.int32),
-        np.asarray(scores, dtype=np.float32),
+#: What verify_layout_cache established about a cache before it is opened.
+VerifiedCache = collections.namedtuple(
+    "VerifiedCache", "manifest provenance dimensions records edges edge_scores"
+)
+
+
+def verify_layout_cache(cache_path):
+    """Check a cache against the files it was built from, as the desktop does.
+
+    The desktop viewer takes a cache's analysis settings (score, normalization,
+    UMAP settings and edge filter) from the cache itself, rebuilds the folder
+    manifest from the current NODE_FASTA_FILE and INPUT_HDF5 and requires the
+    two to match, then requires the cache's node order to equal the network
+    filtered by the sanitised FASTA. This runs the same checks, for 3D caches
+    as well as 2D ones, and exits with the reason when one fails. Without them
+    an edited FASTA or a different network paired with an older layout, and
+    `export` and the edges described files the layout was never built from.
+
+    Returns the FASTA records and the edges the checks produced, so the viewer
+    reads neither file a second time.
+    """
+    import Cache_Manifest as cache_manifest
+    from desktop.Viewer_State import prepare_network, resolve_cache_settings
+    from utilities.Cache_Metadata import validate_cache_provenance
+    from utilities.Sequence_Utils import load_sanitized_fasta
+
+    name = os.path.basename(cache_path)
+    folder = os.path.dirname(os.path.abspath(cache_path))
+    try:
+        # ViewerSettingsError, which this raises, is a ValueError.
+        settings = resolve_cache_settings(cache_path, allow_3d=True)
+        stored = cache_manifest.read_manifest(folder)
+    except (OSError, ValueError) as error:
+        sys.exit(f"Cannot open {name}: {error}")
+
+    requested = _edge_filter_label(cfg)
+    for key, value in settings.items():
+        setattr(cfg, key, value)
+    adopted = _edge_filter_label(cfg)
+    print(f"Edge filter from the cache manifest: {adopted}.")
+    if requested is not None and requested != adopted:
+        print(
+            f"Note: the settings name {requested}; the cache's own filter is used, "
+            "as in the desktop viewer."
+        )
+
+    fasta = _input_path(
+        getattr(cfg, "NODE_FASTA_FILE", None) or getattr(cfg, "SEQUENCES_FILE", "")
+    )
+    network = _input_path(getattr(cfg, "INPUT_HDF5", None))
+    for setting, path in (("NODE_FASTA_FILE", fasta), ("INPUT_HDF5", network)):
+        if not path or not os.path.isfile(path):
+            sys.exit(
+                f"Cannot open {name}: {setting} {path!r} does not exist. A cache "
+                "opens only with the FASTA and network it was built from, as in "
+                "the desktop viewer; the edges are drawn from that network."
+            )
+
+    layout_mode = str(stored["compatibility"].get("layout_mode", ""))
+    dimensions = 3 if layout_mode.endswith("_3d") else 2
+    try:
+        current = cache_manifest.build_manifest_for_files(
+            fasta,
+            network,
+            alignment_score=cfg.ALIGNMENT_SCORE,
+            normalization=cfg.NORM_MODE,
+            umap_mode=cfg.UMAP_MODE,
+            umap_neighbors=cfg.UMAP_NEIGHBORS,
+            top_edge_percent=cfg.TOP_EDGE_PERCENT,
+            similarity_threshold=cfg.SIMILARITY_THRESHOLD,
+            layout_dimensions=dimensions,
+        )
+    except (OSError, ValueError) as error:
+        sys.exit(f"Cannot open {name}: {error}")
+    try:
+        manifest = cache_manifest.read_manifest(folder, current["compatibility"])
+    except (OSError, ValueError):
+        sys.exit(f"Cannot open {name}: {_describe_input_mismatch(stored, current)}")
+
+    try:
+        headers, sequences, _ = load_sanitized_fasta(fasta)
+        with h5py.File(network, "r") as data:
+            expected_headers, edges, edge_scores = prepare_network(
+                data, settings=cfg, selected_fasta_headers=headers
+            )
+        with h5py.File(cache_path, "r") as hf:
+            cache_manifest.validate_cache_hdf5(hf, expected_headers, manifest["manifest_id"])
+            provenance = validate_cache_provenance(hf.attrs, manifest["manifest_id"])
+    except (OSError, KeyError, ValueError) as error:
+        sys.exit(f"Cannot open {name}: {error}")
+
+    return VerifiedCache(
+        manifest=manifest,
+        provenance=provenance,
+        dimensions=dimensions,
+        records=list(zip(headers, sequences)),
+        edges=np.asarray(edges, dtype=np.int32).reshape(-1, 2),
+        edge_scores=np.asarray(edge_scores, dtype=np.float32),
     )
 
 
@@ -766,9 +790,14 @@ def load_layout_cache(cache_path=None):
     alignment, network construction, layout generation - is the main program's
     responsibility, and opt_vr is strictly a consumer of its output.
     CACHE_PATH defaults to the one the settings resolve to.
+
+    The cache is checked against the files it was built from first, as the
+    desktop viewer checks it (verify_layout_cache), and the result is returned
+    last: the manifest, provenance and FASTA records the check read.
     """
     cache_path = cache_path or _resolve_cache_path()
     print(f"Loading layout cache: {cache_path}")
+    source = verify_layout_cache(cache_path)
 
     metadata = {}
     with h5py.File(cache_path, "r") as hf:
@@ -811,12 +840,12 @@ def load_layout_cache(cache_path=None):
             f"{n_nodes} positions."
         )
 
-    edges, edge_scores = _edges_for(headers, cache_path)
+    edges, edge_scores = source.edges, source.edge_scores
     print(
         f"Loaded {n_nodes} nodes and {len(edges)} edges "
         f"from a {dimensions}D cache."
     )
-    return positions, edges, edge_scores, n_nodes, headers, list(headers), metadata
+    return positions, edges, edge_scores, n_nodes, headers, list(headers), metadata, source
 
 
 #: Root-level cache datasets with a fixed meaning. Any other dataset is a
@@ -875,37 +904,27 @@ def read_saved_session(cache_path):
     return state
 
 
-def _bind_layout_cache(viewer, cache_path):
+def _bind_layout_cache(viewer, source):
     """Record the cache binding the shared `save` command requires.
 
     `save` writes a new version into the folder of the cache this session
     loaded, and refuses unless the viewer carries that folder's manifest ID
     and the cache's provenance, the binding the desktop viewer records when it
-    opens a cache. A 2D cache is left unbound: its positions were lifted onto
-    z = 0, and saving them would put 3D coordinates in a 2D layout folder.
-    Either way the cache still opens; only `save` is unavailable, and the
-    reason is printed now rather than at save time.
+    opens a cache. `source`, from verify_layout_cache, holds both. A 2D cache
+    is left unbound: its positions were lifted onto z = 0, and saving them
+    would put 3D coordinates in a 2D layout folder. It still opens; only
+    `save` is unavailable, and the reason is printed now rather than at save
+    time.
     """
-    import Cache_Manifest as cache_manifest
-    from utilities.Cache_Metadata import validate_cache_provenance
-
-    try:
-        manifest = cache_manifest.read_manifest(os.path.dirname(cache_path))
-        with h5py.File(cache_path, "r") as hf:
-            dimensions = int(hf.attrs.get("layout_dimensions", hf["positions"].shape[1]))
-            provenance = validate_cache_provenance(hf.attrs, manifest["manifest_id"])
-    except (OSError, ValueError, KeyError) as error:
-        print(f"Note: save is unavailable for this cache ({error}).")
-        return
-    if dimensions != 3:
+    if source.dimensions != 3:
         print(
             "Note: save is unavailable for a 2D cache; its positions were lifted "
             "onto z = 0. Regenerate with LAYOUT_DIMENSIONS = 3 to save VR edits."
         )
         return
-    viewer.cache_manifest = manifest
-    viewer.cache_manifest_id = manifest["manifest_id"]
-    viewer._cache_provenance = provenance
+    viewer.cache_manifest = source.manifest
+    viewer.cache_manifest_id = source.manifest["manifest_id"]
+    viewer._cache_provenance = source.provenance
 
 
 def open_layout_session():
@@ -921,11 +940,13 @@ def open_layout_session():
     cache_path = _resolve_cache_path()
     cfg.TARGET_CACHE_PATH = cache_path
     cfg.TARGET_CACHE_FILE = cache_path
-    pos, edges, edge_scores, n_nodes, headers, full_headers, metadata = load_layout_cache(
-        cache_path
+    pos, edges, edge_scores, n_nodes, headers, full_headers, metadata, source = (
+        load_layout_cache(cache_path)
     )
 
-    viewer = HeadlessViewer(n_nodes, headers, full_headers, metadata)
+    viewer = HeadlessViewer(
+        n_nodes, headers, full_headers, metadata, source_records=source.records
+    )
     # A version `save` wrote carries the session it saved; reopen it as the
     # desktop viewer would, instead of starting from the defaults again.
     viewer.restore_cached_state(read_saved_session(cache_path))
@@ -936,7 +957,7 @@ def open_layout_session():
     # AttributeError.
     viewer.pos = pos
     viewer.original_pos = pos.copy()
-    _bind_layout_cache(viewer, cache_path)
+    _bind_layout_cache(viewer, source)
     return viewer
 
 
