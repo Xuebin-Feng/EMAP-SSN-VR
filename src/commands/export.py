@@ -32,10 +32,11 @@ documents.
    desktop, and the sequence set, directory layout and every message stay
    byte-identical between the two front ends.
 
-The sequences come from ``viewer.sequences_map``, which ``HeadlessViewer``
-populates from the same FASTA parse it already performs for ``Length``
-metadata - the same in-memory set upstream exports from, rather than a re-read
-of the file that could disagree with what the viewer is showing.
+The sequences come from ``viewer._selected_fasta_records``: the canonical
+records ``HeadlessViewer`` reads through the main program's
+``load_sanitized_fasta``, exactly as the desktop viewer does - the same
+in-memory set upstream exports from, rather than a re-read of the file that
+could disagree with what the viewer is showing.
 """
 
 import Command_Engine

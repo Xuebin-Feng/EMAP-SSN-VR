@@ -19,13 +19,6 @@ except ImportError:
     NUMBA_AVAILABLE = False
     print("\nNumba not found. Using standard Python (Slower).")
 
-try:
-    import torch
-    from utilities import Hardware_Utils
-    HAS_TORCH = True
-except Exception:
-    HAS_TORCH = False
-
 # --- 2. String & Label Helpers ---
 def get_network_suffix():
     suffix = ""
@@ -71,6 +64,10 @@ def get_cache_filename():
     TARGET_CACHE_FILE. The previous implementation re-derived the name from
     settings in a third place, and carried a comment warning that it had to
     "MATCH GUI PREDICTION LOGIC EXACTLY"; that duplication is now gone.
+
+    Only the path is returned. The alignment reference plays no part in cache
+    selection; the main program's resolve_selected_cache dropped it for the
+    same reason.
     """
     cache_path = getattr(cfg, "TARGET_CACHE_FILE", None)
     if cache_path and os.path.isdir(cache_path):
@@ -80,8 +77,7 @@ def get_cache_filename():
         candidates = sorted(glob.glob(os.path.join(glob.escape(cache_path), "*.h5")))
         if candidates:
             cache_path = candidates[-1]
-    reference = getattr(cfg, "ALIGNMENT_REFERENCE", "") or None
-    return cache_path, reference
+    return cache_path
 
 
 def get_cluster_alignment_dir(viewer):

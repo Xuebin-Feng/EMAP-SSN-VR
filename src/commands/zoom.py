@@ -1,4 +1,6 @@
-"""Explain that zooming belongs to the headset, instead of crashing.
+"""Not available in the VR viewer: zoom and move the network in the headset.
+
+Running it explains why, rather than crashing.
 
 Deliberately shadows the main program's ``zoom``, which drives a VisPy camera
 that does not exist in this process.

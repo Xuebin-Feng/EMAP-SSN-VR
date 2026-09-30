@@ -1,5 +1,6 @@
 import socket
 import struct
+import math
 import numpy as np
 import time
 import os
@@ -39,6 +40,75 @@ import Alignment_Manager
 from desktop.Viewer_State import resolve_selected_cache
 
 
+def _initial_node_rgba():
+    """The default node colour, parsed as the desktop viewer parses it.
+
+    Matplotlib accepts named colours as well as hex, so INITIAL_NODE_COLOR =
+    "red" colours the nodes red here too. Settings_VR also republishes it as
+    NEIGHBOR_COLOR, the name the VR client reads.
+    """
+    import matplotlib.colors as mcolors
+
+    value = (
+        getattr(cfg, 'INITIAL_NODE_COLOR', None)
+        or getattr(cfg, 'NEIGHBOR_COLOR', None)
+        or '#4488ff'
+    )
+    try:
+        return mcolors.to_rgba(value)
+    except (TypeError, ValueError):
+        print(f"Warning: {value!r} is not a colour; nodes start #4488ff.")
+        return mcolors.to_rgba('#4488ff')
+
+
+def _sequence_lookup(records):
+    """Index canonical FASTA records by full header and by first token.
+
+    The same index the desktop viewer builds (its _build_sequence_lookup).
+    """
+    lookup = {}
+    for header, sequence in records:
+        lookup[header] = sequence
+        parts = header.split()
+        if parts:
+            lookup[parts[0]] = sequence
+    return lookup
+
+
+def _saved_distance_scale():
+    """The saved Distance Scale, or 1.0 when it is not a positive number."""
+    value = getattr(cfg, 'DISTANCE_SCALE', 1.0)
+    try:
+        scale = float(value)
+    except (TypeError, ValueError):
+        scale = float('nan')
+    if math.isfinite(scale) and scale > 0:
+        return scale
+    if value not in (None, ""):
+        print(f"Warning: Distance Scale {value!r} is not a positive number; using 1.0.")
+    return 1.0
+
+
+def _rescaled_sizes(sizes, base_node_size):
+    """Saved node sizes, rescaled to the current NODE_SIZE as the desktop does.
+
+    `save` records the NODE_SIZE its sizes were drawn at as base_node_size.
+    Caches written before that attribute existed are read the desktop viewer's
+    way: uniform sizes follow NODE_SIZE, varied ones assume a base of 10.
+    """
+    new_base = float(cfg.NODE_SIZE)
+    if base_node_size is not None:
+        try:
+            old_base = float(base_node_size)
+            if old_base > 0 and old_base != new_base:
+                return sizes * (new_base / old_base)
+        except (TypeError, ValueError) as error:
+            print(f"Warning: Failed to rescale cached node sizes: {error}")
+        return sizes
+    if len(sizes) and np.allclose(sizes, sizes[0]):
+        return np.full_like(sizes, new_base)
+    return sizes * (new_base / 10.0)
+
 
 class DummyText:
     def __init__(self):
@@ -49,52 +119,37 @@ class HeadlessViewer:
         self.n_nodes = n_nodes
         self.headers = headers
         self.full_headers = full_headers
-        
-        # State Arrays
-        neighbor_hex = getattr(cfg, 'NEIGHBOR_COLOR', '#4488ff')
-        def parse_hex_color(hex_str):
-            h = hex_str.lstrip('#')
-            if len(h) == 6:
-                return [int(h[0:2], 16)/255.0, int(h[2:4], 16)/255.0, int(h[4:6], 16)/255.0, 1.0]
-            elif len(h) == 8:
-                return [int(h[0:2], 16)/255.0, int(h[2:4], 16)/255.0, int(h[4:6], 16)/255.0, int(h[6:8], 16)/255.0]
-            return [0.8, 0.8, 0.8, 1.0]
-        default_color = parse_hex_color(neighbor_hex)
-        self.current_colors = np.full((n_nodes, 4), default_color, dtype=np.float32)
+
+        # State arrays, with the desktop viewer's defaults (its _init_colors).
+        # A cache that carries a saved session replaces them through
+        # restore_cached_state.
+        self.current_colors = np.tile(
+            _initial_node_rgba(), (n_nodes, 1)
+        ).astype(np.float32)
         self.current_sizes = np.full(n_nodes, cfg.NODE_SIZE, dtype=np.float32)
         self.current_shapes = np.full(n_nodes, 'disc', dtype=object)
         self.visible_mask = np.ones(n_nodes, dtype=bool)
-        
+        self.node_render_order = np.arange(n_nodes, dtype=np.int32)
+
         # The terminal runs until the user exits, not until the VR client drops.
         self.running = True
         self.cluster_labels = None
         self.group_labels = [set() for _ in range(n_nodes)]
-        
-        #: Header -> sequence for the FASTA this layout cache was built from.
-        #: Parsed once because two consumers need it: 'Length' metadata below,
-        #: and 'export', which upstream writes straight from the sequence set
-        #: the viewer already holds rather than re-reading the file per run.
-        self.sequences_map = self._load_source_sequences()
+        self.last_cluster_params = None
+        #: Extra root-level cache datasets, which `save` writes back.
+        self._cacheable_attrs = set()
 
-        # Initialize metadata
+        #: The canonical records of the FASTA this layout was built from, and
+        #: a header -> sequence index over them. 'export' writes straight from
+        #: these, as upstream does, rather than re-reading the file per run.
+        self._selected_fasta_records = self._load_source_records()
+        self.sequences_map = _sequence_lookup(self._selected_fasta_records)
+
+        # Layout generation writes the initial metadata group (Length, kDa, pI
+        # and GRAVY), so the viewer only orders what the cache provides, as the
+        # desktop viewer does. A saved group without Length is a deliberate
+        # column deletion and stays deleted.
         self.metadata = metadata if metadata is not None else {}
-        
-        # Initialize Length metadata if not already loaded from cache
-        if "Length" not in self.metadata:
-            length_values = np.zeros(self.n_nodes, dtype=np.int32)
-            for i, h in enumerate(self.full_headers):
-                rec_id = h.split()[0] if h else ""
-                if h in self.sequences_map:
-                    length_values[i] = len(self.sequences_map[h])
-                elif rec_id in self.sequences_map:
-                    length_values[i] = len(self.sequences_map[rec_id])
-            
-            self.metadata["Length"] = {
-                "type": "number",
-                "values": length_values
-            }
-            
-        # Reorder metadata dictionary so "Length" is the first property
         if self.metadata and "Length" in self.metadata:
             ordered_metadata = {"Length": self.metadata["Length"]}
             for k, v in self.metadata.items():
@@ -117,7 +172,7 @@ class HeadlessViewer:
         # ---> Persistent Command History (Per Layout) <---
         self.command_history = []
         try:
-            cache_path, _ = utils.get_cache_filename()
+            cache_path = utils.get_cache_filename()
             folder_name = os.path.basename(os.path.dirname(cache_path))
             history_filename = f"{folder_name}.txt"
             
@@ -139,22 +194,21 @@ class HeadlessViewer:
         self.transform_position = [0.0, 0.0, 0.0]
         self.transform_rotation = [0.0, 0.0, 0.0, 1.0]
         self.transform_scale = [1.0, 1.0, 1.0]
-        self.distance_scale = 1.0
+        #: Spacing between nodes in the headset. It starts at the saved
+        #: Distance Scale; the client's two-hand gesture changes it later.
+        self.distance_scale = _saved_distance_scale()
         self.is_connected = False
-        
-        # Load Alignment
+
+        # Load the alignment. The offset shifts every reference-anchored
+        # position, read and applied exactly as the desktop viewer does, so
+        # `query`, `logo`, `label` and residue expressions number alike.
         self.active_reference = getattr(cfg, 'ALIGNMENT_REFERENCE', None)
         try:
-            self.alignment = Alignment_Manager.Alignment_Manager(
-                cfg.MSA_FILE, 
-                full_headers=self.full_headers, 
-                active_reference=self.active_reference
-            )
-            print("Alignment Manager successfully loaded.")
-        except Exception as e:
-            print(f"Warning: Failed to load Alignment Manager: {e}")
-            self.alignment = None
-        
+            self.alignment_offset = int(getattr(cfg, 'ALIGNMENT_OFFSET', 0))
+        except (TypeError, ValueError):
+            self.alignment_offset = 0
+        self.load_global_alignment()
+
     def _save_state(self):
         snapshot = {
             "colors": self.current_colors.copy(),
@@ -230,11 +284,14 @@ class HeadlessViewer:
         self.console_text.text = "Redo successful."
 
     def load_global_alignment(self):
+        # `reference` reloads through here, so the offset must travel with it,
+        # as it does in the desktop viewer.
         try:
             self.alignment = Alignment_Manager.Alignment_Manager(
-                cfg.MSA_FILE, 
-                full_headers=self.full_headers, 
-                active_reference=self.active_reference
+                cfg.MSA_FILE,
+                full_headers=self.full_headers,
+                active_reference=self.active_reference,
+                alignment_offset=self.alignment_offset,
             )
             print("Alignment Manager successfully loaded.")
         except Exception as e:
@@ -262,14 +319,15 @@ class HeadlessViewer:
             "distanceScale": self.distance_scale
         }
 
-    def _load_source_sequences(self):
-        """Header -> sequence for the FASTA this layout cache was built from.
+    def _load_source_records(self):
+        """Canonical (header, sequence) records of the layout's source FASTA.
 
-        Both the record id and its full description are keyed, because a cache
-        may carry either spelling and the caller matches on ``full_headers``.
-        A missing or unreadable file is not fatal: it costs 'Length' metadata
-        and leaves 'export' to say it has no sequences, which is what the
-        desktop viewer reports in the same situation.
+        The file is read through the main program's load_sanitized_fasta,
+        exactly as the desktop viewer and the layout generator read it. Every
+        stage of the pipeline sanitizes in memory, so the file itself may never
+        have been sanitized; reading it raw would miss every record whose
+        header the cache stores in canonical form. A missing or unreadable
+        file is not fatal: 'export' then says it has no sequences.
         """
         path = (
             getattr(cfg, 'NODE_FASTA_FILE', None)
@@ -282,19 +340,78 @@ class HeadlessViewer:
                 os.path.join(_bootstrap_vr.OPT_VR_DIR, path)
             )
         if not path or not os.path.exists(path):
-            return {}
+            return []
 
-        records = {}
         try:
-            from Bio import SeqIO
+            from utilities.Sequence_Utils import load_sanitized_fasta
 
-            for record in SeqIO.parse(path, "fasta"):
-                sequence = str(record.seq)
-                records[record.id] = sequence
-                records[record.description] = sequence
+            headers, sequences, _ = load_sanitized_fasta(path)
         except Exception as error:
-            print(f"Warning: Failed to parse the source FASTA ({error}).")
-        return records
+            print(f"Warning: Failed to read the source FASTA ({error}).")
+            return []
+        return list(zip(headers, sequences))
+
+    def restore_cached_state(self, state):
+        """Apply the session state a layout cache carries, as the desktop does.
+
+        `save` writes colours, sizes, shapes, visibility, the render order,
+        clusters, groups, the last clustering parameters and any extra
+        datasets into every version it writes; the desktop viewer reads all of
+        them back when it opens a cache, and so does this. Anything the cache
+        lacks keeps the default from __init__. An entry whose length does not
+        match the network is skipped with a warning rather than half-applied.
+        """
+        n_nodes = self.n_nodes
+
+        def fits(name, values, width=None):
+            shape = getattr(values, "shape", (len(values),))
+            if shape[0] == n_nodes and (width is None or (len(shape) == 2 and shape[1] == width)):
+                return True
+            print(f"Warning: ignoring the cache's saved {name}: it does not match "
+                  f"the {n_nodes} nodes of this network.")
+            return False
+
+        colors = state.get("colors")
+        if colors is not None and fits("colours", colors, 4):
+            self.current_colors = np.asarray(colors, dtype=np.float32)
+        sizes = state.get("sizes")
+        if sizes is not None and fits("sizes", sizes):
+            self.current_sizes = _rescaled_sizes(
+                np.asarray(sizes, dtype=np.float32), state.get("base_node_size")
+            )
+        shapes = state.get("shapes")
+        if shapes is not None and fits("shapes", shapes):
+            self.current_shapes = np.array(shapes, dtype=object)
+        visible = state.get("visible_mask")
+        if visible is not None and fits("visibility", visible):
+            self.visible_mask = np.asarray(visible, dtype=bool)
+        order = state.get("node_render_order")
+        if order is not None:
+            import Cache_Manifest as cache_manifest
+
+            try:
+                self.node_render_order = cache_manifest.validate_node_render_order(
+                    order, n_nodes
+                ).copy()
+            except ValueError as error:
+                print(f"Warning: ignoring the cache's saved render order: {error}")
+        clusters = state.get("cluster_labels")
+        if clusters is not None and fits("clusters", clusters):
+            self.cluster_labels = np.asarray(clusters)
+        groups = state.get("group_labels")
+        if groups is not None and fits("groups", groups):
+            self.group_labels = [set(group) for group in groups]
+        if state.get("last_cluster_params") is not None:
+            self.last_cluster_params = state["last_cluster_params"]
+        for name, value in (state.get("custom") or {}).items():
+            # The desktop viewer sets every extra dataset as an attribute.
+            # Here one must not replace live viewer state of the same name.
+            if hasattr(self, name) and name not in self._cacheable_attrs:
+                print(f"Warning: ignoring the cache's dataset {name!r}: it would "
+                      "replace viewer state of the same name.")
+                continue
+            setattr(self, name, value)
+            self._cacheable_attrs.add(name)
 
     def promote_nodes(self, indices):
         """Move one node group to the top of the persistent render order.
@@ -302,10 +419,10 @@ class HeadlessViewer:
         Nothing in the headset changes: the VR client places nodes in 3D, its
         depth buffer decides what occludes what, and ``update_nodes`` never
         sends an order. The desktop viewer's logic is mirrored exactly anyway,
-        because ``save`` writes ``node_render_order`` into the layout cache - a
-        session that colours nodes here and saves must reopen on the desktop
-        with the layering the same commands would have produced there. A no-op
-        would silently flatten it.
+        because ``save`` writes ``node_render_order`` into the layout cache and
+        reopening the cache restores it: the saved order must be the one the
+        same commands produce in the desktop viewer. A no-op would silently
+        flatten it.
         """
         import Cache_Manifest as cache_manifest
 
@@ -581,6 +698,19 @@ def _available_caches():
     )
 
 
+def _how_to_get_a_cache():
+    """The ways to get a layout cache this viewer can open, for its errors."""
+    layout_dir = getattr(cfg, "SAVED_LAYOUT_DIR", None) or "(unset)"
+    return (
+        "Generate one in the VR Configuration GUI: choose (New Layout Cache) and\n"
+        "Save & Run. The main program's src/Layout_Cache_Generator.py builds one too,\n"
+        "given a layout settings document with LAYOUT_DIMENSIONS 3 whose\n"
+        f"SAVED_LAYOUT_DIR is this viewer's:\n    {layout_dir}\n"
+        "Or set TARGET_CACHE_PATH in viewer_settings_vr.json (or the\n"
+        "SSN_TARGET_CACHE environment variable) to an existing cache."
+    )
+
+
 def _resolve_cache_path():
     pinned = getattr(cfg, "TARGET_CACHE_FILE", None)
     if pinned:
@@ -598,11 +728,7 @@ def _resolve_cache_path():
     except Exception as error:
         sys.exit(
             f"Could not work out which layout cache these settings describe: {error}\n\n"
-            "opt_vr consumes a cache produced by the main EMAP-SSN program; it "
-            "does not generate one. Build one with:\n"
-            "    python src/Layout_Cache_Generator.py <layout_settings.json>\n"
-            "or set TARGET_CACHE_PATH in viewer_settings.json - or the "
-            "SSN_TARGET_CACHE environment variable - to choose one explicitly."
+            + _how_to_get_a_cache()
         )
 
     # The resolver names the folder LAYOUT_DIMENSIONS selects, the "_3D" one
@@ -628,11 +754,7 @@ def _resolve_cache_path():
     sys.exit(
         "No layout cache matches the current settings. Looked for:\n"
         + "\n".join(f"    {folder}" for folder in folders)
-        + "\n\nopt_vr consumes a cache produced by the main EMAP-SSN program; "
-        "it does not generate one. Build one with:\n"
-        "    python src/Layout_Cache_Generator.py <layout_settings.json>\n"
-        "or point TARGET_CACHE_PATH (or SSN_TARGET_CACHE) at an existing "
-        "folder." + listing
+        + "\n\n" + _how_to_get_a_cache() + listing
     )
 
 
@@ -664,9 +786,10 @@ def load_layout_cache(cache_path=None):
                 dataset = group[name]
                 prop_type = dataset.attrs.get("type", "text")
                 raw_values = dataset[:]
-                if name == "Length":
-                    values = raw_values.astype(np.int32)
-                elif prop_type == "number":
+                # Read exactly as the desktop viewer reads it: every number,
+                # Length included, as float64; `meta` and the HUD formatter
+                # show integral values without decimals.
+                if prop_type == "number":
                     values = raw_values.astype(np.float64)
                 else:
                     values = np.array(
@@ -694,6 +817,62 @@ def load_layout_cache(cache_path=None):
         f"from a {dimensions}D cache."
     )
     return positions, edges, edge_scores, n_nodes, headers, list(headers), metadata
+
+
+#: Root-level cache datasets with a fixed meaning. Any other dataset is a
+#: custom attribute, exactly as the desktop viewer's loader treats it.
+_CORE_CACHE_DATASETS = frozenset({
+    "headers", "positions", "colors", "sizes", "shapes", "visible_mask",
+    "cluster_labels", "group_labels", "metadata", "connectivity",
+    "edge_scores", "node_render_order",
+})
+
+
+def _decoded(value):
+    return value.decode("utf-8") if isinstance(value, bytes) else value
+
+
+def read_saved_session(cache_path):
+    """The session state a layout cache carries, read as the desktop reads it.
+
+    Everything `save` writes beside the positions: colours, sizes and the
+    NODE_SIZE they were drawn at, shapes, visibility, the render order,
+    clusters, groups, the last clustering parameters and any extra datasets.
+    HeadlessViewer.restore_cached_state applies it. A freshly generated cache
+    carries none of it, and the viewer keeps its defaults.
+    """
+    state = {"custom": {}}
+    with h5py.File(cache_path, "r") as hf:
+        if "colors" in hf:
+            state["colors"] = hf["colors"][:]
+        if "sizes" in hf:
+            state["sizes"] = hf["sizes"][:].astype(np.float32)
+            state["base_node_size"] = hf.attrs.get("base_node_size", None)
+        if "shapes" in hf:
+            state["shapes"] = [_decoded(value) for value in hf["shapes"][:]]
+        if "visible_mask" in hf:
+            state["visible_mask"] = hf["visible_mask"][:]
+        if "node_render_order" in hf:
+            state["node_render_order"] = hf["node_render_order"][:]
+        if "cluster_labels" in hf:
+            state["cluster_labels"] = hf["cluster_labels"][:]
+        if "group_labels" in hf:
+            state["group_labels"] = json.loads(_decoded(hf["group_labels"][()]))
+        if "last_cluster_params" in hf.attrs:
+            value = _decoded(hf.attrs["last_cluster_params"])
+            if isinstance(value, str) and value.startswith("["):
+                state["last_cluster_params"] = tuple(json.loads(value))
+            else:
+                state["last_cluster_params"] = tuple(value)
+        for name in hf.keys():
+            dataset = hf[name]
+            if name in _CORE_CACHE_DATASETS or not isinstance(dataset, h5py.Dataset):
+                continue
+            if dataset.attrs.get("is_json", False):
+                state["custom"][name] = json.loads(_decoded(dataset[()]))
+            else:
+                state["custom"][name] = dataset[()] if dataset.shape == () else dataset[:]
+    return state
 
 
 def _bind_layout_cache(viewer, cache_path):
@@ -747,6 +926,9 @@ def open_layout_session():
     )
 
     viewer = HeadlessViewer(n_nodes, headers, full_headers, metadata)
+    # A version `save` wrote carries the session it saved; reopen it as the
+    # desktop viewer would, instead of starting from the defaults again.
+    viewer.restore_cached_state(read_saved_session(cache_path))
     viewer.edges = edges  # Retain full edge list for viewing purposes/commands
     viewer.edge_scores = edge_scores
     # Commands such as `save` read viewer.pos; without these two lines the
@@ -1122,22 +1304,66 @@ def find_vr_app():
     return None
 
 
+def _is_newer_version(installed, pinned):
+    """True when `installed` is a later release than `pinned`."""
+    try:
+        from packaging.version import InvalidVersion, Version
+    except ImportError:  # pragma: no cover - packaging ships with the environment
+        return False
+    try:
+        return Version(str(installed)) > Version(str(pinned))
+    except (InvalidVersion, TypeError):
+        return False
+
+
+def _is_player_dir(folder):
+    player_dir = os.path.join(_bootstrap_vr.OPT_VR_DIR, DEFAULT_PLAYER_DIR)
+    return os.path.normcase(os.path.normpath(folder)) == os.path.normcase(os.path.normpath(player_dir))
+
+
 def warn_about_stale_player(exe_path):
     """Say so when the installed client is not the release this checkout pins.
 
     A `git pull` can move the pin to a newer client while player/ keeps the
-    old one. It is started anyway; the note says how to update it. Returns the
-    installed version, or None when the build does not say.
+    old one. It is started anyway; the note says how to update it. A newer
+    client, such as a test build, is started as it is. A folder without
+    vr_client.json holds no EMAP-SSN-VR client release at all - a Unity-era
+    build a saved VR Client Build folder still names, for example - and gets
+    a note saying how to go back to the pinned client. Returns the installed
+    version, or None when the build does not say.
     """
-    info = Player_Build_VR.read_client_info(os.path.dirname(exe_path)) or {}
-    installed = info.get("version")
+    folder = os.path.dirname(exe_path)
+    info = Player_Build_VR.read_client_info(folder)
     pin = Player_Build_VR.read_release_pin()
     pinned = pin["version"] if pin else None
+    if info is None:
+        if _is_player_dir(folder):
+            CONSOLE.message(
+                "Note: player/ has no vr_client.json, so the installed VR client's "
+                "version is unknown. Run install_vr.bat to replace it with the "
+                "pinned release."
+            )
+        else:
+            CONSOLE.message(
+                f"Note: {folder} has no vr_client.json, so "
+                f"{os.path.basename(exe_path)} is not an EMAP-SSN-VR client "
+                "release (a Unity-era build, for example). Set VR Client Build in "
+                "the VR Configuration GUI back to player to use the pinned client."
+            )
+        return None
+    installed = info.get("version")
     if pinned and installed and installed != pinned:
-        CONSOLE.message(
-            f"Note: the installed VR client is {installed}, but this checkout pins "
-            f"{pinned}. Run install_vr.bat to update it."
-        )
+        if _is_newer_version(installed, pinned):
+            CONSOLE.message(
+                f"Note: the installed VR client is {installed}, newer than the "
+                f"{pinned} this checkout pins, so it is started as it is. Run "
+                f"install_vr.bat to install {pinned} instead."
+            )
+        else:
+            CONSOLE.message(
+                f"Note: the installed VR client is {installed}, but this checkout pins "
+                f"{pinned}. Run install_vr.bat to update it."
+            )
     return installed
 
 
@@ -1205,6 +1431,9 @@ def ensure_vr_client(say=print):
     its SHA-256 and unpacks it, so pulling is all an update takes. A client
     the user pointed VR_APP_DIR at is theirs, and is left alone. If the
     install fails, for example offline, whatever client is installed is used.
+    An automatic update never moves player/ backwards: a newer client there,
+    such as a test build installed with build_release.ps1 -InstallTo, is kept,
+    and install_vr.bat remains the way to install the pinned one over it.
     Returns True when player/ holds the pinned release afterwards.
     """
     pin = Player_Build_VR.read_release_pin()
@@ -1216,8 +1445,14 @@ def ensure_vr_client(say=print):
             and any(_is_player(path) for path in glob.glob(os.path.join(glob.escape(configured), "*.exe"))):
         return False
     installed = (Player_Build_VR.read_client_info(player_dir) or {}).get("version")
-    if installed == pin["version"] and os.path.isfile(os.path.join(player_dir, "EMAP-SSN-VR.exe")):
+    has_client = os.path.isfile(os.path.join(player_dir, "EMAP-SSN-VR.exe"))
+    if installed == pin["version"] and has_client:
         return True
+    if has_client and _is_newer_version(installed, pin["version"]):
+        say(f"player/ holds VR client {installed}, newer than the {pin['version']} "
+            "this checkout pins, so Save & Run keeps it. install_vr.bat installs "
+            f"{pin['version']} over it.")
+        return False
     say(f"Installing VR client {pin['version']} into {player_dir}...")
     # Windows PowerShell cannot load its own modules with PowerShell 7's
     # module path, which a terminal may pass down; unset, it uses its own.

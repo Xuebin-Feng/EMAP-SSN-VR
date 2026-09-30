@@ -13,7 +13,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Explain that structure prediction is desktop-only, instead of crashing.
+"""Not available in the VR viewer: structure prediction needs the desktop viewer.
+
+Running it explains why and what to use instead, rather than crashing.
 
 The main program's ``esmfold`` is wired to the Viewer web server from end to
 end. It registers a sidebar button through ``web_ui.esmfold_backend``, asks
@@ -45,8 +47,8 @@ Why:
 
 What to use instead:
   - Select the nodes in the desktop EMAP-SSN viewer and run 'esmfold' there.
-    Structures land in the shared Analysis Results directory, so a VR session
-    and a desktop session fold into the same place.
+    Structures land in the desktop program's Analysis Results directory; this
+    viewer keeps its own results under opt_vr.
   - To take sequences out of this session, 'export' writes cluster or group
     subsets as FASTA files you can fold with any external tool.
 """

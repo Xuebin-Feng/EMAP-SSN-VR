@@ -145,6 +145,17 @@ class InstallerSourceTests(unittest.TestCase):
         self.assertLess(source.index("$actual = Get-Sha256 $archive"),
                         source.index("ZipFile]::ExtractToDirectory"))
 
+    def test_removing_the_previous_client_cannot_fail_an_install(self):
+        """Once the new client is in place, cleanup is housekeeping, not an error."""
+        source = self.read(CLIENT_INSTALLER)
+        failure = source.index("exit 5")
+        cleanup = source.index("could not be removed")
+        self.assertLess(failure, cleanup, "the cleanup must sit after the failing block")
+        self.assertLess(cleanup, source.index("[OK] Installed VR client"))
+        tail = source[failure:source.index("[OK] Installed VR client")]
+        self.assertIn("Remove-Item -Recurse -Force $Previous", tail)
+        self.assertIn("catch", tail)
+
     def test_no_module_cmdlets_are_needed(self):
         # From a PowerShell 7 terminal, Windows PowerShell inherits a module
         # path that hides its own module cmdlets; .NET calls are unaffected.

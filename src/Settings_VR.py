@@ -252,7 +252,11 @@ def _coerce(key, value):
 
 
 def load_settings() -> dict:
-    """Merge shared defaults, viewer_settings.json and VR-only overrides."""
+    """Merge the shared defaults, the VR-only defaults and viewer_settings_vr.json.
+
+    The file is the launch snapshot instead when SSN_VIEWER_SETTINGS_PATH names
+    one; the desktop program's viewer_settings.json is never read.
+    """
     values = dict(DEFAULTS)
     values.update(VR_DEFAULTS)
 

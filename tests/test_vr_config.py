@@ -429,21 +429,31 @@ class ClientEndpointTests(unittest.TestCase):
 
     def test_note_text_is_decided_without_qt(self):
         """The wording is a pure function, so it is worth pinning directly."""
+        foreign = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, foreign, ignore_errors=True)
+        open(os.path.join(foreign, "EMAP-SSN-VR.exe"), "w").close()
         report = report_from(
             """
             decide = namespace["bridge_note_text"]
-            print("@@" + json.dumps({
+            player = os.path.join(str(namespace["PROJECT_ROOT"]), "player")
+            print("@@" + json.dumps({{
                 "missing": decide(None, "127.0.0.1", 5005),
                 "match": decide(("127.0.0.1", 5005), "127.0.0.1", 5005),
                 "differs": decide(("127.0.0.1", 5005), "127.0.0.1", 6000),
-            }))
-            """
+                "foreign": decide(None, "127.0.0.1", 5005, build_dir={foreign!r}),
+                "player": decide(None, "127.0.0.1", 5005, build_dir=player),
+            }}))
+            """.format(foreign=foreign)
         )
         self.assertIn("install_vr.bat", report["missing"])
         self.assertIn("127.0.0.1:5005", report["match"])
         self.assertNotIn("by hand", report["match"])
         self.assertIn("127.0.0.1:6000", report["differs"], "must name what Save & Run passes")
         self.assertIn("127.0.0.1:5005", report["differs"], "must name the build's own default")
+        # A Unity-era build folder: Save & Run starts its .exe and installs nothing.
+        self.assertIn("installs nothing", report["foreign"])
+        self.assertNotIn("downloads", report["foreign"])
+        self.assertIn("downloads the pinned release", report["player"])
 
     def test_a_client_never_overrides_or_locks_the_fields(self):
         report = self.note_for(self.client_folder(port=5005), port=6000)

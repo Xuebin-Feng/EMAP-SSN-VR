@@ -41,7 +41,6 @@ import tempfile
 from types import SimpleNamespace
 import traceback
 from pathlib import Path
-
 from utilities.Terminal_Launcher import HoldMode, launch_in_terminal
 from desktop.Desktop_App import (
     APPLICATION_VERSION,
@@ -88,13 +87,38 @@ BRIDGE_NOTE_MISSING = (
     "install_vr.bat does; or choose the folder that holds EMAP-SSN-VR.exe."
 )
 
+#: The chosen folder holds an executable but no vr_client.json, so it is no
+#: EMAP-SSN-VR client release - typically a Unity-era build a saved profile
+#: still names. Save & Run starts it as it is and installs nothing, so the
+#: download promise of BRIDGE_NOTE_MISSING would be wrong here.
+BRIDGE_NOTE_FOREIGN = (
+    "This folder holds an executable but no vr_client.json, so it is not an "
+    "EMAP-SSN-VR client release (a Unity-era build, for example). Save & Run "
+    "starts it as it is and installs nothing. Choose player to use the pinned "
+    "client, which install_vr.bat and Save & Run install there."
+)
+
+
+def _holds_foreign_client(build_dir):
+    """True for a folder other than player/ that holds a non-console .exe."""
+    if not build_dir or not os.path.isdir(build_dir):
+        return False
+    player_dir = os.path.join(str(PROJECT_ROOT), Player_Build_VR.DEFAULT_CLIENT_DIR)
+    if os.path.normcase(os.path.abspath(build_dir)) == os.path.normcase(os.path.abspath(player_dir)):
+        return False
+    return any(
+        "console" not in name.lower()
+        for name in os.listdir(build_dir)
+        if name.lower().endswith(".exe")
+    )
+
 VR_CONTROL_TIPS = {
     "VR_APP_DIR": "VR Client Build: Folder containing the VR client (EMAP-SSN-VR.exe). Relative paths start in opt_vr.\ninstall_vr.bat installs the client in player/.",
     "VR_HOST": "VR Client Host: Local address where the Python viewer listens for the VR client.\nSave & Run passes it to the client it starts.",
     "VR_PORT": "VR Client Port: TCP port where the Python viewer listens for the VR client (1–65535).\nSave & Run passes it to the client it starts.",
     "ENABLE_EDGE_FILTERING": "Limit Rendered Edges: ON caps the edges sent to the VR client at Max Edges; OFF sends all retained edges.\nReducing the rendered edges can improve VR performance.",
     "MAX_RENDER_EDGES": "Max Edges: Maximum number of edges sent to the VR client when Limit Rendered Edges is ON.\nAbove this limit, the viewer samples edges with a preference for weaker connections. Zero sends no edges.",
-    "DISTANCE_SCALE": "Distance Scale: Saved distance-scale value.\nThe current VR viewer starts at 1.0 and accepts scale updates from the VR client; it does not yet apply this saved value at startup.",
+    "DISTANCE_SCALE": "Distance Scale: Spacing between the nodes in the headset; 1.0 keeps the layout's own spacing.\nThe VR viewer starts at this value, and the two-hand gesture in the headset changes it during a session.",
     "EXIT_WITH_UNITY": "Quit with VR Client: ON closes the Python viewer when the VR client closes.\nOFF keeps the viewer and its command console running for debugging.",
 }
 
@@ -115,10 +139,10 @@ def style_toggle_switch(button, checked):
     button.setStyleSheet(TOGGLE_ON_STYLE if checked else TOGGLE_OFF_STYLE)
 
 
-def bridge_note_text(endpoint, host, port):
+def bridge_note_text(endpoint, host, port, build_dir=None):
     """Describe the selected client and the endpoint Save & Run gives it."""
     if endpoint is None:
-        return BRIDGE_NOTE_MISSING
+        return BRIDGE_NOTE_FOREIGN if _holds_foreign_client(build_dir) else BRIDGE_NOTE_MISSING
     build_host, build_port = endpoint
     note = f"Save & Run starts this VR client dialling {host}:{port}."
     if (host, port) != (build_host, build_port):
@@ -151,10 +175,9 @@ TARGET_CACHE_PATH = os.environ.get("SSN_TARGET_CACHE_PATH", None)
 TARGET_CACHE_MODE = os.environ.get("SSN_TARGET_CACHE_MODE", None)
 
 # This GUI belongs to the submodule, so its root - and every relative
-# directory it resolves - is opt_vr. MAIN_PROJECT_ROOT is kept only for
-# reaching the shared pipeline scripts under src/.
+# directory it resolves - is opt_vr. SRC_DIR reaches the shared pipeline
+# scripts in the parent checkout's src/.
 PROJECT_ROOT = Path(_bootstrap_vr.OPT_VR_DIR)
-MAIN_PROJECT_ROOT = Path(_bootstrap_vr.PROJECT_ROOT)
 SRC_DIR = Path(_bootstrap_vr.SRC_DIR)
 
 # --- Directory & File Paths ---
@@ -720,7 +743,7 @@ if __name__ == "__main__":
         QComboBox, QPushButton, QMessageBox, QTextEdit,
         QLabel, QSplitter, QSlider, QSpinBox, QDoubleSpinBox,
         QStyle, QStyleOptionSlider, QFileDialog, QColorDialog, QSizePolicy,
-        QFrame, QScrollArea, QCheckBox,
+        QFrame, QScrollArea,
     )
     from desktop.Desktop_App import (
         ResponsiveFieldLayout,
@@ -1719,7 +1742,7 @@ if __name__ == "__main__":
         def setup_tips(self):
             self.tip_db_keys = {
                 **VR_CONTROL_TIPS,
-                "SAVED_CONFIG": "Saved Config: Selects the settings profile used for this tab.\n(custom) uses the current viewer_settings.json values; (default) uses read-only built-in defaults; (new) creates a named profile; named entries load profiles from the Saved Config Directory.",
+                "SAVED_CONFIG": "Saved Config: Selects the settings profile used for this tab.\n(custom) uses the current viewer_settings_vr.json values; (default) uses read-only built-in defaults; (new) creates a named profile; named entries load profiles from the Saved Config Directory.",
                 "NODE_FASTA_FILE": "Primary FASTA file containing sequences visualized as nodes in the SSN.\nMust match sequences present in the selected network edges and multiple alignments.",
                 "MSA_FILE": "Multiple sequence alignment file (.fasta, .h5, or _sparse.h5) for the sequence set.\nUsed to calculate positional conservation, gaps, and occupancy thresholds during analysis.",
                 "INPUT_HDF5": "Network or similarity matrix file (.h5) containing pairwise sequence similarity scores and edge coordinates.\nMust contain alignment metrics for at least all sequences present in the active sequence set.",
@@ -3204,7 +3227,6 @@ if __name__ == "__main__":
 
             visual_row = color_row_start + (len(color_keys) + 1) // 2
 
-            # --- Low Resource Mode Toggle ---
             main_layout.addLayout(self._responsive_grid_rows(visual_grid, "visual"))
 
             # --- VR client bridge -------------------------------------------
@@ -3750,6 +3772,7 @@ if __name__ == "__main__":
                     endpoint,
                     host.text().strip(),
                     int(port.value()),
+                    build_dir=build_dir,
                 )
                 for key in ("VR_APP_DIR", "VR_HOST", "VR_PORT"):
                     tip = VR_CONTROL_TIPS[key] + "\n" + text
@@ -4245,7 +4268,7 @@ if __name__ == "__main__":
             env["SSN_VIEWER_SETTINGS_PATH"] = settings_snapshot
 
             # Use the project root (parent of src/) as cwd so all relative data paths resolve correctly
-            script_dir = str(MAIN_PROJECT_ROOT)
+            script_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
             if cache_mode == "new":
                 try:

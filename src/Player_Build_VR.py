@@ -18,7 +18,7 @@
 The Godot player ships a small ``vr_client.json`` beside ``EMAP-SSN-VR.exe``,
 written by its export script::
 
-    {"client": "EMAP-SSN-VR Godot client", "version": "0.1.0", "protocol": 1,
+    {"client": "EMAP-SSN-VR Godot client", "version": "1.0.0", "protocol": 1,
      "host": "127.0.0.1", "port": 5005, "godot": "4.7.2.stable", "commit": "..."}
 
 The viewer passes the endpoint to the player on its command line, so the two

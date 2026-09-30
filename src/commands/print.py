@@ -13,7 +13,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Explain that figure export is not wired up yet, instead of crashing.
+"""Not available in the VR viewer yet: figures need the desktop viewer's canvas.
+
+Running it explains why and what to use instead, rather than crashing.
 
 The main program's ``print`` renders the VisPy canvas: it reads
 ``viewer.canvas``, drives ``viewer.view.camera`` and calls ``canvas.render()``
@@ -42,9 +44,10 @@ Why:
   camera whose framing a figure could inherit.
 
 What to use instead, for now:
-  - Open the same layout in the desktop EMAP-SSN viewer and run 'print' there.
-    'save' writes a cache that carries colours, sizes, clusters, groups and
-    hidden nodes across, so the figure matches this session's state.
+  - Open the network's 2D layout in the desktop EMAP-SSN viewer and run
+    'print' there. The desktop viewer does not open this viewer's 3D caches,
+    so re-apply this session's colours and groups there; 'run' can replay a
+    script of the same commands.
   - 'export' writes the sequence subsets themselves as FASTA files.
 """
 

@@ -5,19 +5,34 @@ an alternative viewer that plots a Sequence Similarity Network in 3D and
 renders it in a headset through a Godot 4 / OpenXR client.
 
 This repository is consumed as the `opt_vr` submodule of EMAP-SSN and is not
-designed to run standalone.
+designed to run standalone. EMAP-SSN itself does not need it.
+
+It needs Windows, a supported NVIDIA or AMD GPU (see [Hardware](#hardware)),
+and a VR headset with an OpenXR runtime such as SteamVR.
+
+Get it together with a new clone of EMAP-SSN:
 
 ```bash
-git clone https://github.com/Xuebin-Feng/EMAP-SSN.git
+git clone --recurse-submodules https://github.com/Xuebin-Feng/EMAP-SSN.git
+```
+
+or add it to an existing clone:
+
+```bash
 cd EMAP-SSN
 git submodule update --init opt_vr
 ```
+
+GitHub's source archives of EMAP-SSN, from **Download ZIP** or a release
+page, contain an empty `opt_vr/` folder, because GitHub leaves submodules out
+of them. Use git as above instead.
 
 > [!IMPORTANT]
 > **Windows only.** The VR client is a Windows build, and the viewer
 > launches it directly, so every VR entry point refuses to start anywhere else
 > rather than failing later on a missing `.exe`. The main program stays
-> cross-platform, and its desktop viewer opens the same layout caches in 2D.
+> cross-platform, and its desktop viewer shows the same networks in 2D, from
+> their 2D layout caches; it does not open the 3D caches this viewer uses.
 > This is why `opt_vr` ships `.bat` launchers and no `.sh` or `.app`
 > counterparts.
 
@@ -34,8 +49,9 @@ like every other mirrored file here. It does two things:
   one asset of a GitHub release of this repository, and `player_release.json`
   pins which one, with its SHA-256. The installer downloads it, refuses it
   unless the checksum matches, and only then unpacks it. A client that is
-  already the pinned version is left alone; `install_vr.bat --reinstall`
-  replaces it anyway.
+  already the pinned version is left alone. Any other client in `player/`,
+  older or newer, is replaced, and `install_vr.bat --reinstall` replaces even
+  the pinned one.
 - **Writes `EMAP-SSN VR.lnk`** beside this README and offers to copy it to
   your Desktop. The shortcut sets the Python environment up on its first run,
   exactly as the `EMAP-SSN` and `EMAP-SSN Tools` shortcuts do, so that first
@@ -49,11 +65,26 @@ set EMAPSSN_VR_CLIENT_ZIP=C:\path\to\EMAP-SSN-VR-Client-<version>-win64.zip
 opt_vr\install_vr.bat
 ```
 
-Updating needs nothing more than `git pull`. When the pin names a client that
-`player/` does not hold, including on a first run with no client at all,
-**Save & Run** installs it before starting it, with the same download and
-checksum check. Offline, it starts whichever client is installed and says
-which version the checkout expects.
+To update, pull EMAP-SSN together with its submodule:
+
+```bash
+git pull --recurse-submodules
+```
+
+A plain `git pull` updates EMAP-SSN but leaves `opt_vr` on its old commit,
+which may not work with the updated main program; `git submodule status` then
+marks it with a `+`. Run `git submodule update --init opt_vr` to catch up.
+Don't run `git pull` inside `opt_vr`: EMAP-SSN checks it out at the exact
+commit it records, not on a branch, so a pull there fails.
+
+When `player/` holds no client, one without `vr_client.json`, or an older
+version than the pin names, including on a first run, **Save & Run** installs
+the pinned release before starting it, with the same download and checksum
+check. It never moves `player/` backwards: a newer client there, such as a
+test build, is kept and started as it is, and `install_vr.bat` installs the
+pinned one over it. A client folder chosen in **VR Client Build** is left
+alone. Offline, Save & Run starts whichever client is installed and says which
+version the checkout expects.
 
 ## Repository layout
 
@@ -71,6 +102,8 @@ opt_vr/
 ├── install_vr.bat                       # installs the VR client, writes the shortcut
 ├── player_release.json                  # the client release to install, with its SHA-256
 ├── player/                              # the installed VR client (ignored)
+├── Input_Files/                         # sequence sets, networks, MSAs, metadata, header lists (ignored)
+├── Analysis_Results/                    # command outputs: label workbooks, logos, exports (ignored)
 ├── Cache_Files/                         # runtime working directory (ignored)
 ├── viewer_settings_vr.json              # per-user settings (ignored)
 ├── docs/PROTOCOL.md                     # Python/VR client wire protocol
@@ -80,6 +113,7 @@ opt_vr/
     ├── _bootstrap_vr.py                 # sys.path and the Windows-only guard
     ├── EMAPSSN_Config_VR.py             # VR Configuration GUI
     ├── EMAPSSN_Viewer_VR.py             # VR viewer and VR client bridge
+    ├── Layout_Launcher_VR.py            # generates a new 3D cache, then opens the VR viewer
     ├── Settings_VR.py                   # Qt-free settings layer
     ├── Viewer_Utils_VR.py               # sequence and colour helpers
     ├── Player_Build_VR.py                # reads the installed client and the pin
@@ -126,7 +160,7 @@ open at the same time.
 `opt_vr` owns no virtual environment. It imports the main program's `src` tree
 for everything scientific, so it runs in the parent's managed `.venv` — and
 creating, repairing and validating that environment (the uv bootstrap,
-`uv venv --python 3.12`, `Install_Dependencies.py` and the cross-process setup
+`uv venv --python 3.13`, `Install_Dependencies.py` and the cross-process setup
 lock) is delegated to `src/bin/EMAPSSN.bat`. One implementation and one lock,
 rather than two that can drift apart.
 
@@ -167,17 +201,22 @@ is identical by construction, so every feature — saved-config profiles, networ
 statistics, the score histogram, colour pickers, live field gating, input
 consistency checks — behaves exactly as it does in the main program.
 
-The copy diverges from its source by about **220 of 4,200 lines**, most of them
-the new VR tab. The rest is small and deliberate:
+The copy has **4,379 lines** to its source's 4,034. **420** of its lines are
+new or rewritten, replacing **75** of the source's, and most of them are the
+VR client block on the Visual Effects tab. Every difference is deliberate:
 
 | Change | Why |
 |---|---|
-| `PROJECT_ROOT` → `opt_vr` | every relative directory resolves in the submodule |
+| `_bootstrap_vr` import and Windows-only guard | puts the parent's `src` on `sys.path`; like every VR entry point, the GUI refuses to start off Windows |
+| `PROJECT_ROOT` → `opt_vr` | every relative directory resolves in the submodule; `SRC_DIR` still reaches the shared pipeline scripts |
 | `viewer_settings_vr.json` | the desktop program's settings are never touched |
 | launches `src/EMAPSSN_Viewer_VR.py` | the VR viewer, not the desktop one |
+| a new cache goes through `src/Layout_Launcher_VR.py` | it generates the 3D cache, then opens the VR viewer; the shared generator's `--launch-viewer` would open the desktop one |
+| flat settings snapshot | `Settings_VR` reads flat keys, and the desktop document encoder would drop every VR-only one |
 | `layout_dimensions=3` forced | into cache identity and layout generation |
-| VR client block on **Visual Effects** | host, port, distance scale, edge budget, client folder |
+| VR client block on **Visual Effects** | host, port, distance scale, edge budget, client folder, **Quit with VR Client**; a client folder saved for the Unity client is migrated |
 | removed controls | see below |
+| window, terminal and error titles; icon | name the VR window, and find its icon in the parent checkout |
 | distinct single-instance key | both windows can be open at once |
 
 Four settings the desktop GUI offers are deliberately absent, because nothing
@@ -193,8 +232,8 @@ in the VR runtime reads them and no shared command does either:
 `INITIAL_NODE_COLOR` under that name and it wins, so a second control would
 silently discard whatever was picked in it.
 
-Keeping it in sync with upstream is a `diff` against `src/EMAPSSN_Config.py`,
-and that table is the list of hunks that are meant to differ.
+Keeping it in sync with upstream is a `diff` against `src/EMAPSSN_Config.py`:
+every hunk should fall under a row of the first table. Anything else is drift.
 
 The viewer never computes a layout. If you need a cache without the GUI:
 
@@ -207,7 +246,10 @@ distinct manifest id, so they never collide with the 2D cache built from the
 same inputs. A 2D cache still opens; its coordinates are lifted onto the
 `z = 0` plane and a warning is printed. `save` is unavailable in that case,
 because it would write 3D coordinates into a 2D layout folder. In a 3D session,
-`save` writes a new version beside the cache the session opened.
+`save` writes a new version beside the cache the session opened. Opening a
+version `save` wrote restores its session as the desktop viewer does: colours,
+sizes, shapes, visibility, render order, clusters, groups, the last clustering
+parameters and custom attributes.
 
 To skip the GUI and open the viewer directly against the saved settings, run
 `src/EMAPSSN_Viewer_VR.py`. With nothing pinned it resolves the cache through the main
@@ -217,14 +259,19 @@ overrides that.
 
 ## Configuration
 
-Settings are shared with the main program. `viewer_settings.json` in the
-EMAP-SSN project root is the source of truth, and the EMAP-SSN Config GUI is
-what writes it — **the VR runtime only ever reads it**, so no Qt is imported
-into the headless VR process. `src/Settings_VR.py` layers the handful of VR-only
-keys (VR client host/port, edge-render budget) on top of the shared defaults in
-the main program's `src/desktop/Viewer_State.py`. Drop a
-`viewer_settings_vr.json` in the submodule root to override any of them
-locally.
+The VR viewer is configured separately from the desktop program: it never
+reads or writes the main program's `viewer_settings.json`. The VR
+Configuration GUI writes **`opt_vr/viewer_settings_vr.json`**, and
+**Save & Run** hands the viewer a snapshot of the window's current values, so
+the viewer runs with exactly what the window shows.
+
+`src/Settings_VR.py` builds the viewer's settings from three layers: the
+shared defaults in the main program's `src/desktop/Viewer_State.py`, the
+VR-only keys (VR client host and port, client folder, edge-render budget,
+**Quit with VR Client**), and then one settings file: the Save & Run snapshot
+when there is one, otherwise `viewer_settings_vr.json`. It imports no Qt, so
+the headless VR process stays headless, and it resolves every relative
+directory inside `opt_vr`.
 
 ## Which commands are shared
 
@@ -261,7 +308,7 @@ override needs a reason that survives being said out loud:
 | `print` | Upstream screen-grabs the canvas. A VR figure has to be rebuilt from the state arrays and projected onto a chosen plane, which is a different command. Disabled until that is designed. |
 | `alignment`, `run` | Upstream opens a Qt file dialog. Identical once the file is chosen; the path is an argument here. |
 | `export` | Upstream pops the system file manager through `desktop.Desktop_App`, which reaches PySide6. Otherwise a verbatim copy — keep it diffable. |
-| `meta` | The web spreadsheet UI, and nothing else. Upload, download and column deletion are the main program's `Metadata_Core` functions, called directly. |
+| `meta` | The web spreadsheet UI. Upload, download and column deletion are the main program's `Metadata_Core` functions, called directly. One addition: `meta download <file> <expression>` takes a trailing selection expression, which `Metadata_Core.download_metadata` has always accepted and the desktop command does not expose. |
 
 Anything not on that list is served from `src/commands`, so it cannot drift.
 

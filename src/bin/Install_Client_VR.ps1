@@ -171,12 +171,22 @@ try {
             if (Test-Path $Previous) { Rename-Item $Previous (Split-Path -Leaf $Player) }
             throw
         }
-        if (Test-Path $Previous) { Remove-Item -Recurse -Force $Previous }
     } catch {
         Write-Host "[ERROR] The client could not be installed: $(Get-Reason $_)"
         Write-Host "        If the VR client is running, close it and try again."
         if (Test-Path $Staging) { Remove-Item -Recurse -Force $Staging -ErrorAction SilentlyContinue }
         exit 5
+    }
+    # The new client is in place. Removing the old one is housekeeping, so a
+    # failure here must not report the install as failed; the next run
+    # removes the leftover before it unpacks.
+    if (Test-Path $Previous) {
+        try {
+            Remove-Item -Recurse -Force $Previous
+        } catch {
+            Write-Host "[WARNING] The previous client in $Previous could not be removed: $(Get-Reason $_)"
+            Write-Host "          The next install removes it, or delete it by hand."
+        }
     }
     Write-Host "[OK] Installed VR client $($pin.version) in $Player."
     exit 0

@@ -21,7 +21,7 @@ REM Mirrors the parent's src\bin\EMAPSSN.bat, with one difference: opt_vr owns n
 REM environment. It is a submodule of EMAP-SSN and imports the main program's
 REM src tree for everything scientific, so it runs in the parent's managed
 REM .venv. Creating, repairing and validating that environment - the uv
-REM bootstrap, uv venv --python 3.12, Install_Dependencies.py and the
+REM bootstrap, uv venv --python 3.13, Install_Dependencies.py and the
 REM cross-process setup lock - is delegated to the parent launcher, so there
 REM is one implementation and one lock instead of two that can drift apart.
 REM

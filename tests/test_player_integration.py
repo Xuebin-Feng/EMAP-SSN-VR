@@ -174,6 +174,45 @@ class LaunchCommandTests(ConfiguredFolderTestCase):
                 else:
                     message.assert_not_called()
 
+    def test_a_newer_client_is_started_as_it_is(self):
+        folder = client_folder("EMAP-SSN-VR.exe", manifest={"version": "0.3.0"})
+        self.addCleanup(shutil.rmtree, folder, ignore_errors=True)
+        pin = {"version": "0.2.0", "tag": "vr-client-v0.2.0",
+               "asset": "EMAP-SSN-VR-Client-0.2.0-win64.zip", "sha256": "ab" * 32}
+        with mock.patch.object(vr_viewer.Player_Build_VR, "read_release_pin", return_value=pin), \
+                mock.patch.object(vr_viewer.CONSOLE, "message") as message:
+            self.assertEqual(
+                vr_viewer.warn_about_stale_player(os.path.join(folder, "EMAP-SSN-VR.exe")), "0.3.0"
+            )
+        note = message.call_args.args[0]
+        self.assertIn("newer", note)
+        self.assertNotIn("update it", note)
+        self.assertIn("0.2.0", note)
+
+    def test_a_folder_without_a_manifest_is_named_as_no_client_release(self):
+        """A Unity-era build a saved VR Client Build folder still names."""
+        folder = client_folder("EMAP-SSN-VR.exe")
+        self.addCleanup(shutil.rmtree, folder, ignore_errors=True)
+        with mock.patch.object(vr_viewer.CONSOLE, "message") as message:
+            self.assertIsNone(vr_viewer.warn_about_stale_player(os.path.join(folder, "EMAP-SSN-VR.exe")))
+        note = message.call_args.args[0]
+        self.assertIn("not an EMAP-SSN-VR client release", note)
+        self.assertIn("VR Client Build", note)
+
+    def test_player_without_a_manifest_says_to_reinstall(self):
+        root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, root, ignore_errors=True)
+        folder = os.path.join(root, "player")
+        os.makedirs(folder)
+        exe = os.path.join(folder, "EMAP-SSN-VR.exe")
+        open(exe, "w").close()
+        with mock.patch.object(vr_viewer._bootstrap_vr, "OPT_VR_DIR", root), \
+                mock.patch.object(vr_viewer.CONSOLE, "message") as message:
+            self.assertIsNone(vr_viewer.warn_about_stale_player(exe))
+        note = message.call_args.args[0]
+        self.assertIn("version is unknown", note)
+        self.assertIn("install_vr.bat", note)
+
 
 class EnsureClientTests(unittest.TestCase):
     """Save & Run installs or updates the pinned client before launching it."""
@@ -226,6 +265,25 @@ class EnsureClientTests(unittest.TestCase):
         installed, run = self.ensure()
         self.assertTrue(installed)
         run.assert_not_called()
+
+    def test_a_newer_client_is_never_replaced_by_an_older_pin(self):
+        """A test build installed with build_release.ps1 -InstallTo survives Save & Run."""
+        self.install("1.2.4")
+        messages = []
+        with mock.patch.object(vr_viewer.subprocess, "run") as run:
+            installed = vr_viewer.ensure_vr_client(say=messages.append)
+        run.assert_not_called()
+        self.assertFalse(installed)
+        self.assertIn("1.2.4", messages[0])
+        self.assertIn("newer", messages[0])
+        self.assertIn("install_vr.bat", messages[0])
+
+    def test_a_client_without_a_version_is_replaced(self):
+        folder = os.path.join(self.root, "player")
+        os.makedirs(folder, exist_ok=True)
+        open(os.path.join(folder, "EMAP-SSN-VR.exe"), "w").close()
+        _, run = self.ensure()
+        run.assert_called_once()
 
     def test_a_failed_install_is_reported_not_raised(self):
         installed, _ = self.ensure(returncode=3)

@@ -13,7 +13,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Explain that the LLM agent is desktop-only, instead of crashing.
+"""Not available in the VR viewer: the LLM agent needs the desktop viewer.
+
+Running it explains why and what to use instead, rather than crashing.
 
 The main program's ``agent`` is a thin portal onto ``web_ui.agent_backend``:
 every path through it needs the Viewer web server. ``agent`` on its own calls
@@ -38,8 +40,10 @@ Why:
   web UI is out of scope for this port.
 
 What to use instead:
-  - Run the agent in the desktop EMAP-SSN viewer, which has the web UI. A
-    layout saved there with 'save' can be loaded back into VR.
+  - Run the agent in the desktop EMAP-SSN viewer, which has the web UI. A 2D
+    layout cache it saves also opens here when TARGET_CACHE_PATH names it:
+    flattened onto one plane, with the colours, groups and clusters saved
+    there.
   - Type the commands directly here. 'help' lists every command available in
     this viewer, and 'help <command>' describes one.
 """

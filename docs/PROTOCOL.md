@@ -40,19 +40,20 @@ player\EMAP-SSN-VR.exe -- --host <VR_HOST> --port <VR_PORT> --restartable
   thumbstick. The viewer starts the client once more, without the flag, and
   a restart does not count as the client closing for "Quit with VR
   Client".
-- The client dials the first of: `--host` and `--port`; the endpoint in
-  `vr_client.json` beside its executable; its built-in `127.0.0.1:5005`. The
-  last two only matter for a client started by hand.
+- The client takes its host and its port, each on its own, from the first of:
+  `--host` / `--port`; `vr_client.json` beside its executable; its built-in
+  `127.0.0.1:5005`. The last two only matter for a client started by hand.
 
 `vr_client.json` describes the build:
 
 ```json
-{"client": "EMAP-SSN-VR Godot client", "version": "0.1.0", "protocol": 1,
+{"client": "EMAP-SSN-VR Godot client", "version": "1.0.0", "protocol": 1,
  "host": "127.0.0.1", "port": 5005, "godot": "4.7.2.stable", "commit": "..."}
 ```
 
 The viewer compares `version` with the release that `player_release.json`
-pins, and names both when they differ.
+pins, and names both when they differ. An older client is flagged for update;
+a newer one, such as a test build, is started as it is.
 
 ## Phase 1: binary handshake (server → client, once per connection)
 
@@ -131,7 +132,7 @@ The server silently drops any other `type`. A client may therefore send a
 hello as its first line, which version 1 servers ignore:
 
 ```json
-{"type":"hello","client":"godot","version":"0.1.0","protocol":1}
+{"type":"hello","client":"godot","version":"1.0.0","protocol":1}
 ```
 
 ## Coordinate frame

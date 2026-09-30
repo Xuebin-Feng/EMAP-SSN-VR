@@ -22,10 +22,18 @@ and every client message in full. Client messages are small and are what the
 headset's gestures produce, so a transcript of a scripted gesture is a
 reference for how a client must report it.
 
-The client dials a fixed endpoint, so the proxy takes that endpoint and the
-viewer is moved aside. For example, with the viewer's VR_PORT set to 5006:
+The viewer passes its own port to every client it launches, so a client it
+starts talks to it directly and bypasses the proxy. Move the viewer aside and
+dial the proxy from a client started by hand instead:
 
-    python tools/Protocol_Proxy_VR.py --listen-port 5005 --target-port 5006 --out session.jsonl
+ 1. In the VR Configuration GUI, set VR Client Port to 5006 and Quit with VR
+    Client to OFF, then Save & Run. Close the client the viewer starts; the
+    viewer keeps listening.
+ 2. python tools/Protocol_Proxy_VR.py --listen-port 5005 --target-port 5006 --out session.jsonl
+ 3. player\\EMAP-SSN-VR.exe -- --port 5005
+
+Started by hand without --port, the client dials the port its vr_client.json
+records, 5005 by default.
 """
 
 from __future__ import annotations

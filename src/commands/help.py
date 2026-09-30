@@ -92,8 +92,8 @@ def _summary(name, is_local=False):
     """Describe a command, preferring the local override's own words.
 
     A VR command that shadows an upstream one usually does something
-    different - `agent` and `esmfold` explain they are desktop-only, `print`
-    writes a file instead of rendering a canvas - so showing the upstream
+    different - `agent`, `esmfold` and `zoom` explain why they are desktop-only,
+    and `print` why figures are not available yet - so showing the upstream
     one-liner for them would actively mislead.
     """
     if is_local:
@@ -116,6 +116,10 @@ def _describe(name, is_local=False):
             lines.append(f"  {local}")
             lines.append("")
             lines.append("  (VR-specific implementation)")
+            if name != "help":
+                # Its usage may differ from the desktop viewer's, so point at
+                # the command's own help rather than upstream's argument list.
+                lines.append(f"  Run '{name} help' for its usage in this viewer.")
             return "\n".join(lines)
     try:
         metadata = get_command_metadata(name)

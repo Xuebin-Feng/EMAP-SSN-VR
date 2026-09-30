@@ -99,13 +99,15 @@ def _lock_command_package():
     mutable, and ``commands`` is not imported until the user types their first
     command - a long way from here. Anything that ran in between and put the
     parent's ``src`` back in front would make ``import commands`` bind the main
-    program's package, whose ``__init__`` never extends ``__path__``. All
-    eleven local overrides would vanish with no error at all: ``zoom`` would
-    reach for a VisPy canvas this process does not have, ``agent`` and
-    ``esmfold`` would raise AttributeError deep inside a web backend instead of
-    explaining themselves, and ``color`` would quietly answer to the desktop
-    grammar. A silent wrong answer is the worst failure this module can
-    produce, so the window is closed rather than documented.
+    program's package, whose ``__init__`` never extends ``__path__``. All nine
+    local command modules - eight overrides and the VR-only ``help`` - would
+    vanish with no error at all: ``zoom`` would reach for a VisPy canvas this
+    process does not have, ``agent`` and ``esmfold`` would raise
+    AttributeError deep inside a web backend instead of explaining
+    themselves, ``meta`` would import PySide6 through the desktop web backend,
+    and ``help`` would answer "Unknown command". A silent wrong answer is the
+    worst failure this module can produce, so the window is closed rather
+    than documented.
 
     Importing here binds the package in sys.modules for the life of the
     process, where no later path edit can reach it. The cost is one trivial
