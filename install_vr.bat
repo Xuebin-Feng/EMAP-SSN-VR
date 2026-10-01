@@ -72,13 +72,13 @@ if not exist "!PROJECT_ROOT!\src\bin\EMAPSSN.bat" (
     exit /b 1
 )
 
-:: 2. opt_vr ships no logo assets of its own, so the shortcut borrows the
-::    parent's viewer icon. The main installer is what generates those .ico
-::    files from .png; this one only reads them.
-set "VR_ICON=!PROJECT_ROOT!\src\bin\logos\viewer_logo_large.ico"
+:: 2. The shortcut uses opt_vr's own logo. Its .ico is committed beside the
+::    .png it was made from, so this installer only reads it. The parent's
+::    viewer icon stands in if it is missing, as in EMAPSSN_Config_VR.py.
+set "VR_ICON=!OPT_VR_ROOT!\src\bin\logos\vr_logo_large.ico"
+if not exist "!VR_ICON!" set "VR_ICON=!PROJECT_ROOT!\src\bin\logos\viewer_logo_large.ico"
 if not exist "!VR_ICON!" (
-    echo [INFO] !VR_ICON! is missing, so the shortcut will use the default icon.
-    echo        Run install.bat in !PROJECT_ROOT! once to generate it.
+    echo [INFO] No logo icon was found, so the shortcut will use the default icon.
     set "VR_ICON="
 )
 

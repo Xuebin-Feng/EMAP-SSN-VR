@@ -111,12 +111,22 @@ class ConfigWindowTests(unittest.TestCase):
                 "has_statistics": hasattr(window, "run_statistics"),
                 "has_histogram": hasattr(window, "run_histogram"),
                 "has_stat_display": hasattr(window, "stat_display"),
+                "icon_path": namespace["application_icon_path"](),
+                "icon_loads": not window.windowIcon().pixmap(32, 32).isNull(),
             }))
             """
         )
 
     def test_window_identifies_itself_as_the_vr_configuration(self):
         self.assertEqual(self.report["title"], "EMAP-SSN VR Configuration")
+
+    def test_window_uses_the_vr_logo(self):
+        """opt_vr's own logo, not the desktop Config logo it falls back to."""
+        self.assertEqual(
+            os.path.normcase(os.path.abspath(self.report["icon_path"])),
+            os.path.normcase(os.path.join(VR_SRC, "bin", "logos", "vr_logo.ico")),
+        )
+        self.assertTrue(self.report["icon_loads"])
 
     def test_tabs_match_the_desktop_gui(self):
         """The bridge settings live on Visual Effects, not a tab of their own."""

@@ -124,6 +124,7 @@ opt_vr/
     ├── Viewer_Command_Portal.py         # name pinned: upstream imports it
     ├── commands/                        # name pinned: upstream imports it
     └── bin/                             # launchers, startup handshake, client installer
+        └── logos/                       # the VR logo: window and shortcut icons, headset SVG
 ```
 
 ## What lives here, and what does not
@@ -204,9 +205,8 @@ is identical by construction, so every feature — saved-config profiles, networ
 statistics, the score histogram, colour pickers, live field gating, input
 consistency checks — behaves exactly as it does in the main program.
 
-The copy has **4,379 lines** to its source's 4,034. **424** of its lines are
-new or rewritten, replacing **79** of the source's, and most of them are the
-VR client block on the Visual Effects tab. Every difference is deliberate:
+Most of the differences are the VR client block on the Visual Effects tab, and
+every difference is deliberate:
 
 | Change | Why |
 |---|---|
@@ -220,7 +220,7 @@ VR client block on the Visual Effects tab. Every difference is deliberate:
 | 3D wording in four tooltips | `TARGET_CACHE_FILE`, `UMAP_MODE`, `SAVED_LAYOUT_DIR` and `PACKING_GRID_SIZE` describe the 3D caches and spherical-shell packing VR uses, where the source's describe 2D layouts and grid packing |
 | VR client block on **Visual Effects** | host, port, distance scale, edge budget, client folder, **Quit with VR Client**; a client folder saved for the Unity client is migrated |
 | removed controls | see below |
-| window, terminal and error titles; icon | name the VR window, and find its icon in the parent checkout |
+| window, terminal and error titles; icon | name the VR window, and give it the VR logo from `src/bin/logos`, falling back to the parent's Config logo |
 | distinct single-instance key | both windows can be open at once |
 
 Four settings the desktop GUI offers are deliberately absent, because nothing

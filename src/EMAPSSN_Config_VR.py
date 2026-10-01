@@ -59,22 +59,21 @@ from desktop.Viewer_State import (
 VR_CONFIG_DISPLAY_NAME = "EMAP-SSN VR Configuration"
 VR_VIEWER_DISPLAY_NAME = "EMAP-SSN VR Viewer"
 
-#: opt_vr ships no logo assets of its own, so the window and taskbar icon
-#: come from the parent checkout. A ``bin/logos`` folder inside the
-#: submodule still wins if one is ever added.
-ICON_SEARCH_DIRS = (
-    os.path.join(_bootstrap_vr.VR_SRC_DIR, "bin", "logos"),
-    os.path.join(_bootstrap_vr.SRC_DIR, "bin", "logos"),
+#: The window and taskbar icon is opt_vr's own logo, the parent's Config logo
+#: with a VR headset. The parent's Config logo stands in if it is missing.
+ICON_CANDIDATES = (
+    os.path.join(_bootstrap_vr.VR_SRC_DIR, "bin", "logos", "vr_logo.ico"),
+    os.path.join(_bootstrap_vr.VR_SRC_DIR, "bin", "logos", "vr_logo.png"),
+    os.path.join(_bootstrap_vr.SRC_DIR, "bin", "logos", "viewer_logo.ico"),
+    os.path.join(_bootstrap_vr.SRC_DIR, "bin", "logos", "viewer_logo.png"),
 )
 
 
 def application_icon_path():
     """Return the VR window icon, or None when no logo asset is present."""
-    for directory in ICON_SEARCH_DIRS:
-        for name in ("viewer_logo.ico", "viewer_logo.png"):
-            candidate = os.path.join(directory, name)
-            if os.path.exists(candidate):
-                return candidate
+    for candidate in ICON_CANDIDATES:
+        if os.path.exists(candidate):
+            return candidate
     return None
 
 

@@ -210,9 +210,17 @@ class EnvironmentValidationTests(unittest.TestCase):
         source = read(INSTALLER)
         self.assertIn("EMAP-SSN VR.lnk", source)
         self.assertIn("$env:OPT_VR_ROOT", source)
-        # The parent's logos are read for the icon, never generated here.
-        self.assertIn("viewer_logo_large.ico", source)
+        # Icons are read, never generated here.
         self.assertNotIn("QPixmap", source)
+
+    def test_shortcut_uses_the_vr_logo(self):
+        # opt_vr's own committed logo comes first; the parent's viewer icon is
+        # only the fallback.
+        source = read(INSTALLER)
+        own = source.index(r"!OPT_VR_ROOT!\src\bin\logos\vr_logo_large.ico")
+        fallback = source.index(r"!PROJECT_ROOT!\src\bin\logos\viewer_logo_large.ico")
+        self.assertLess(own, fallback)
+        self.assertTrue((BIN_DIR / "logos" / "vr_logo_large.ico").is_file())
 
 
 class LauncherMonitorTests(unittest.TestCase):
