@@ -577,6 +577,9 @@ class MetadataCommandTests(unittest.TestCase):
         self.assertIs(module.upload_metadata, Metadata_Core.upload_metadata)
         self.assertIs(module.download_metadata, Metadata_Core.download_metadata)
         self.assertIs(
+            module.metadata_download_path, Metadata_Core.metadata_download_path
+        )
+        self.assertIs(
             module.delete_metadata_columns, Metadata_Core.delete_metadata_columns
         )
 
@@ -615,6 +618,33 @@ class MetadataCommandTests(unittest.TestCase):
         run_command(self.viewer, "meta extra.csv")
         run_command(self.viewer, "meta download plain_name.csv")
         self.assertIn("plain_name.csv", os.listdir(self.folder))
+
+    def test_download_refuses_a_path_and_writes_nothing(self):
+        """Download names stay in METADATA_DIR, by the desktop's own rule."""
+        settings = importlib.import_module("Settings_VR")
+        settings.METADATA_DIR = os.path.join(self.folder, "meta")
+        run_command(self.viewer, f"meta {self.sheet}")
+        outside = os.path.join(self.folder, "outside")
+        os.mkdir(outside)
+        for name in (os.path.join(outside, "escaped.csv"), r"..\escaped.csv",
+                     r"..\escaped.csv #cluster_1#"):
+            with self.subTest(name=name):
+                self.assertIn(
+                    "path separators", run_command(self.viewer, f"meta download {name}")
+                )
+        self.assertEqual(os.listdir(outside), [])
+        self.assertEqual(sorted(os.listdir(self.folder)), ["extra.csv", "meta", "outside"])
+        self.assertEqual(os.listdir(settings.METADATA_DIR), [])
+
+    def test_download_writes_csv_and_xlsx_only(self):
+        run_command(self.viewer, "meta extra.csv")
+        run_command(self.viewer, "meta download book.XLSX")
+        self.assertIn("book.XLSX", os.listdir(self.folder))
+        self.assertIn(
+            "only be downloaded as .csv or .xlsx",
+            run_command(self.viewer, "meta download book.xls"),
+        )
+        self.assertNotIn("book.xls", os.listdir(self.folder))
 
     def test_delete_matches_upstream_rules(self):
         run_command(self.viewer, "meta extra.csv")
