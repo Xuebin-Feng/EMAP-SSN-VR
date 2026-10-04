@@ -784,6 +784,68 @@ class MetadataCommandTests(unittest.TestCase):
         self.assertIn("no on-canvas HUD", output)
         self.assertNotIn("Could not find file", output)
 
+
+class SelectSaveNameTests(unittest.TestCase):
+    """`select save` keeps its file in HEADER_LIST_DIR, by the desktop's rule.
+
+    The VR viewer runs upstream's `select`, whose output name must be a plain
+    file name (utilities.Output_Names). Commands also arrive from `run`
+    scripts, which are files that may come from elsewhere, so this pins the
+    rule through the VR dispatcher: a future VR copy of `select` cannot drop
+    it silently. Drive and UNC names are covered by the main suite's
+    test_output_names; without the rule they would write outside any folder
+    a test could watch.
+    """
+
+    def setUp(self):
+        from unittest import mock
+
+        self.root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.root, True)
+        self.header_dir = os.path.join(self.root, "headers")
+        self.outside = os.path.join(self.root, "outside")
+        os.makedirs(self.outside)
+        # process_command reloads commands.select, but the reloaded module
+        # reads HEADER_LIST_DIR from the shared settings object at run time,
+        # so a patch of the setting holds.
+        patcher = mock.patch.object(cfg, "HEADER_LIST_DIR", self.header_dir, create=True)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.viewer = build_viewer()
+        # Without a selection the command stops before writing, and the
+        # nothing-written check would pass whether or not the name was checked.
+        self.viewer.selected_indices = [0, 3]
+
+    def written(self):
+        """Every file under the test folder, relative to it."""
+        return sorted(
+            os.path.relpath(os.path.join(folder, name), self.root).replace(os.sep, "/")
+            for folder, _, names in os.walk(self.root) for name in names
+        )
+
+    def test_a_plain_name_is_saved_in_the_header_list_folder(self):
+        output = run_command(self.viewer, "select save picked")
+        self.assertIn("Saved 2 headers", output)
+        self.assertEqual(self.written(), ["headers/picked.txt"])
+        with open(os.path.join(self.header_dir, "picked.txt"), encoding="utf-8") as handle:
+            self.assertEqual(
+                handle.read().splitlines(),
+                [self.viewer.full_headers[0], self.viewer.full_headers[3]],
+            )
+
+    def test_a_path_or_stream_name_is_refused_and_nothing_is_written(self):
+        for name, reason in (
+            (os.path.join(self.outside, "escaped.txt"), "path separators"),
+            (os.path.join("..", "outside", "escaped.txt"), "path separators"),
+            # An NTFS alternate data stream, hidden inside another file.
+            ("picked.txt:hidden", "unsupported characters"),
+        ):
+            with self.subTest(name=name):
+                output = run_command(self.viewer, f"select save {name}")
+                self.assertIn("Error: Filename", output)
+                self.assertIn(reason, output)
+                self.assertEqual(self.written(), [])
+
 class DisabledCommandTests(unittest.TestCase):
     """Commands that refuse must refuse cleanly, not half-run."""
 
