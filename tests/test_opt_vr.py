@@ -545,6 +545,127 @@ class DesktopParityTests(unittest.TestCase):
         self.assertIn("does not exist", run_command(viewer, "export #nope#"))
 
 
+class ExportCacheNameTests(unittest.TestCase):
+    """A layout cache's group labels and clustering parameters reach `export`.
+
+    restore_cached_state applies both as the cache stores them, as the desktop
+    viewer's loader does, and `export` names its files after group labels and
+    a folder after the clustering parameters, so a hand-made cache could
+    write outside the export folder.
+    """
+
+    def setUp(self):
+        from unittest import mock
+
+        self.root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.root, True)
+        self.caches = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.caches, True)
+        self.outside = os.path.join(self.root, "outside")
+        os.makedirs(self.outside)
+        # process_command reloads the command module, which would undo a patch
+        # of its SEQUENCE_EXPORT_DIRECTORY, so move the directory its
+        # $analysis_result$ prefix resolves to: exports go to
+        # <root>/results/Sequence_Export.
+        patcher = mock.patch.object(
+            cfg, "ANALYSIS_RESULT_DIR", os.path.join(self.root, "results"), create=True
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def open_saved(self, groups, cluster_params, **cache_options):
+        """Open a cache carrying `groups` and `cluster_params` as `save` writes them."""
+        import h5py
+
+        cache = publish_cache(tempfile.mkdtemp(dir=self.caches), **cache_options)
+        with h5py.File(cache.path, "a") as handle:
+            handle.create_dataset(
+                "cluster_labels", data=np.zeros(len(cache.headers), dtype=np.int32)
+            )
+            handle.create_dataset("group_labels", data=json.dumps([list(g) for g in groups]))
+            handle.attrs["last_cluster_params"] = json.dumps(cluster_params)
+        use_inputs(self, cache)
+        with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+            viewer = vr_viewer.open_layout_session()
+        return viewer, cache
+
+    def written(self):
+        """Every file under the test folder, relative to it."""
+        return sorted(
+            os.path.relpath(os.path.join(folder, name), self.root).replace(os.sep, "/")
+            for folder, _, names in os.walk(self.root) for name in names
+        )
+
+    def test_group_labels_that_are_paths_are_refused(self):
+        for label in (
+            os.path.join(self.outside, "escaped"),
+            os.path.join("..", "..", "..", "..", "outside", "escaped"),
+        ):
+            # The plain label is mapped first and must not be written either.
+            for command in ("export groups", f"export #alpha# #{label}#"):
+                with self.subTest(label=label, command=command):
+                    viewer, _ = self.open_saved(
+                        [{"alpha"}, {label}, set(), set(), set()], ["LEIDEN_1.0", 2]
+                    )
+                    self.assertEqual(viewer.group_labels[1], {label})
+                    output = run_command(viewer, command)
+                    self.assertEqual(self.written(), [])
+                    self.assertEqual(os.listdir(self.root), ["outside"])
+                    self.assertIn(f"Error: Export refused group label '{label}'", output)
+
+    def test_clustering_parameters_that_are_paths_are_refused(self):
+        # The folder name starts "Score0.45_LEIDEN_1.0_Min", which absorbs one '..'.
+        climb = os.path.join("..", "..", "..", "..", "..", "outside", "escaped")
+        for params, cache_options in (
+            # A UMAP layout has no edge threshold, so the parameters alone name
+            # the folder, and an absolute one replaces the export folder.
+            ([os.path.join(self.outside, "escaped"), 2], {"umap_neighbors": 15}),
+            (["LEIDEN_1.0", climb], {}),
+        ):
+            with self.subTest(params=params):
+                viewer, _ = self.open_saved([set()] * 5, params, **cache_options)
+                self.assertEqual(viewer.last_cluster_params, tuple(params))
+                output = run_command(viewer, "export clusters")
+                self.assertEqual(self.written(), [])
+                self.assertEqual(os.listdir(self.root), ["outside"])
+                self.assertIn(
+                    f"Error: Export refused clustering parameters ({params[0]}, {params[1]})",
+                    output,
+                )
+
+    def test_plain_names_are_exported_as_before(self):
+        # The group command accepts '.' and '..'; their files are the plain
+        # names '..fasta' and '...fasta'.
+        viewer, cache = self.open_saved(
+            [{"alpha"}, {".."}, {"."}, {"alpha", ".."}, set()], ["LEIDEN_1.0", 2]
+        )
+        self.assertIn("Exported 3 files", run_command(viewer, "export groups"))
+        self.assertIn("Exported 1 files", run_command(viewer, "export clusters"))
+
+        parts = [path.split("/") for path in self.written()]
+        self.assertEqual(
+            {(*part[:2], len(part)) for part in parts}, {("results", "Sequence_Export", 5)}
+        )
+        self.assertEqual(len({part[2] for part in parts}), 1, "one analysis folder")
+        self.assertEqual(
+            sorted((part[3], part[4]) for part in parts),
+            sorted([
+                ("Score0.45_GROUPS", "alpha.fasta"),
+                ("Score0.45_GROUPS", "...fasta"),
+                ("Score0.45_GROUPS", "..fasta"),
+                ("Score0.45_LEIDEN_1.0_Min2", "Cluster_0.fasta"),
+            ]),
+        )
+        groups_file = os.path.join(
+            self.root, "results", "Sequence_Export", parts[0][2], "Score0.45_GROUPS", "...fasta"
+        )
+        with open(groups_file, encoding="utf-8") as handle:
+            self.assertEqual(
+                [line[1:] for line in handle.read().splitlines() if line.startswith(">")],
+                [cache.headers[1], cache.headers[3]],
+            )
+
+
 class MetadataCommandTests(unittest.TestCase):
     """`meta` runs the desktop viewer's own implementation, not a copy."""
 
