@@ -2822,10 +2822,15 @@ if __name__ == "__main__":
                         targets = hf['j'][:].astype(np.int64)
                         if score_mode == "local":
                             raw_scores = hf['l_score'][:].astype(np.float32)
-                            align_lens = hf['l_len'][:].astype(np.float32)
+                            length_name = 'l_len'
                         else:
                             raw_scores = hf['g_score'][:].astype(np.float32)
-                            align_lens = hf['g_len'][:].astype(np.float32)
+                            length_name = 'g_len'
+                        # Only alignment-length normalization divides by the
+                        # alignment-length column, so other modes never read it.
+                        align_lens = None
+                        if norm_mode not in ("shorter_sequence", "longer_sequence", "average_sequence"):
+                            align_lens = hf[length_name][:].astype(np.float32)
                             
                         if 'seq_lens' in hf:
                             seq_lens = hf['seq_lens'][:]
@@ -2837,7 +2842,7 @@ if __name__ == "__main__":
                         raw_scores = raw_scores[valid_edges_mask]
                         sources = sources[valid_edges_mask]
                         targets = targets[valid_edges_mask]
-                        if not is_blast:
+                        if not is_blast and align_lens is not None:
                             align_lens = align_lens[valid_edges_mask]
                             
                     if is_blast:
@@ -2976,10 +2981,15 @@ if __name__ == "__main__":
                         targets = hf['j'][:].astype(np.int64)
                         if score_mode == "local":
                             raw_scores = hf['l_score'][:].astype(np.float32)
-                            align_lens = hf['l_len'][:].astype(np.float32)
+                            length_name = 'l_len'
                         else:
                             raw_scores = hf['g_score'][:].astype(np.float32)
-                            align_lens = hf['g_len'][:].astype(np.float32)
+                            length_name = 'g_len'
+                        # Only alignment-length normalization divides by the
+                        # alignment-length column, so other modes never read it.
+                        align_lens = None
+                        if norm_mode not in ("shorter_sequence", "longer_sequence", "average_sequence"):
+                            align_lens = hf[length_name][:].astype(np.float32)
                             
                         if 'seq_lens' in hf:
                             seq_lens = hf['seq_lens'][:]
@@ -2991,7 +3001,7 @@ if __name__ == "__main__":
                         raw_scores = raw_scores[valid_edges_mask]
                         sources = sources[valid_edges_mask]
                         targets = targets[valid_edges_mask]
-                        if not is_blast:
+                        if not is_blast and align_lens is not None:
                             align_lens = align_lens[valid_edges_mask]
                             
                     if is_blast:
