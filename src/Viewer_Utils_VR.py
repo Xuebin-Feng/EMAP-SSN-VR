@@ -1,7 +1,6 @@
 import os
 import glob
 import re
-import numpy as np
 from Bio import AlignIO
 from Bio.Seq import Seq
 from Bio.SeqRecord import SeqRecord
@@ -9,15 +8,6 @@ from collections import Counter
 import math
 import fnmatch
 import Settings_VR as cfg
-
-# --- 1. Library Detection ---
-try:
-    from numba import jit
-    NUMBA_AVAILABLE = True
-    print("\nNumba JIT Detected: Acceleration Enabled.")
-except ImportError:
-    NUMBA_AVAILABLE = False
-    print("\nNumba not found. Using standard Python (Slower).")
 
 # --- 2. String & Label Helpers ---
 def get_network_suffix():
@@ -183,51 +173,6 @@ def hex_to_rgba(hex_code):
     import matplotlib.colors as mcolors
 
     return mcolors.to_rgba(hex_code)
-
-# --- 3. Clustering & Topology Functions ---
-
-def calculate_jaccard_sparse(csr_matrix):
-    intersection = csr_matrix.dot(csr_matrix.T)
-    row_sums = csr_matrix.getnnz(axis=1)
-    return intersection, row_sums
-
-if NUMBA_AVAILABLE:
-    @jit(nopython=True)
-    def fast_jaccard_filter(edges, indptr, indices, threshold):
-        n_edges = edges.shape[0]
-        keep_mask = np.zeros(n_edges, dtype=np.bool_)
-        for e in range(n_edges):
-            u, v = edges[e, 0], edges[e, 1]
-            start_u, end_u = indptr[u], indptr[u+1]
-            start_v, end_v = indptr[v], indptr[v+1]
-            size_u, size_v = end_u - start_u, end_v - start_v
-            
-            intersection = 0
-            ptr_u, ptr_v = start_u, start_v
-            while ptr_u < end_u and ptr_v < end_v:
-                val_u, val_v = indices[ptr_u], indices[ptr_v]
-                if val_u == val_v:
-                    intersection += 1; ptr_u += 1; ptr_v += 1
-                elif val_u < val_v: ptr_u += 1
-                else: ptr_v += 1
-            
-            union = size_u + size_v - intersection
-            if union > 0 and (intersection / union) >= threshold:
-                keep_mask[e] = True
-        return keep_mask
-else:
-    def fast_jaccard_filter(edges, indptr, indices, threshold):
-        n_edges = edges.shape[0]
-        keep_mask = np.zeros(n_edges, dtype=bool)
-        for e in range(n_edges):
-            u, v = edges[e]
-            set_u = set(indices[indptr[u]:indptr[u+1]])
-            set_v = set(indices[indptr[v]:indptr[v+1]])
-            intersection = len(set_u.intersection(set_v))
-            union = len(set_u.union(set_v))
-            if union > 0 and (intersection / union) >= threshold:
-                keep_mask[e] = True
-        return keep_mask
 
 
 # --- 8. Boolean Logic Engine ---
