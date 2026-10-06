@@ -252,7 +252,7 @@ LOW_RESOURCE_MODE = False
 NODE_BOUNDARY_COLOR = '#000000'
 
 # --- Grid Packing Settings ---
-PACKING_GRID_SIZE = 20.0  # The base size of one grid square
+PACKING_GRID_SIZE = 10.0  # The base size of one grid square
 PACKING_PADDING = 10.0     # Extra padding applied to the bounding box of each cluster
 
 # --- Simulation & Physics Settings ---
@@ -3537,9 +3537,9 @@ if __name__ == "__main__":
             pgs_widget.setMinimumHeight(box_pgs.minimumHeight())
             
             import math
-            val_pgs = globals().get("PACKING_GRID_SIZE", 20.0)
+            val_pgs = globals().get("PACKING_GRID_SIZE", 10.0)
             try: val_pgs = float(val_pgs)
-            except: val_pgs = 20.0
+            except: val_pgs = 10.0
             
             box_pgs.setValue(val_pgs)
             pct = math.log(max(1.0, min(val_pgs, 200.0))) / math.log(200.0)
