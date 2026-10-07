@@ -27,6 +27,10 @@ never reaches the viewer's process, and building the GUI here would break it
 for every other test sharing this interpreter. The GUI also lives under
 ``if __name__ == "__main__"``, so it is loaded with runpy, exactly as the main
 repository's own offscreen config test does.
+
+Every script also runs under an audit hook that refuses writes to this
+checkout's own settings files, which belong to whoever runs the suite. Tests
+that save go further and run in a throwaway project.
 """
 
 import json
@@ -48,14 +52,34 @@ if VR_SRC not in sys.path:
 import _bootstrap_vr  # noqa: E402
 
 
-def run_gui_script(body):
-    """Build the GUI in an offscreen subprocess and run `body` against it."""
-    script = textwrap.dedent(
+    `body` runs under SETTINGS_GUARD, and the run fails if anything tried to
+    touch the user's settings. A test that saves passes `project_root`, a
+    folder standing in for the parent checkout: the GUI then takes
+    `<project_root>/opt_vr` for the submodule, so its settings file and every
+    relative directory resolve there, and the real settings files may not
+    even be read.
+    """
+    working_directory = OPT_VR
+    rebase = ""
+    if project_root is not None:
+        working_directory = os.path.join(project_root, "opt_vr")
+        os.makedirs(working_directory, exist_ok=True)
+        # The GUI derives its own paths from these two when it is loaded.
+        rebase = (
+            f"_bootstrap_vr.PROJECT_ROOT = {project_root!r}\n"
+            f"_bootstrap_vr.OPT_VR_DIR = {working_directory!r}\n"
+        )
+    guard = (
+        f"_USER_FILES = {set(map(os.path.normcase, USER_SETTINGS_FILES))!r}\n"
+        f"_REFUSE_READS = {project_root is not None!r}\n"
+    ) + SETTINGS_GUARD
+    script = guard + textwrap.dedent(
         """
         import json, os, runpy, sys
         os.environ["QT_QPA_PLATFORM"] = "offscreen"
         sys.path.insert(0, {vr_src!r})
         import _bootstrap_vr  # puts the parent src tree on sys.path
+        {rebase}
         from unittest import mock
         from utilities import Hardware_Acceleration as _preload  # torch before Qt
         from PySide6.QtWidgets import QApplication
@@ -68,9 +92,11 @@ def run_gui_script(body):
         window = namespace["window"]
         Config = type("Config", (), namespace)
         """
-    ).format(vr_src=VR_SRC) + textwrap.dedent(body) + textwrap.dedent(
+    ).format(vr_src=VR_SRC, rebase=rebase) + textwrap.dedent(body) + textwrap.dedent(
         """
         window.close()
+        if _refused:
+            raise SystemExit("Touched the user's settings: " + "; ".join(_refused))
         """
     )
     environment = dict(os.environ)
@@ -81,7 +107,8 @@ def run_gui_script(body):
     environment.pop("SSN_VIEWER_SETTINGS_PATH", None)
     result = subprocess.run(
         [sys.executable, "-u", "-c", script],
-        capture_output=True, text=True, env=environment, cwd=OPT_VR, timeout=900,
+        capture_output=True, text=True, env=environment, cwd=working_directory,
+        timeout=900,
     )
     if result.returncode != 0:
         raise AssertionError(
@@ -90,8 +117,8 @@ def run_gui_script(body):
     return result.stdout
 
 
-def report_from(body):
-    return json.loads(run_gui_script(body).split("@@", 1)[1])
+def report_from(body, **options):
+    return json.loads(run_gui_script(body, **options).split("@@", 1)[1])
 
 
 class ConfigWindowTests(unittest.TestCase):
@@ -468,59 +495,72 @@ class LaunchTargetTests(unittest.TestCase):
 
 
 class ConfigPersistenceTests(unittest.TestCase):
-    """Saving writes into the submodule and nowhere else."""
+    """Saving writes into the submodule and nowhere else.
+
+    Both cases really save, so each runs in a throwaway project whose opt_vr
+    folder stands in for this submodule. They used to save into the
+    checkout's own viewer_settings_vr.json and restore its text afterwards:
+    every run rewrote the user's file, a run killed in between left it
+    changed, and a read-only settings file failed both outright.
+    """
+
+    def setUp(self):
+        self.project = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.project, ignore_errors=True)
+        self.vr_settings = os.path.join(self.project, "opt_vr", "viewer_settings_vr.json")
 
     def test_settings_round_trip_through_the_submodule_file(self):
         report = report_from(
             """
-            settings_file = namespace["SETTINGS_FILE"]
-            original = None
-            if os.path.exists(settings_file):
-                with open(settings_file, encoding="utf-8") as handle:
-                    original = handle.read()
             window.inputs["VR_APP_DIR"].setText("no_such_build")
             window.inputs["VR_PORT"].setValue(5123)
-            try:
-                window.save_settings()
-                with open(settings_file, encoding="utf-8") as handle:
-                    saved = json.load(handle)
-            finally:
-                if original is not None:
-                    with open(settings_file, "w", encoding="utf-8") as handle:
-                        handle.write(original)
             print("@@" + json.dumps({
-                "port": saved.get("VR_PORT"),
-                "has_directories": all(
-                    key in saved for key in
-                    ("CACHE_FILE_DIR", "SAVED_LAYOUT_DIR", "INPUT_FILE_DIR")
-                ),
+                "saved": window.save_settings(),
+                "tip": window.tip_panel.text(),
+                "settings_file": namespace["SETTINGS_FILE"],
             }))
-            """
+            """,
+            project_root=self.project,
         )
-        self.assertIn(str(report["port"]), ("5123", "5123.0"))
-        self.assertTrue(report["has_directories"], "directories must be persisted")
+        self.assertTrue(report["saved"], report["tip"])
+        # The file Save writes is the one the next launch reads.
+        self.assertEqual(
+            os.path.normcase(report["settings_file"]), os.path.normcase(self.vr_settings)
+        )
+        with open(self.vr_settings, encoding="utf-8") as handle:
+            saved = json.load(handle)
+        self.assertIn(str(saved.get("VR_PORT")), ("5123", "5123.0"))
+        for key in ("CACHE_FILE_DIR", "SAVED_LAYOUT_DIR", "INPUT_FILE_DIR"):
+            self.assertIn(key, saved, "directories must be persisted")
 
     def test_the_desktop_settings_file_is_never_written(self):
-        desktop = os.path.join(_bootstrap_vr.PROJECT_ROOT, "viewer_settings.json")
-        before = os.path.getmtime(desktop) if os.path.exists(desktop) else None
-        run_gui_script(
+        desktop = os.path.join(self.project, "viewer_settings.json")
+        with open(desktop, "w", encoding="utf-8") as handle:
+            handle.write("{}\n")
+        before = self.fingerprint(desktop)
+        report = report_from(
             """
-            settings_file = namespace["SETTINGS_FILE"]
-            original = None
-            if os.path.exists(settings_file):
-                with open(settings_file, encoding="utf-8") as handle:
-                    original = handle.read()
-            try:
-                window.save_settings()
-            finally:
-                if original is not None:
-                    with open(settings_file, "w", encoding="utf-8") as handle:
-                        handle.write(original)
-            print("@@done")
-            """
+            print("@@" + json.dumps({
+                "saved": window.save_settings(),
+                "tip": window.tip_panel.text(),
+            }))
+            """,
+            project_root=self.project,
         )
-        after = os.path.getmtime(desktop) if os.path.exists(desktop) else None
-        self.assertEqual(before, after, "the desktop program's settings were touched")
+        self.assertTrue(report["saved"], report["tip"])
+        self.assertEqual(
+            self.fingerprint(desktop), before, "the desktop program's settings were touched"
+        )
+        # Proof that Save wrote somewhere: otherwise the check above means nothing.
+        self.assertTrue(os.path.isfile(self.vr_settings), "Save wrote no VR settings")
+
+    @staticmethod
+    def fingerprint(path):
+        """The file's bytes and modification time, or None once it is gone."""
+        if not os.path.exists(path):
+            return None
+        with open(path, "rb") as handle:
+            return handle.read(), os.stat(path).st_mtime_ns
 
 
 class VRSettingsSourceTests(unittest.TestCase):
