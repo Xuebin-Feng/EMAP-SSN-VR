@@ -27,6 +27,10 @@ if __name__ == "__main__":
     # to a viewer that drives the Windows VR client in player/.
     _bootstrap_vr.require_windows("The EMAP-SSN VR Configuration GUI")
 
+if __name__ == "__main__":
+    # Before any output: the desktop launcher and MCP give this process a log file or a pipe.
+    from utilities.Output_Streams import configure_output_streams
+    configure_output_streams()
 if __name__ == "__main__" and "--headless" in sys.argv:
     from utilities.Headless_Settings import main as headless_main
     raise SystemExit(headless_main("config"))
