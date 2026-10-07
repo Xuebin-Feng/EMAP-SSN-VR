@@ -289,6 +289,71 @@ class AlignmentOffsetTests(unittest.TestCase):
                     self.assertEqual(row["offset_width"], 100)
 
 
+class DropdownValueTests(unittest.TestCase):
+    """Options are read and selected by stored value, as in the desktop Config.
+
+    Every option gets a label that differs from its value first, so code that
+    still reads or matches the displayed text fails here.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.report = report_from(
+            """
+            select = namespace["select_combo_value"]
+
+            def relabel(combo):
+                for index in range(combo.count()):
+                    combo.setItemText(index, "[" + combo.itemText(index)[::-1] + "]")
+
+            relabel(window.cb_score_mode)
+            select(window.cb_score_mode, "local")
+            relabel(window.cb_norm_mode)
+            norm_values = [
+                window.cb_norm_mode.itemData(index)
+                for index in range(window.cb_norm_mode.count())
+            ]
+            select(window.cb_norm_mode, "average_sequence")
+            data = window.collect_data()
+
+            cache = window.cb_cache_file
+            cache.blockSignals(True)
+            cache.clear()
+            cache.addItem("version_00.h5", "folder/version_00.h5")
+            cache.addItem("(New Layout Cache)", None)
+            cache.blockSignals(False)
+            relabel(cache)
+            cache.setCurrentIndex(1)
+            new_cache = window._new_cache_selected()
+
+            selector = window.profile_selectors["visual_effects"]
+            relabel(selector)
+            with mock.patch.object(namespace["QMessageBox"], "critical") as critical:
+                select(selector, "(default)")
+            print("@@" + json.dumps({
+                "score": data["ALIGNMENT_SCORE"],
+                "norm": data["NORM_MODE"],
+                "norm_values": norm_values,
+                "new_cache": new_cache,
+                "profile_selection": window._profile_previous_selection["visual_effects"],
+                "profile_error": critical.called,
+            }))
+            """
+        )
+
+    def test_relabelled_modes_save_their_values(self):
+        self.assertEqual(self.report["score"], "local")
+        self.assertEqual(self.report["norm"], "average_sequence")
+        self.assertNotIn("alignment_length", self.report["norm_values"])
+
+    def test_new_layout_cache_entry_is_found_without_its_label(self):
+        self.assertTrue(self.report["new_cache"])
+
+    def test_saved_config_entries_are_found_without_their_labels(self):
+        self.assertEqual(self.report["profile_selection"], "(default)")
+        self.assertFalse(self.report["profile_error"])
+
+
 class LaunchTargetTests(unittest.TestCase):
     """The copy must launch the VR viewer, not the desktop one."""
 
