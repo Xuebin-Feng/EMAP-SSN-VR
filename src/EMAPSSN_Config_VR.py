@@ -360,7 +360,9 @@ PROFILE_TAB_DISPLAY_NAMES = {
     "directories": "Directories",
 }
 
-RESERVED_PROFILE_NAMES = {"custom", "default", "new"}
+# The bracketed names are the Saved Config selector's own entries, whose stored
+# values a profile of the same name would duplicate.
+RESERVED_PROFILE_NAMES = {"custom", "default", "new", "(custom)", "(default)", "(new)"}
 CONFIG_TAB_CONTENT_MARGIN = 18
 CONFIG_TAB_ROW_SPACING = 12
 CONFIG_FIELD_LABEL_WIDTH = 180
@@ -750,9 +752,12 @@ if __name__ == "__main__":
         ResponsiveFlowLayout,
         ResponsiveSelectorLayout,
         SingleInstanceController,
+        add_combo_options,
+        combo_value,
         configure_qt_application_fonts,
         force_light_palette,
         qt_monospace_font,
+        select_combo_value,
         show_window_in_front,
     )
     from PySide6.QtCore import Qt, QUrl, QThread, Signal
@@ -1252,9 +1257,9 @@ if __name__ == "__main__":
             self.profile_labels[tab_id] = label
             self._profile_previous_selection[tab_id] = "(custom)"
             self._refresh_profile_combo(tab_id)
-            selector.currentTextChanged.connect(
-                lambda text, selected_tab=tab_id: self._profile_selection_changed(
-                    selected_tab, text
+            selector.currentIndexChanged.connect(
+                lambda index, selected_tab=tab_id, combo=selector: (
+                    self._profile_selection_changed(selected_tab, combo.itemData(index))
                 )
             )
 
@@ -1295,7 +1300,7 @@ if __name__ == "__main__":
 
         def _refresh_profile_combo(self, tab_id):
             selector = self.profile_selectors[tab_id]
-            current = selector.currentText() or "(custom)"
+            current = combo_value(selector) or "(custom)"
             items = _discover_profile_names(self._saved_config_root(), tab_id)
             items.extend(self._profile_special_items(tab_id))
             disappeared = current not in items
@@ -1303,8 +1308,8 @@ if __name__ == "__main__":
             selector.blockSignals(True)
             try:
                 selector.clear()
-                selector.addItems(items)
-                selector.setCurrentText("(custom)" if disappeared else current)
+                add_combo_options(selector, items)
+                select_combo_value(selector, "(custom)" if disappeared else current)
             finally:
                 selector.blockSignals(False)
 
@@ -1448,6 +1453,8 @@ if __name__ == "__main__":
                         widget.addItem(f"Unavailable saved device [{value}]", value)
                         index = widget.count() - 1
                     widget.setCurrentIndex(index)
+                elif widget.property("persistItemData"):
+                    select_combo_value(widget, str(value))
                 else:
                     text_value = str(value)
                     if key in {"NODE_FASTA_FILE", "MSA_FILE", "INPUT_HDF5"}:
@@ -1532,47 +1539,47 @@ if __name__ == "__main__":
             else:
                 name_input.clear()
 
-        def _set_profile_selection(self, tab_id, text):
+        def _set_profile_selection(self, tab_id, value):
             selector = self.profile_selectors[tab_id]
             selector.blockSignals(True)
             try:
-                selector.setCurrentText(text)
+                select_combo_value(selector, value)
             finally:
                 selector.blockSignals(False)
 
-        def _profile_selection_changed(self, tab_id, text):
-            if self._initializing_profiles or self._profile_loading or not text:
+        def _profile_selection_changed(self, tab_id, value):
+            if self._initializing_profiles or self._profile_loading or not value:
                 return
             previous = self._profile_previous_selection.get(tab_id, "(custom)")
 
-            if text == "(new)":
+            if value == "(new)":
                 self._set_new_profile_field_visible(tab_id, True)
                 self._set_profile_content_enabled(tab_id, True)
-                self._profile_previous_selection[tab_id] = text
+                self._profile_previous_selection[tab_id] = value
                 return
 
             self._set_new_profile_field_visible(tab_id, False)
             try:
-                if text == "(custom)":
+                if value == "(custom)":
                     data = self._custom_profile_data(tab_id)
                     read_only = False
-                elif text == "(default)":
+                elif value == "(default)":
                     if not TAB_PROFILE_SPECS[tab_id]["allow_default"]:
                         raise ValueError("this tab does not provide a default profile")
                     data = dict(TAB_PROFILE_SPECS[tab_id]["defaults"])
                     read_only = True
                 else:
-                    data = self._named_profile_data(tab_id, text)
+                    data = self._named_profile_data(tab_id, value)
                     read_only = False
                 self._apply_profile_data(tab_id, data, read_only=read_only)
-                self._profile_previous_selection[tab_id] = text
+                self._profile_previous_selection[tab_id] = value
             except (OSError, ValueError, TypeError, json.JSONDecodeError) as error:
                 self._set_profile_selection(tab_id, previous)
                 self._set_new_profile_field_visible(tab_id, previous == "(new)")
                 QMessageBox.critical(
                     self,
                     "Saved Config Error",
-                    f"Could not load profile '{text}':\n{error}",
+                    f"Could not load profile '{value}':\n{error}",
                 )
 
         def _load_all_custom_profiles(self):
@@ -1843,8 +1850,14 @@ if __name__ == "__main__":
                     )
             self._refresh_bridge_endpoint_note()
         
-        def _toggle_new_cache_input(self, text):
-            is_new_layout = text == "(New Layout Cache)"
+        def _new_cache_selected(self, index=None):
+            # "(New Layout Cache)" is the only entry without a cache path.
+            if index is None:
+                index = self.cb_cache_file.currentIndex()
+            return index >= 0 and self.cb_cache_file.itemData(index) is None
+
+        def _toggle_new_cache_input(self):
+            is_new_layout = self._new_cache_selected()
             self.line_new_cache.setVisible(is_new_layout)
             self.line_new_cache.setEnabled(is_new_layout)
             self.btn_export_layout.setEnabled(
@@ -1853,8 +1866,8 @@ if __name__ == "__main__":
             if not is_new_layout:
                 self.line_new_cache.clear()
 
-        def _cache_file_activated(self, text):
-            if text == "(New Layout Cache)":
+        def _cache_file_activated(self, index):
+            if self._new_cache_selected(index):
                 self.line_new_cache.setFocus()
 
         def _directory_base_values(self):
@@ -1926,7 +1939,7 @@ if __name__ == "__main__":
             except (OSError, cache_manifest.CacheManifestError):
                 return
 
-            current_text = self.cb_cache_file.currentText()
+            new_cache_was_selected = self._new_cache_selected()
             current_data = self.cb_cache_file.currentData()
             self.cb_cache_file.blockSignals(True)
             try:
@@ -1935,7 +1948,7 @@ if __name__ == "__main__":
                     self.cb_cache_file.addItem(filename, relative_path)
                 self.cb_cache_file.addItem("(New Layout Cache)", None)
 
-                if current_text == "(New Layout Cache)":
+                if new_cache_was_selected:
                     selected_index = self.cb_cache_file.count() - 1
                 else:
                     selected_index = self.cb_cache_file.findData(current_data)
@@ -1948,7 +1961,7 @@ if __name__ == "__main__":
             self.line_new_cache.setPlaceholderText(
                 self._default_new_cache_name(folder_path)
             )
-            self._toggle_new_cache_input(self.cb_cache_file.currentText())
+            self._toggle_new_cache_input()
 
         def refresh_combo(self, combo, dir_key, ext_list):
             import os  # Moved here to ensure it's loaded before use
@@ -1978,7 +1991,7 @@ if __name__ == "__main__":
             self.cb_cache_file.clear()
             self.cb_cache_file.setEnabled(False)
             self.cb_cache_file.blockSignals(False)
-            self._toggle_new_cache_input("")
+            self._toggle_new_cache_input()
             self.btn_open_target_folder.setEnabled(False)
 
         def _cache_paths_from_inputs(self):
@@ -1998,8 +2011,8 @@ if __name__ == "__main__":
             top_value = self.spin_top.optionalValue()
             threshold_value = self.spin_thresh.optionalValue()
             return {
-                "alignment_score": self.cb_score_mode.currentText() or None,
-                "normalization": self.cb_norm_mode.currentText() or None,
+                "alignment_score": combo_value(self.cb_score_mode) or None,
+                "normalization": combo_value(self.cb_norm_mode) or None,
                 "umap_mode": self.check_umap.isChecked(),
                 "umap_neighbors": self.spin_umap_k.value(),
                 "top_edge_percent": top_value,
@@ -2023,14 +2036,14 @@ if __name__ == "__main__":
                 self.cb_norm_mode.setCurrentIndex(-1)
             else:
                 if self.cb_score_mode.currentIndex() == -1:
-                    self.cb_score_mode.setCurrentText("global")
+                    select_combo_value(self.cb_score_mode, "global")
                 # Signals are blocked above, so the currentTextChanged-driven
                 # refresh of cb_norm_mode's item list never fires here. Refresh
                 # it explicitly or a stale item list (e.g. left over from
                 # "local" mode) can silently reject the default below.
                 self.update_norm_mode_options()
                 if self.cb_norm_mode.currentIndex() == -1:
-                    self.cb_norm_mode.setCurrentText("alignment_length")
+                    select_combo_value(self.cb_norm_mode, "alignment_length")
             self.cb_score_mode.blockSignals(False)
             self.cb_norm_mode.blockSignals(False)
 
@@ -2084,7 +2097,7 @@ if __name__ == "__main__":
                 self._cache_launch_allowed = False
                 self.btn_save_run.setEnabled(False)
                 self.cb_cache_file.setEnabled(False)
-                self._toggle_new_cache_input("")
+                self._toggle_new_cache_input()
                 self.btn_open_target_folder.setEnabled(False)
                 self.lbl_cache_tracker.setText(
                     f"Error: {len(folders)} compatible cache folders found"
@@ -2144,7 +2157,7 @@ if __name__ == "__main__":
             self.cb_cache_file.blockSignals(False)
             self._cache_launch_allowed = True
             self.btn_save_run.setEnabled(True)
-            self._toggle_new_cache_input(self.cb_cache_file.currentText())
+            self._toggle_new_cache_input()
 
         def _cache_hash_completed(self, request_id, records, error):
             worker = self._cache_hash_workers.pop(request_id, None)
@@ -2311,8 +2324,8 @@ if __name__ == "__main__":
             # --- Rest of Inputs ---
             # Use NoScrollComboBox here to prevent accidental scroll wheel changes
             self.cb_score_mode = NoScrollComboBox()
-            self.cb_score_mode.addItems(["global", "local"])
-            self.cb_score_mode.setCurrentText(str(globals().get("ALIGNMENT_SCORE", "global")))
+            add_combo_options(self.cb_score_mode, ["global", "local"])
+            select_combo_value(self.cb_score_mode, str(globals().get("ALIGNMENT_SCORE", "global")))
             
             self.cb_norm_mode = NoScrollComboBox()
             score_label = QLabel("Alignment Score Mode:")
@@ -2331,9 +2344,9 @@ if __name__ == "__main__":
             self.update_norm_mode_options()
             
             initial_norm = str(globals().get("NORM_MODE", "alignment_length"))
-            if self.cb_score_mode.currentText() == "local" and initial_norm == "alignment_length":
+            if combo_value(self.cb_score_mode) == "local" and initial_norm == "alignment_length":
                 initial_norm = "longer_sequence"
-            self.cb_norm_mode.setCurrentText(initial_norm)
+            select_combo_value(self.cb_norm_mode, initial_norm)
             
             ref_val = globals().get("ALIGNMENT_REFERENCE", "")
             self.line_ref = QLineEdit("" if ref_val in [None, "None"] else str(ref_val))
@@ -2664,27 +2677,27 @@ if __name__ == "__main__":
             self.inputs["NEW_CACHE_NAME"] = self.line_new_cache
             
             # Hook up the toggle switch
-            self.cb_cache_file.currentTextChanged.connect(self._toggle_new_cache_input)
-            self.cb_cache_file.textActivated.connect(self._cache_file_activated)
+            self.cb_cache_file.currentIndexChanged.connect(self._toggle_new_cache_input)
+            self.cb_cache_file.activated.connect(self._cache_file_activated)
 
             self._add_scroll_tab(tab, "Inputs && Outputs")
             
         def update_norm_mode_options(self):
             if not hasattr(self, 'cb_score_mode') or not hasattr(self, 'cb_norm_mode'):
                 return
-            current_norm = self.cb_norm_mode.currentText()
+            current_norm = combo_value(self.cb_norm_mode)
             self.cb_norm_mode.blockSignals(True)
             self.cb_norm_mode.clear()
             
-            is_local = self.cb_score_mode.currentText() == "local"
+            is_local = combo_value(self.cb_score_mode) == "local"
             if is_local:
-                self.cb_norm_mode.addItems(["shorter_sequence", "longer_sequence", "average_sequence"])
+                add_combo_options(self.cb_norm_mode, ["shorter_sequence", "longer_sequence", "average_sequence"])
                 if current_norm == "alignment_length":
                     current_norm = "longer_sequence"
             else:
-                self.cb_norm_mode.addItems(["alignment_length", "shorter_sequence", "longer_sequence", "average_sequence"])
+                add_combo_options(self.cb_norm_mode, ["alignment_length", "shorter_sequence", "longer_sequence", "average_sequence"])
                 
-            self.cb_norm_mode.setCurrentText(current_norm)
+            select_combo_value(self.cb_norm_mode, current_norm)
             self.cb_norm_mode.blockSignals(False)
 
         def _update_reference_controls(self, text=None):
@@ -2713,7 +2726,7 @@ if __name__ == "__main__":
             physics_selector = self.profile_selectors.get("simulation_physics")
             physics_profile_editable = (
                 physics_selector is None
-                or physics_selector.currentText() != "(default)"
+                or combo_value(physics_selector) != "(default)"
             )
             if hasattr(self, 'cb_layout_device'):
                 self.cb_layout_device.setEnabled(
@@ -2786,8 +2799,8 @@ if __name__ == "__main__":
             QApplication.processEvents()
             
             try:
-                score_mode = self.cb_score_mode.currentText()
-                norm_mode = self.cb_norm_mode.currentText()
+                score_mode = combo_value(self.cb_score_mode)
+                norm_mode = combo_value(self.cb_norm_mode)
                 
                 with h5py.File(hdf5_path, "r") as hf:
                     metadata = cache_manifest.validate_network_schema(hf)
@@ -2945,8 +2958,8 @@ if __name__ == "__main__":
             QApplication.processEvents()
             
             try:
-                score_mode = self.cb_score_mode.currentText()
-                norm_mode = self.cb_norm_mode.currentText()
+                score_mode = combo_value(self.cb_score_mode)
+                norm_mode = combo_value(self.cb_norm_mode)
                 
                 with h5py.File(hdf5_path, "r") as hf:
                     metadata = cache_manifest.validate_network_schema(hf)
@@ -4001,6 +4014,8 @@ if __name__ == "__main__":
                 if isinstance(widget, QComboBox):
                     if key == "LAYOUT_DEVICE_SELECTION":
                         val = widget.currentData()
+                    elif widget.property("persistItemData"):
+                        val = combo_value(widget)
                     else:
                         val = widget.currentText()
                 elif isinstance(widget, OptionalNoScrollDoubleSpinBox):
@@ -4032,11 +4047,12 @@ if __name__ == "__main__":
         def _widget_profile_value(self, key):
             widget = self.inputs[key]
             if isinstance(widget, QComboBox):
-                value = (
-                    widget.currentData()
-                    if key == "LAYOUT_DEVICE_SELECTION"
-                    else widget.currentText()
-                )
+                if key == "LAYOUT_DEVICE_SELECTION":
+                    value = widget.currentData()
+                elif widget.property("persistItemData"):
+                    value = combo_value(widget)
+                else:
+                    value = widget.currentText()
             elif isinstance(widget, OptionalNoScrollDoubleSpinBox):
                 optional_value = widget.optionalValue()
                 value = "None" if optional_value is None else str(optional_value)
@@ -4088,7 +4104,7 @@ if __name__ == "__main__":
             default_tabs = []
 
             for tab_id in TAB_PROFILE_SPECS:
-                selection = self.profile_selectors[tab_id].currentText()
+                selection = combo_value(self.profile_selectors[tab_id])
                 if selection == "(custom)":
                     custom_settings.update(tab_data[tab_id])
                 elif selection == "(default)":
@@ -4152,7 +4168,7 @@ if __name__ == "__main__":
                 return False
 
         def _selected_new_cache_filename(self):
-            if self.cb_cache_file.currentText() != "(New Layout Cache)":
+            if not self._new_cache_selected():
                 raise ValueError(
                     "Layout settings can only be exported for (New Layout Cache)."
                 )
@@ -4170,8 +4186,8 @@ if __name__ == "__main__":
 
             cache_name = self._selected_new_cache_filename()
             collected = self.collect_data()
-            collected["ALIGNMENT_SCORE"] = self.cb_score_mode.currentText() or None
-            collected["NORM_MODE"] = self.cb_norm_mode.currentText() or None
+            collected["ALIGNMENT_SCORE"] = combo_value(self.cb_score_mode) or None
+            collected["NORM_MODE"] = combo_value(self.cb_norm_mode) or None
             collected["SIMILARITY_THRESHOLD"] = self.spin_thresh.optionalValue()
             collected["LAYOUT_DIMENSIONS"] = LAYOUT_DIMENSIONS
             collected["TOP_EDGE_PERCENT"] = self.spin_top.optionalValue()
@@ -4269,12 +4285,11 @@ if __name__ == "__main__":
                 )
                 return
 
-            selected_cache = self.cb_cache_file.currentText()
             saved_layout_dir = os.path.abspath(
                 self._resolved_directory_input("SAVED_LAYOUT_DIR")
             )
             try:
-                if selected_cache == "(New Layout Cache)":
+                if self._new_cache_selected():
                     cache_name = self._selected_new_cache_filename()
                     relative_path = cache_manifest.relative_cache_path(
                         saved_layout_dir, self.current_cache_folder, cache_name
