@@ -354,6 +354,58 @@ class DropdownValueTests(unittest.TestCase):
         self.assertFalse(self.report["profile_error"])
 
 
+class BlastNetworkSaveTests(unittest.TestCase):
+    """A BLAST network blanks both modes; Save keeps the alignment choice they hide.
+
+    As in the desktop Config, saving used to fail with "invalid value for
+    ALIGNMENT_SCORE" because the blank controls were saved as empty text.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.report = report_from(
+            """
+            import tempfile
+            select = namespace["select_combo_value"]
+            value = namespace["combo_value"]
+
+            window._set_network_type_controls("alignment")
+            select(window.cb_score_mode, "local")
+            select(window.cb_norm_mode, "average_sequence")
+            window._set_network_type_controls("blast")
+            blank = [window.cb_score_mode.currentIndex(), window.cb_norm_mode.currentIndex()]
+            with tempfile.TemporaryDirectory() as directory:
+                # Never the submodule's real settings file.
+                settings_file = os.path.join(directory, "viewer_settings.json")
+                with mock.patch.dict(
+                    window.save_settings.__globals__,
+                    {"DEFAULT_SETTINGS_FILE": settings_file},
+                ):
+                    saved_ok = window.save_settings()
+                saved = {}
+                if os.path.exists(settings_file):
+                    with open(settings_file, encoding="utf-8") as handle:
+                        saved = json.load(handle)
+            window._set_network_type_controls("alignment")
+            print("@@" + json.dumps({
+                "blank": blank,
+                "saved_ok": saved_ok,
+                "tip": window.tip_panel.text(),
+                "saved": [saved.get("ALIGNMENT_SCORE"), saved.get("NORM_MODE")],
+                "restored": [value(window.cb_score_mode), value(window.cb_norm_mode)],
+            }))
+            """
+        )
+
+    def test_save_keeps_the_choice_the_blank_controls_hide(self):
+        self.assertEqual(self.report["blank"], [-1, -1])
+        self.assertTrue(self.report["saved_ok"], self.report["tip"])
+        self.assertEqual(self.report["saved"], ["local", "average_sequence"])
+
+    def test_leaving_blast_restores_the_choice(self):
+        self.assertEqual(self.report["restored"], ["local", "average_sequence"])
+
+
 class LaunchTargetTests(unittest.TestCase):
     """The copy must launch the VR viewer, not the desktop one."""
 
