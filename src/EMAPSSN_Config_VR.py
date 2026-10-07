@@ -126,22 +126,6 @@ VR_CONTROL_TIPS = {
 }
 
 
-TOGGLE_ON_STYLE = (
-    "QPushButton { background-color: #4CAF50; color: white; border-radius: 14px; "
-    "font-weight: bold; border: 1px solid #388E3C; }"
-)
-TOGGLE_OFF_STYLE = (
-    "QPushButton { background-color: #e0e0e0; color: #333; border-radius: 14px; "
-    "font-weight: bold; border: 1px solid #bdbdbd; }"
-)
-
-
-def style_toggle_switch(button, checked):
-    """Paint a checkable QPushButton as the ON/OFF pill this GUI uses."""
-    button.setText("ON" if checked else "OFF")
-    button.setStyleSheet(TOGGLE_ON_STYLE if checked else TOGGLE_OFF_STYLE)
-
-
 def bridge_note_text(endpoint, host, port, build_dir=None):
     """Describe the selected client and the endpoint Save & Run gives it."""
     if endpoint is None:
@@ -369,7 +353,6 @@ PROFILE_TAB_DISPLAY_NAMES = {
 RESERVED_PROFILE_NAMES = {"custom", "default", "new", "(custom)", "(default)", "(new)"}
 CONFIG_TAB_CONTENT_MARGIN = 18
 CONFIG_TAB_ROW_SPACING = 12
-CONFIG_FIELD_LABEL_WIDTH = 180
 CONFIG_FIELD_HORIZONTAL_SPACING = 12
 CONFIG_SEPARATOR_THICKNESS = 2
 CONFIG_SEPARATOR_PADDING = 24
@@ -756,9 +739,11 @@ if __name__ == "__main__":
         ResponsiveFlowLayout,
         ResponsiveSelectorLayout,
         SingleInstanceController,
+        ToggleSwitch,
         add_combo_options,
         combo_value,
         configure_qt_application_fonts,
+        fit_buttons_to_text,
         force_light_palette,
         qt_monospace_font,
         select_combo_value,
@@ -1096,12 +1081,14 @@ if __name__ == "__main__":
             self._last_duplicate_signature = None
             self._scoring_hidden_by_blast = None
             self.current_cache_folder = None
+            self._label_column = []
 
             self.create_inputs_tab()
             self.create_visuals_tab()
             self.create_physics_tab()
             self.create_directories_tab()
 
+            self._align_label_column()
             self._prepare_responsive_layouts()
             self._initializing_profiles = False
             self._load_all_custom_profiles()
@@ -1118,16 +1105,34 @@ if __name__ == "__main__":
             self.update_live_validators()
             self.setup_tips()
 
-        @staticmethod
-        def _make_field_group(pairs, *, parent=None, name="", ratios=None, **options):
+        def _make_field_group(self, pairs, *, parent=None, name="", ratios=None, **options):
             group = parent if parent is not None else QWidget()
             group.setObjectName(name)
-            pairs[0][0].setFixedWidth(max(CONFIG_FIELD_LABEL_WIDTH, pairs[0][0].minimumWidth()))
+            self._label_column.append(pairs[0][0])
             ResponsiveFieldLayout(
                 group, pairs, ratios or tuple(1 for _ in pairs),
                 spacing=CONFIG_FIELD_HORIZONTAL_SPACING, wrap_labels=False, **options,
             )
             return group
+
+        def _align_label_column(self):
+            """Start every field one field spacing after the longest field label.
+
+            The first label of every row, on every tab, shares one column, so
+            fields line up across the tabs. A row of paired fields that stacks
+            in a narrow window moves its other labels into that column too, so
+            they count toward its width.
+            """
+            labels = list(dict.fromkeys(self._label_column))
+            width = max(label.sizeHint().width() for label in labels)
+            for group in self.findChildren(QWidget):
+                layout = group.layout()
+                if isinstance(layout, ResponsiveFieldLayout):
+                    width = max([width] + [layout._label_width(label)
+                                           for label, _ in layout.pairs[1:]])
+            for label in labels:
+                label.setFixedWidth(width)
+            self.label_column_width = width
 
         def _responsive_grid_rows(self, grid, name, *, trailing=False):
             rows = {}
@@ -1179,10 +1184,11 @@ if __name__ == "__main__":
                 if isinstance(editor.parentWidget(), (QSpinBox, QDoubleSpinBox, QComboBox)):
                     continue
                 # A field sharing its cell with a button leaves room for it.
+                # The button fits its text, so a long one can take it all.
                 shared_width = int(editor.property("sharedCellWidth") or 0)
-                editor.setMinimumWidth(
-                    editor.fontMetrics().horizontalAdvance("M" * 12) - shared_width
-                )
+                editor.setMinimumWidth(max(
+                    0, editor.fontMetrics().horizontalAdvance("M" * 12) - shared_width
+                ))
             for slider in self.findChildren(QSlider):
                 slider.setMinimumWidth(slider.fontMetrics().horizontalAdvance("M" * 8))
             for form in self.findChildren(QFormLayout):
@@ -1221,13 +1227,7 @@ if __name__ == "__main__":
                 base_directories=self._directory_base_values(),
             )
 
-        def _add_profile_selector(
-            self,
-            tab_id,
-            form_layout,
-            *,
-            label_width=CONFIG_FIELD_LABEL_WIDTH,
-        ):
+        def _add_profile_selector(self, tab_id, form_layout):
             container = QWidget()
             row_layout = ResponsiveSelectorLayout(container)
             row_layout.setContentsMargins(0, 0, 0, 0)
@@ -1246,7 +1246,7 @@ if __name__ == "__main__":
             row_layout.addWidget(folder_button)
 
             label = QLabel("Saved Config:")
-            label.setFixedWidth(label_width)
+            self._label_column.append(label)
             form_layout.addRow(label, container)
 
             def open_profile_folder(checked=False, selected_tab=tab_id):
@@ -2272,7 +2272,7 @@ if __name__ == "__main__":
             
             def add_row(key, label_text, widget):
                 lbl = QLabel(label_text)
-                lbl.setFixedWidth(CONFIG_FIELD_LABEL_WIDTH)
+                self._label_column.append(lbl)
                 layout.addRow(lbl, widget)
                 self.labels[key] = lbl
                 self.inputs[key] = widget
@@ -2304,7 +2304,7 @@ if __name__ == "__main__":
                 h_lay.addWidget(btn)
                 
                 lbl = QLabel(label_text)
-                lbl.setFixedWidth(CONFIG_FIELD_LABEL_WIDTH)
+                self._label_column.append(lbl)
                 layout.addRow(lbl, container)
                 self.labels[key] = lbl
                 self.inputs[key] = combo 
@@ -2397,7 +2397,6 @@ if __name__ == "__main__":
             lbl_min_occ = QLabel("Min Occupancy %:")
 
             ref_label = QLabel("Alignment Reference ID:")
-            ref_label.setFixedWidth(CONFIG_FIELD_LABEL_WIDTH)
             self._make_field_group(
                 [(ref_label, self.line_ref), (lbl_min_occ, self.spin_min_occ),
                  (self.lbl_alignment_offset, self.spin_alignment_offset)],
@@ -2412,23 +2411,12 @@ if __name__ == "__main__":
             
             # --- UMAP Controls ---
             
-            self.check_umap = QPushButton()
-            self.check_umap.setCheckable(True)
-            self.check_umap.setFixedSize(60, 28)
-            def switch_umap_style(checked, btn=self.check_umap):
-                if checked:
-                    btn.setText("ON")
-                    btn.setStyleSheet("QPushButton { background-color: #4CAF50; color: white; border-radius: 14px; font-weight: bold; border: 1px solid #388E3C; }")
-                else:
-                    btn.setText("OFF")
-                    btn.setStyleSheet("QPushButton { background-color: #e0e0e0; color: #333; border-radius: 14px; font-weight: bold; border: 1px solid #bdbdbd; }")
-            self.check_umap.toggled.connect(switch_umap_style)
+            self.check_umap = ToggleSwitch()
             
             umap_mode_val = globals().get("UMAP_MODE", False)
             if isinstance(umap_mode_val, str):
                 umap_mode_val = umap_mode_val.lower() in ['true', '1', 't', 'y', 'yes']
             self.check_umap.setChecked(bool(umap_mode_val))
-            switch_umap_style(bool(umap_mode_val))
             
             lbl_k = QLabel("UMAP Nearest Neighbors:")
             lbl_md = QLabel("UMAP Min Distance:")
@@ -2534,7 +2522,6 @@ if __name__ == "__main__":
                 return stack
 
             threshold_label = mode_stack(lbl_thresh, lbl_k)
-            threshold_label.setMinimumWidth(max(CONFIG_FIELD_LABEL_WIDTH, lbl_k.sizeHint().width()))
             threshold_control = mode_stack(self.spin_thresh, self.spin_umap_k)
             top_label = mode_stack(lbl_top, lbl_md)
             top_control = mode_stack(top_edge_control, self.spin_umap_md)
@@ -2550,11 +2537,11 @@ if __name__ == "__main__":
             # three; the two other rows retain a compact, right-aligned last field.
             aligned_rows = [mode_container.layout(), ref_container.layout(),
                             filter_container.layout()]
-            for column in (0, 1):
-                label_width = max(row._label_width(row.pairs[column][0])
-                                  for row in aligned_rows)
-                for row in aligned_rows:
-                    row.pairs[column][0].setFixedWidth(label_width)
+            # The first column's labels join the window's label column
+            # (_align_label_column); the second column's labels match here.
+            label_width = max(row._label_width(row.pairs[1][0]) for row in aligned_rows)
+            for row in aligned_rows:
+                row.pairs[1][0].setFixedWidth(label_width)
             last_width = max(row._column_minima()[2] for row in aligned_rows[1:])
             for row in aligned_rows[1:]:
                 label, control = row.pairs[2]
@@ -2651,7 +2638,7 @@ if __name__ == "__main__":
             cache_lay.addWidget(self.lbl_cache_tracker, 1)
             cache_lay.addWidget(self.btn_open_cache)
             target_cache_label = QLabel("Target Cache:")
-            target_cache_label.setFixedWidth(CONFIG_FIELD_LABEL_WIDTH)
+            self._label_column.append(target_cache_label)
             layout.addRow(target_cache_label, cache_container)
             self.labels["TARGET_CACHE"] = target_cache_label
 
@@ -2691,7 +2678,7 @@ if __name__ == "__main__":
             
             layout.addRow("Selected Cache File:", target_container)
             self.labels["TARGET_CACHE_FILE"] = layout.labelForField(target_container)
-            self.labels["TARGET_CACHE_FILE"].setFixedWidth(CONFIG_FIELD_LABEL_WIDTH)
+            self._label_column.append(self.labels["TARGET_CACHE_FILE"])
             self.inputs["TARGET_CACHE_FILE"] = self.cb_cache_file
             self.inputs["NEW_CACHE_NAME"] = self.line_new_cache
             
@@ -3134,7 +3121,6 @@ if __name__ == "__main__":
             visual_grid = QGridLayout()
             visual_grid.setHorizontalSpacing(CONFIG_FIELD_HORIZONTAL_SPACING)
             visual_grid.setVerticalSpacing(12)
-            visual_grid.setColumnMinimumWidth(0, CONFIG_FIELD_LABEL_WIDTH)
             visual_grid.setColumnStretch(1, 1)
             visual_grid.setColumnMinimumWidth(2, 16)
             visual_grid.setColumnStretch(4, 1)
@@ -3248,7 +3234,7 @@ if __name__ == "__main__":
                 le.textChanged.connect(update_color_swatch)
                 
                 btn = QPushButton("Pick")
-                btn.setFixedWidth(50)
+                fit_buttons_to_text(btn)
                 
                 def pick_color(checked, line_edit=le, color_swatch=swatch):
                     initial = line_edit.text()
@@ -3285,10 +3271,6 @@ if __name__ == "__main__":
             main_layout.addWidget(self._build_bridge_fields())
 
             main_layout.addStretch()
-
-            self.profile_labels["visual_effects"].setFixedWidth(
-                CONFIG_FIELD_LABEL_WIDTH
-            )
             
             self._add_scroll_tab(tab, "Visual Effects")
             
@@ -3339,7 +3321,7 @@ if __name__ == "__main__":
                 saved_index = cb_layout_device.count() - 1
             cb_layout_device.setCurrentIndex(saved_index)
             lbl_layout_device = QLabel("Layout Device:")
-            lbl_layout_device.setFixedWidth(CONFIG_FIELD_LABEL_WIDTH)
+            self._label_column.append(lbl_layout_device)
             form_layout.addRow(lbl_layout_device, cb_layout_device)
             self.inputs["LAYOUT_DEVICE_SELECTION"] = cb_layout_device
             self.labels["LAYOUT_DEVICE_SELECTION"] = lbl_layout_device
@@ -3406,7 +3388,6 @@ if __name__ == "__main__":
             slider_pair_grid = QGridLayout()
             slider_pair_grid.setHorizontalSpacing(0)
             slider_pair_grid.setVerticalSpacing(12)
-            slider_pair_grid.setColumnMinimumWidth(0, CONFIG_FIELD_LABEL_WIDTH)
             slider_pair_grid.setColumnMinimumWidth(1, field_label_gap)
             slider_pair_grid.setColumnMinimumWidth(3, paired_group_padding)
             slider_pair_grid.setColumnMinimumWidth(5, field_label_gap)
@@ -3417,7 +3398,6 @@ if __name__ == "__main__":
                 row = slider_pair_grid.rowCount()
                 left_label, left_control = physics_slider_controls[left_key]
                 right_label, right_control = physics_slider_controls[right_key]
-                left_label.setFixedWidth(CONFIG_FIELD_LABEL_WIDTH)
 
                 slider_pair_grid.addWidget(left_label, row, 0)
                 slider_pair_grid.addWidget(left_control, row, 2)
@@ -3432,7 +3412,6 @@ if __name__ == "__main__":
             convergence_grid = QGridLayout()
             convergence_grid.setHorizontalSpacing(0)
             convergence_grid.setVerticalSpacing(12)
-            convergence_grid.setColumnMinimumWidth(0, CONFIG_FIELD_LABEL_WIDTH)
             convergence_grid.setColumnMinimumWidth(1, field_label_gap)
             convergence_grid.setColumnMinimumWidth(3, paired_group_padding)
             convergence_grid.setColumnMinimumWidth(5, field_label_gap)
@@ -3446,24 +3425,14 @@ if __name__ == "__main__":
 
             # Auto lets each simulation stage pick its own fastest stable step,
             # so the Step Size field is greyed out while it is on.
-            btn_auto_dt = QPushButton()
-            btn_auto_dt.setCheckable(True)
-            btn_auto_dt.setFixedSize(84, 28)
+            btn_auto_dt = ToggleSwitch("Auto ON", "Auto OFF")
             self.inputs["AUTO_DT"] = btn_auto_dt
-
-            def switch_toggle_style_auto_dt(checked, btn=btn_auto_dt, field=le_dt):
-                field.setEnabled(not checked)
-                if checked:
-                    btn.setText("Auto ON")
-                    btn.setStyleSheet("QPushButton { background-color: #4CAF50; color: white; border-radius: 14px; font-weight: bold; border: 1px solid #388E3C; }")
-                else:
-                    btn.setText("Auto OFF")
-                    btn.setStyleSheet("QPushButton { background-color: #e0e0e0; color: #333; border-radius: 14px; font-weight: bold; border: 1px solid #bdbdbd; }")
-
-            btn_auto_dt.toggled.connect(switch_toggle_style_auto_dt)
+            btn_auto_dt.toggled.connect(
+                lambda checked, field=le_dt: field.setEnabled(not checked)
+            )
             auto_dt_state = bool(globals().get("AUTO_DT", False))
             btn_auto_dt.setChecked(auto_dt_state)
-            switch_toggle_style_auto_dt(auto_dt_state)
+            le_dt.setEnabled(not auto_dt_state)
 
             # The button starts the Step Size cell, in line with the fields below
             # it. The field gives up the button's width (see
@@ -3554,17 +3523,14 @@ if __name__ == "__main__":
             h_lay_window.addWidget(box_window)
             
             lbl_window = QLabel("RMSD Window:")
-            lbl_window.setFixedWidth(CONFIG_FIELD_LABEL_WIDTH)
+            self._label_column.append(lbl_window)
             form_layout.addRow(lbl_window, ui_window)
             self.inputs["RMSD_WINDOW"] = box_window
             self.labels["RMSD_WINDOW"] = lbl_window
             
             # --- 5. Packing controls ---
             lbl_prog = QLabel("Progressive Annealing:")
-            lbl_prog.setFixedWidth(CONFIG_FIELD_LABEL_WIDTH)
-            cb_prog = QPushButton()
-            cb_prog.setCheckable(True)
-            cb_prog.setFixedSize(60, 28)
+            cb_prog = ToggleSwitch()
             prog_field = QWidget()
             prog_field.setObjectName("wrapper")
             prog_field.setMinimumHeight(cb_prog.height())
@@ -3576,18 +3542,8 @@ if __name__ == "__main__":
             self.inputs["ENABLE_PROGRESSIVE_SIMULATION"] = cb_prog
             self.labels["ENABLE_PROGRESSIVE_SIMULATION"] = lbl_prog
             
-            def switch_toggle_style(checked, btn=cb_prog):
-                if checked:
-                    btn.setText("ON")
-                    btn.setStyleSheet("QPushButton { background-color: #4CAF50; color: white; border-radius: 14px; font-weight: bold; border: 1px solid #388E3C; }")
-                else:
-                    btn.setText("OFF")
-                    btn.setStyleSheet("QPushButton { background-color: #e0e0e0; color: #333; border-radius: 14px; font-weight: bold; border: 1px solid #bdbdbd; }")
-            
-            cb_prog.toggled.connect(switch_toggle_style)
             initial_state = bool(globals().get("ENABLE_PROGRESSIVE_SIMULATION", False))
             cb_prog.setChecked(initial_state)
-            switch_toggle_style(initial_state)
             
             # Packing Geometry is deliberately absent. Square/Circle tiles a
             # flat poster; in three dimensions calculate_layout branches to
@@ -3662,15 +3618,12 @@ if __name__ == "__main__":
                 packing_controls_grid, "packing", trailing=True
             ))
 
-            paired_left_labels = (lbl_dt, lbl_rmsd)
             paired_right_labels = (
                 physics_slider_controls["COULOMB_K"][0],
                 physics_slider_controls["DAMPING"][0],
                 lbl_steps,
                 lbl_drop,
             )
-            for paired_label in paired_left_labels:
-                paired_label.setFixedWidth(CONFIG_FIELD_LABEL_WIDTH)
             right_label_width = max(
                 label.fontMetrics().horizontalAdvance(label.text())
                 for label in paired_right_labels
@@ -3691,15 +3644,9 @@ if __name__ == "__main__":
             row.setSpacing(CONFIG_FIELD_HORIZONTAL_SPACING)
 
             label = QLabel("Quit with VR Client:")
-            toggle = QPushButton()
-            toggle.setCheckable(True)
-            toggle.setFixedSize(60, 28)
-            toggle.toggled.connect(
-                lambda checked, btn=toggle: style_toggle_switch(btn, checked)
-            )
+            toggle = ToggleSwitch()
             initial = bool(globals().get("EXIT_WITH_UNITY", True))
             toggle.setChecked(initial)
-            style_toggle_switch(toggle, initial)
 
             self.labels["EXIT_WITH_UNITY"] = label
             self.inputs["EXIT_WITH_UNITY"] = toggle
@@ -3770,7 +3717,7 @@ if __name__ == "__main__":
             port.setValue(int(globals().get("VR_PORT", 5005) or 5005))
 
             build_label = label_for("VR_APP_DIR", "VR Client Build:", app_dir)
-            build_label.setFixedWidth(CONFIG_FIELD_LABEL_WIDTH)
+            self._label_column.append(build_label)
             left.addWidget(build_label, 0, 0)
             left.addWidget(app_dir, 0, 1, 1, 3)
             left.addWidget(browse, 0, 4)
@@ -3782,13 +3729,7 @@ if __name__ == "__main__":
             right.addWidget(port, 0, 3)
 
             # --- Row 2: how much of the network is drawn ----------------------
-            filtering = QPushButton()
-            filtering.setCheckable(True)
-            filtering.setFixedSize(60, 28)
-
-            filtering.toggled.connect(
-                lambda checked, btn=filtering: style_toggle_switch(btn, checked)
-            )
+            filtering = ToggleSwitch()
 
             budget = NoScrollSpinBox()
             budget.setRange(0, 100_000_000)
@@ -3803,7 +3744,7 @@ if __name__ == "__main__":
             filtering_label = label_for(
                 "ENABLE_EDGE_FILTERING", "Limit Rendered Edges:", filtering
             )
-            filtering_label.setFixedWidth(CONFIG_FIELD_LABEL_WIDTH)
+            self._label_column.append(filtering_label)
             left.addWidget(filtering_label, 1, 0)
             left.addWidget(filtering, 1, 1)
             budget_label = label_for("MAX_RENDER_EDGES", "Max Edges:", budget)
@@ -3834,7 +3775,6 @@ if __name__ == "__main__":
             filtering.toggled.connect(gate_budget)
             initial_filtering = bool(globals().get("ENABLE_EDGE_FILTERING", True))
             filtering.setChecked(initial_filtering)
-            style_toggle_switch(filtering, initial_filtering)
             gate_budget(initial_filtering)
 
             def refresh_endpoint_note():
@@ -3929,7 +3869,7 @@ if __name__ == "__main__":
             layout.addRow("Saved Config Directory:", saved_config_container)
             self.inputs["SAVED_CONFIG_DIR"] = saved_config_input
             self.labels["SAVED_CONFIG_DIR"] = layout.labelForField(saved_config_container)
-            self.labels["SAVED_CONFIG_DIR"].setFixedWidth(CONFIG_FIELD_LABEL_WIDTH)
+            self._label_column.append(self.labels["SAVED_CONFIG_DIR"])
 
             def browse_saved_config_directory(checked=False):
                 folder = QFileDialog.getExistingDirectory(
@@ -3995,7 +3935,7 @@ if __name__ == "__main__":
                     display_name = display_name.replace('Dir', 'Directory')
                 
                 lbl = QLabel(f"{display_name}:")
-                lbl.setFixedWidth(CONFIG_FIELD_LABEL_WIDTH)
+                self._label_column.append(lbl)
                 layout.addRow(lbl, container)
                 directory_profile_controls.extend((lbl, container))
                 self.labels[key] = lbl

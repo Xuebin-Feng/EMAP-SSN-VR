@@ -427,6 +427,75 @@ class DropdownValueTests(unittest.TestCase):
         self.assertFalse(self.report["profile_error"])
 
 
+class TextSizedControlsTests(unittest.TestCase):
+    """Labels share one column sized by the longest, and switches fit their text,
+    as in the desktop Config. The VR client block joins both."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.report = report_from(
+            """
+            from PySide6.QtCore import QPoint
+            from PySide6.QtGui import QFont, QFontMetrics
+            from desktop.Desktop_App import BUTTON_TEXT_PADDING, ToggleSwitch
+            window.show()
+
+            def flush():
+                for _ in range(4):
+                    app.processEvents()
+
+            flush()
+            window.tabs.setCurrentIndex(1)  # Visual Effects holds the client block
+            flush()
+            page = window.tabs.currentWidget().widget()
+
+            def x(widget):
+                return widget.mapTo(page, QPoint()).x()
+
+            switches = []
+            for button in window.findChildren(namespace["QPushButton"]):
+                if not button.isCheckable():
+                    continue
+                bold = QFont(button.font())
+                bold.setBold(True)
+                sizes, texts = set(), []
+                for _ in range(2):
+                    button.toggle()
+                    flush()
+                    sizes.add((button.width(), button.height()))
+                    texts.append(button.text())
+                needed = max(QFontMetrics(bold).horizontalAdvance(text) for text in texts)
+                switches.append({
+                    "texts": texts,
+                    "toggle_switch": isinstance(button, ToggleSwitch),
+                    "sizes": sorted(sizes),
+                    "needed": needed + 2 * BUTTON_TEXT_PADDING,
+                })
+            client_keys = ("VR_APP_DIR", "ENABLE_EDGE_FILTERING")
+            print("@@" + json.dumps({
+                "column": window.label_column_width,
+                "column_labels": [window.labels[key].width() for key in client_keys],
+                "client_fields": [x(window.inputs[key]) for key in client_keys],
+                "visual_field": x(window.inputs["NODE_SIZE"].parentWidget()),
+                "switches": switches,
+            }))
+            """
+        )
+
+    def test_client_block_labels_join_the_label_column(self):
+        report = self.report
+        self.assertEqual(report["column_labels"], [report["column"]] * 2)
+        self.assertEqual(report["client_fields"], [report["visual_field"]] * 2)
+
+    def test_every_switch_fits_both_texts_and_keeps_its_size(self):
+        switches = self.report["switches"]
+        self.assertEqual(len(switches), 5)
+        for switch in switches:
+            with self.subTest(texts=switch["texts"]):
+                self.assertTrue(switch["toggle_switch"])
+                self.assertEqual(switch["sizes"], [[switch["needed"], 28]])
+
+
 class BlastNetworkSaveTests(unittest.TestCase):
     """A BLAST network blanks both modes; Save keeps the alignment choice they hide.
 
