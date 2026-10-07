@@ -314,6 +314,7 @@ UNUSED_IN_VR = frozenset({
     "TEXT_COLOR",         # ditto
     "LOW_RESOURCE_MODE",  # a VisPy canvas optimisation; the VR client draws
     "PACKING_GEOMETRY",   # 3D packs onto spherical shells, ignoring Square/Circle
+    "AUTO_DT",            # no Auto step-size button here yet; layouts use Step Size
 })
 
 #: The bridge settings sit on the Visual Effects tab, so they share its profile
