@@ -33,6 +33,9 @@ Two deliberate differences from upstream, both forced by the environment:
   an agent does drive the VR viewer, not before.
 """
 
+import codecs
+import io
+import locale
 import os
 
 import Command_Engine
@@ -49,6 +52,38 @@ USAGE = (
     "Example:\n"
     "  run my_script.txt"
 )
+
+# A byte-order mark names a .txt file's encoding. UTF-32 LE's mark begins with
+# UTF-16 LE's, so the UTF-32 marks are checked first.
+BYTE_ORDER_MARKS = (
+    (codecs.BOM_UTF32_LE, 'utf-32'), (codecs.BOM_UTF32_BE, 'utf-32'),
+    (codecs.BOM_UTF8, 'utf-8-sig'),
+    (codecs.BOM_UTF16_LE, 'utf-16'), (codecs.BOM_UTF16_BE, 'utf-16'),
+)
+
+
+def read_command_lines(file_path):
+    """Lines of a .txt command file, decoded the way Notepad decodes it.
+
+    A byte-order mark names the encoding. A file without one is UTF-8 if it
+    decodes as UTF-8, and otherwise in the system's legacy encoding: the ANSI
+    code page on Windows, older Notepad's and PowerShell 5.1 Set-Content's
+    default. Bytes that still don't decode show as U+FFFD; dropping them would
+    turn select "café" into select "caf", which also matches caffeine.
+    """
+    with open(file_path, 'rb') as f:
+        data = f.read()
+    encoding = next((name for mark, name in BYTE_ORDER_MARKS if data.startswith(mark)), None)
+    if encoding is None:
+        try:
+            data.decode('utf-8')
+            encoding = 'utf-8'
+        except UnicodeDecodeError:
+            encoding = locale.getencoding()
+            print(f"[Run] {file_path} is not UTF-8; reading it as {encoding}, "
+                  "with U+FFFD for any byte that doesn't decode.")
+    # Universal newlines, as readlines() on a text-mode file splits them.
+    return io.StringIO(data.decode(encoding, errors='replace'), newline=None).readlines()
 
 
 def run(viewer, args):
@@ -107,8 +142,7 @@ def run(viewer, args):
 
             commands_lines = result.stdout.splitlines()
         else:
-            with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
-                commands_lines = f.readlines()
+            commands_lines = read_command_lines(file_path)
 
         # Execute the commands in sequence
         executed_count = 0
