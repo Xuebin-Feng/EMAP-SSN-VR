@@ -185,6 +185,110 @@ class ConfigWindowTests(unittest.TestCase):
         )
 
 
+class AutoStepSizeTests(unittest.TestCase):
+    """The Auto button beside Step Size behaves as in the desktop Config."""
+
+    def test_auto_button_greys_out_the_step_size_field(self):
+        report = report_from(
+            """
+            window.profile_selectors["simulation_physics"].setCurrentText("(new)")
+            button, field = window.inputs["AUTO_DT"], window.inputs["DT"]
+            cell = button.parentWidget()
+
+            def minimum_width(widget):
+                return widget.minimumSizeHint().expandedTo(widget.minimumSize()).width()
+
+            states = {}
+            for checked in (False, True):
+                button.setChecked(checked)
+                app.processEvents()
+                states[str(checked)] = {
+                    "text": button.text(),
+                    "field_enabled": field.isEnabled(),
+                    "collected": window.collect_data()["AUTO_DT"],
+                }
+            button.setChecked(False)
+            print("@@" + json.dumps({
+                "button_starts_the_cell": cell.layout().itemAt(0).widget() is button,
+                "field_follows": cell.layout().itemAt(1).widget() is field,
+                "cell_is_as_narrow_as_a_field": minimum_width(cell)
+                    == minimum_width(window.inputs["MAX_STEPS"]),
+                "gap_matches_label_spacing": cell.layout().spacing()
+                    == namespace["CONFIG_FIELD_HORIZONTAL_SPACING"],
+                "in_physics_profile": "AUTO_DT"
+                    in namespace["TAB_PROFILE_SPECS"]["simulation_physics"]["defaults"],
+                "states": states,
+            }))
+            """
+        )
+        for key in ("button_starts_the_cell", "field_follows",
+                    "cell_is_as_narrow_as_a_field", "gap_matches_label_spacing",
+                    "in_physics_profile"):
+            self.assertTrue(report[key], key)
+        self.assertEqual(
+            report["states"]["False"],
+            {"text": "Auto OFF", "field_enabled": True, "collected": False},
+        )
+        self.assertEqual(
+            report["states"]["True"],
+            {"text": "Auto ON", "field_enabled": False, "collected": True},
+        )
+
+
+class AlignmentOffsetTests(unittest.TestCase):
+    """Alignment Offset spans the row once the fields stack, as in the desktop Config."""
+
+    def test_offset_spans_stacked_rows_and_keeps_its_wide_width(self):
+        report = report_from(
+            """
+            from PySide6.QtCore import QPoint
+            window.show()
+
+            def flush():
+                for _ in range(4):
+                    app.processEvents()
+
+            def resize_panel(width):
+                window.resize(width + 360, 850)
+                window.main_split.setSizes([width + 4, 326])
+                flush()
+                delta = width - window.tabs.currentWidget().width()
+                left, right = window.main_split.sizes()
+                window.main_split.setSizes([left + delta, right - delta])
+                flush()
+
+            window.tabs.setCurrentIndex(0)
+            page = window.tabs.currentWidget().widget()
+            offset, label = window.spin_alignment_offset, window.lbl_alignment_offset
+
+            def right(widget):
+                return widget.mapTo(page, QPoint(widget.width(), 0)).x()
+
+            rows = []
+            for width in (1400, 600, 800, 1400):
+                resize_panel(width)
+                rows.append({
+                    "width": width,
+                    "stacked": bool(offset.parentWidget().property("stacked")),
+                    "label_fits": label.width() >= label.sizeHint().width(),
+                    "offset_width": offset.width(),
+                    "rights": [right(offset), right(window.line_ref),
+                               right(window.spin_min_occ)],
+                })
+            print("@@" + json.dumps(rows))
+            """
+        )
+        for row in report:
+            with self.subTest(width=row["width"]):
+                stacked = row["width"] < 1400
+                self.assertEqual(row["stacked"], stacked)
+                self.assertTrue(row["label_fits"])
+                if stacked:
+                    self.assertEqual(len(set(row["rights"])), 1, row["rights"])
+                else:
+                    self.assertEqual(row["offset_width"], 100)
+
+
 class LaunchTargetTests(unittest.TestCase):
     """The copy must launch the VR viewer, not the desktop one."""
 

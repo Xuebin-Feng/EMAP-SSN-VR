@@ -232,11 +232,6 @@ in the VR runtime reads them and no shared command does either:
 | `LOW_RESOURCE_MODE` | a VisPy canvas optimisation; the VR client does the drawing |
 | `PACKING_GEOMETRY` | in 3D `calculate_layout` branches to `pack_components_to_shells`, which arranges components on concentric spherical shells and takes no geometry argument — Square/Circle never reaches it |
 
-`AUTO_DT`, the desktop **Auto** button beside Step Size, is absent too, though
-the shared layout generator honours it: the VR Config has no such button yet, so
-VR layouts always run at the Step Size, which a stage still lowers if it would
-otherwise be unstable.
-
 `NEIGHBOR_COLOR` has no control of its own either: `Settings` republishes
 `INITIAL_NODE_COLOR` under that name and it wins, so a second control would
 silently discard whatever was picked in it.
