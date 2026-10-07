@@ -39,8 +39,9 @@ def _upstream_engine():
 # labels exist. Nothing about that divergence was VR-specific - it was drift.
 #
 # The upstream module loads cleanly in this headless process: its only imports
-# are numpy, fnmatch, re, os, dataclasses, enum and EMAPSSN_Config, and
-# _bootstrap_vr has already registered Settings_VR under that last name. The two
+# are numpy, fnmatch, re, os, dataclasses, enum, EMAPSSN_Config and the Qt-free
+# utilities.Localization, and _bootstrap_vr has already registered Settings_VR
+# under EMAPSSN_Config. The two
 # settings the grammar reads - GAP_CHARS and HEADER_LIST_DIR - resolve through
 # that alias to the same values the forked copy used.
 _upstream = _upstream_engine()
@@ -81,6 +82,11 @@ def print_help(viewer, msg, *, terminal_msg=None, report_message=True):
         report(message=text, viewer=viewer)
     viewer.console_text.text = text
     print(f"\n{text}")
+
+
+# Shared commands write the console line through Command_Engine.show_status.
+# Here the line is the DummyText stand-in, so the upstream helper serves as is.
+show_status = _upstream.show_status
 
 
 def execute_reset(viewer, targets):
