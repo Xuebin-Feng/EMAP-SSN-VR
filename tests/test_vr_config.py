@@ -51,6 +51,52 @@ if VR_SRC not in sys.path:
 
 import _bootstrap_vr  # noqa: E402
 
+#: This checkout's own settings files, which belong to whoever runs the suite.
+#: No GUI script may write them; one run in a throwaway project (see
+#: run_gui_script) may not even read them.
+USER_SETTINGS_FILES = (
+    os.path.join(OPT_VR, "viewer_settings_vr.json"),
+    os.path.join(_bootstrap_vr.PROJECT_ROOT, "viewer_settings.json"),
+)
+
+#: Installed before anything else in a GUI script. An audit hook sees every
+#: open, rename and delete the process makes, whichever module worked out the
+#: path, and raising from it stops the call before the file is touched.
+SETTINGS_GUARD = textwrap.dedent(
+    """
+    import os, sys
+    _WRITE_FLAGS = os.O_WRONLY | os.O_RDWR | os.O_APPEND | os.O_CREAT | os.O_TRUNC
+    _refused = []
+
+    def _guard(event, args):
+        if event == "open":
+            path, mode, flags = args
+            writes = (flags or 0) & _WRITE_FLAGS or any(c in "wax+" for c in mode or "")
+            if not (writes or _REFUSE_READS):
+                return
+            paths = [path]
+        elif event == "os.rename":  # os.replace raises this one too
+            paths = args[:2]
+        elif event in ("os.remove", "os.truncate"):
+            paths = args[:1]
+        else:
+            return
+        for path in paths:
+            if isinstance(path, int):  # a descriptor, checked when it was opened
+                continue
+            path = os.fsdecode(path)
+            if os.path.normcase(os.path.abspath(path)) in _USER_FILES:
+                _refused.append(f"{event} {path}")
+                print(f"Refused {event} of {path}", file=sys.stderr)
+                raise PermissionError(f"GUI tests may not touch {path}")
+
+    sys.addaudithook(_guard)
+    """
+)
+
+
+def run_gui_script(body, project_root=None):
+    """Build the GUI in an offscreen subprocess and run `body` against it.
 
     `body` runs under SETTINGS_GUARD, and the run fails if anything tried to
     touch the user's settings. A test that saves passes `project_root`, a
