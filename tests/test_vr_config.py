@@ -88,18 +88,20 @@ SETTINGS_GUARD = textwrap.dedent(
 )
 
 
-def run_gui_script(body, project_root=None):
+def run_gui_script(body, project_root=None, pseudo_translation=False):
     """Build the GUI in an offscreen subprocess and run `body` against it.
 
     The GUI never sees this checkout's settings. It runs as if opt_vr sat at
     `<project_root>/opt_vr`, so its settings file and every relative
     directory resolve there: a throwaway folder, unless a test passes its own
     to inspect afterwards. `body` runs under SETTINGS_GUARD, and the run fails
-    if anything still tried to read or write the real settings files.
+    if anything still tried to read or write the real settings files. The
+    GUI starts in English unless pseudo_translation asks for the test-only
+    pseudo-language, whatever the shell running the tests has set.
     """
     if project_root is None:
         with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as throwaway:
-            return run_gui_script(body, throwaway)
+            return run_gui_script(body, throwaway, pseudo_translation)
     working_directory = os.path.join(project_root, "opt_vr")
     os.makedirs(working_directory, exist_ok=True)
     guard = f"_USER_FILES = {set(map(os.path.normcase, USER_SETTINGS_FILES))!r}\n"
@@ -139,6 +141,9 @@ def run_gui_script(body, project_root=None):
     # point SSN_VIEWER_SETTINGS_PATH at a neutral temp file, and inheriting it
     # would make these tests describe that file instead of the submodule's.
     environment.pop("SSN_VIEWER_SETTINGS_PATH", None)
+    environment.pop("SSN_PSEUDO_TRANSLATION", None)
+    if pseudo_translation:
+        environment["SSN_PSEUDO_TRANSLATION"] = "1"
     result = subprocess.run(
         [sys.executable, "-u", "-c", script],
         capture_output=True, text=True, env=environment, cwd=working_directory,
@@ -484,6 +489,68 @@ class TextSizedControlsTests(unittest.TestCase):
             with self.subTest(texts=switch["texts"]):
                 self.assertTrue(switch["toggle_switch"])
                 self.assertEqual(switch["sizes"], [[switch["needed"], 28]])
+
+
+class TranslationTests(unittest.TestCase):
+    """The window loads translations as it starts, as the desktop Config does.
+
+    Under the test-only pseudo-language, text from the catalog shows
+    bracketed, so unbracketed text was never marked for translation. None is
+    marked yet; the main repository's tests/translation_fixtures.py lists a
+    window's text the same way for both Configs.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.report = report_from(
+            """
+            import importlib.util
+            from desktop.Desktop_App import installed_language
+            from utilities.Localization import is_pseudo_translated
+            fixtures_path = os.path.join(
+                os.path.dirname(_bootstrap_vr.SRC_DIR), "tests", "translation_fixtures.py"
+            )
+            spec = importlib.util.spec_from_file_location("translation_fixtures", fixtures_path)
+            fixtures = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(fixtures)
+            window.resize(1800, 1000)
+            window.show()
+            for _ in range(4):
+                app.processEvents()
+            texts = fixtures.visible_texts(window)
+            print("@@" + json.dumps({
+                "language": installed_language(),
+                "texts": len(texts),
+                "unmarked": sum(1 for _, text in texts if not is_pseudo_translated(text)),
+                "cut_off": fixtures.cut_off_texts(window),
+            }))
+            """,
+            pseudo_translation=True,
+        )
+
+    def test_startup_installs_the_language_before_building_the_window(self):
+        import ast
+
+        self.assertEqual(self.report["language"], "pseudo")
+        path = os.path.join(VR_SRC, "EMAPSSN_Config_VR.py")
+        with open(path, encoding="utf-8") as handle:
+            tree = ast.parse(handle.read())
+
+        def first_call(name):
+            return min(
+                node.lineno for node in ast.walk(tree) if isinstance(node, ast.Call)
+                and name in (getattr(node.func, "id", None), getattr(node.func, "attr", None))
+            )
+
+        install = first_call("install_translations")
+        self.assertLess(first_call("QApplication"), install)
+        for later in ("SingleInstanceController", "configure_qt_application_fonts", "ConfigGUI"):
+            self.assertGreater(first_call(later), install, later)
+
+    def test_no_text_is_marked_yet_and_none_is_cut_off(self):
+        self.assertGreater(self.report["texts"], 100)
+        self.assertEqual(self.report["unmarked"], self.report["texts"])
+        self.assertEqual(self.report["cut_off"], [])
 
 
 class BlastNetworkSaveTests(unittest.TestCase):
