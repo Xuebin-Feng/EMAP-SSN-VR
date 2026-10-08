@@ -1,50 +1,9 @@
 import os
 import glob
 import re
-from Bio import AlignIO
-from Bio.Seq import Seq
-from Bio.SeqRecord import SeqRecord
-from collections import Counter
-import math
-import fnmatch
 import Settings_VR as cfg
 
 # --- 2. String & Label Helpers ---
-def get_network_suffix():
-    suffix = ""
-    
-    score_mode = getattr(cfg, 'ALIGNMENT_SCORE', None)
-    if score_mode:
-        suffix += f"_{score_mode}"
-        
-    norm_mode = getattr(cfg, 'NORM_MODE', None)
-    if norm_mode:
-        suffix += f"_{norm_mode}"
-        
-    if cfg.TOP_EDGE_PERCENT is not None:
-        suffix += f"_Top{float(cfg.TOP_EDGE_PERCENT)}Pct"
-    else:
-        suffix += f"_Score{float(cfg.SIMILARITY_THRESHOLD)}"
-    return suffix
-
-def get_base_network_name():
-    fasta_path = getattr(cfg, 'NODE_FASTA_FILE', None) or getattr(cfg, 'SEQUENCES_FILE', '')
-    if fasta_path and isinstance(fasta_path, str):
-        fasta_base = os.path.splitext(os.path.basename(fasta_path))[0]
-    else:
-        fasta_base = "Network"
-        
-    hdf5_base = os.path.basename(getattr(cfg, 'INPUT_HDF5', ''))
-    hdf5_no_ext = hdf5_base[:-3] if hdf5_base.endswith(".h5") else os.path.splitext(hdf5_base)[0]
-    
-    cfg.INPUT_IS_EVALUE = "EValue" in hdf5_no_ext or "Evalue" in hdf5_no_ext
-    
-    stripped = re.sub(r'_(network|evalue)$', '', hdf5_no_ext, flags=re.IGNORECASE)
-    match = re.search(r'_(e[0-9]+_.*|blast.*)$', stripped, flags=re.IGNORECASE)
-    model_str = f"_{match.group(1)}" if match else ""
-    
-    return f"{fasta_base}{model_str}"
-
 def get_cache_filename():
     """Return the layout cache this session is bound to.
 
