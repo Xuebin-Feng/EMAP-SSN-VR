@@ -28,9 +28,9 @@ for every other test sharing this interpreter. The GUI also lives under
 ``if __name__ == "__main__"``, so it is loaded with runpy, exactly as the main
 repository's own offscreen config test does.
 
-Every script also runs under an audit hook that refuses writes to this
-checkout's own settings files, which belong to whoever runs the suite. Tests
-that save go further and run in a throwaway project.
+Every script runs the GUI in a throwaway project instead of this checkout,
+whose settings files belong to whoever runs the suite, and an audit hook fails
+the script if anything still reads or writes those files.
 """
 
 import json
@@ -41,6 +41,7 @@ import sys
 import tempfile
 import textwrap
 import unittest
+from unittest import mock
 
 #: The submodule root; VR_SRC is its module tree, mirroring the main
 #: program's project-root/src split.
@@ -52,8 +53,7 @@ if VR_SRC not in sys.path:
 import _bootstrap_vr  # noqa: E402
 
 #: This checkout's own settings files, which belong to whoever runs the suite.
-#: No GUI script may write them; one run in a throwaway project (see
-#: run_gui_script) may not even read them.
+#: No GUI script may read or write them.
 USER_SETTINGS_FILES = (
     os.path.join(OPT_VR, "viewer_settings_vr.json"),
     os.path.join(_bootstrap_vr.PROJECT_ROOT, "viewer_settings.json"),
@@ -65,20 +65,13 @@ USER_SETTINGS_FILES = (
 SETTINGS_GUARD = textwrap.dedent(
     """
     import os, sys
-    _WRITE_FLAGS = os.O_WRONLY | os.O_RDWR | os.O_APPEND | os.O_CREAT | os.O_TRUNC
     _refused = []
 
     def _guard(event, args):
-        if event == "open":
-            path, mode, flags = args
-            writes = (flags or 0) & _WRITE_FLAGS or any(c in "wax+" for c in mode or "")
-            if not (writes or _REFUSE_READS):
-                return
-            paths = [path]
+        if event in ("open", "os.remove", "os.truncate"):
+            paths = args[:1]
         elif event == "os.rename":  # os.replace raises this one too
             paths = args[:2]
-        elif event in ("os.remove", "os.truncate"):
-            paths = args[:1]
         else:
             return
         for path in paths:
@@ -98,34 +91,27 @@ SETTINGS_GUARD = textwrap.dedent(
 def run_gui_script(body, project_root=None):
     """Build the GUI in an offscreen subprocess and run `body` against it.
 
-    `body` runs under SETTINGS_GUARD, and the run fails if anything tried to
-    touch the user's settings. A test that saves passes `project_root`, a
-    folder standing in for the parent checkout: the GUI then takes
-    `<project_root>/opt_vr` for the submodule, so its settings file and every
-    relative directory resolve there, and the real settings files may not
-    even be read.
+    The GUI never sees this checkout's settings. It runs as if opt_vr sat at
+    `<project_root>/opt_vr`, so its settings file and every relative
+    directory resolve there: a throwaway folder, unless a test passes its own
+    to inspect afterwards. `body` runs under SETTINGS_GUARD, and the run fails
+    if anything still tried to read or write the real settings files.
     """
-    working_directory = OPT_VR
-    rebase = ""
-    if project_root is not None:
-        working_directory = os.path.join(project_root, "opt_vr")
-        os.makedirs(working_directory, exist_ok=True)
-        # The GUI derives its own paths from these two when it is loaded.
-        rebase = (
-            f"_bootstrap_vr.PROJECT_ROOT = {project_root!r}\n"
-            f"_bootstrap_vr.OPT_VR_DIR = {working_directory!r}\n"
-        )
-    guard = (
-        f"_USER_FILES = {set(map(os.path.normcase, USER_SETTINGS_FILES))!r}\n"
-        f"_REFUSE_READS = {project_root is not None!r}\n"
-    ) + SETTINGS_GUARD
-    script = guard + textwrap.dedent(
+    if project_root is None:
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as throwaway:
+            return run_gui_script(body, throwaway)
+    working_directory = os.path.join(project_root, "opt_vr")
+    os.makedirs(working_directory, exist_ok=True)
+    guard = f"_USER_FILES = {set(map(os.path.normcase, USER_SETTINGS_FILES))!r}\n"
+    script = guard + SETTINGS_GUARD + textwrap.dedent(
         """
         import json, os, runpy, sys
         os.environ["QT_QPA_PLATFORM"] = "offscreen"
         sys.path.insert(0, {vr_src!r})
         import _bootstrap_vr  # puts the parent src tree on sys.path
-        {rebase}
+        # The GUI derives its own paths from these two when it is loaded.
+        _bootstrap_vr.PROJECT_ROOT = {project_root!r}
+        _bootstrap_vr.OPT_VR_DIR = {opt_vr!r}
         from unittest import mock
         from utilities import Hardware_Acceleration as _preload  # torch before Qt
         from PySide6.QtWidgets import QApplication
@@ -138,7 +124,9 @@ def run_gui_script(body, project_root=None):
         window = namespace["window"]
         Config = type("Config", (), namespace)
         """
-    ).format(vr_src=VR_SRC, rebase=rebase) + textwrap.dedent(body) + textwrap.dedent(
+    ).format(
+        vr_src=VR_SRC, project_root=project_root, opt_vr=working_directory
+    ) + textwrap.dedent(body) + textwrap.dedent(
         """
         window.close()
         if _refused:
@@ -181,6 +169,7 @@ class ConfigWindowTests(unittest.TestCase):
                 "profile_tabs": sorted(window.profile_selectors),
                 "cache_settings": window._cache_setting_values(),
                 "settings_file": namespace["SETTINGS_FILE"],
+                "submodule": _bootstrap_vr.OPT_VR_DIR,
                 "has_statistics": hasattr(window, "run_statistics"),
                 "has_histogram": hasattr(window, "run_histogram"),
                 "has_stat_display": hasattr(window, "stat_display"),
@@ -248,9 +237,10 @@ class ConfigWindowTests(unittest.TestCase):
         self.assertEqual(self.report["cache_settings"]["layout_dimensions"], 3)
 
     def test_settings_file_lives_in_the_submodule(self):
+        # The submodule the GUI was given: the throwaway project's opt_vr.
         self.assertEqual(
             os.path.dirname(os.path.abspath(self.report["settings_file"])),
-            os.path.abspath(OPT_VR),
+            os.path.abspath(self.report["submodule"]),
         )
         self.assertTrue(
             self.report["settings_file"].endswith("viewer_settings_vr.json"),
@@ -500,14 +490,16 @@ class BlastNetworkSaveTests(unittest.TestCase):
     """A BLAST network blanks both modes; Save keeps the alignment choice they hide.
 
     As in the desktop Config, saving used to fail with "invalid value for
-    ALIGNMENT_SCORE" because the blank controls were saved as empty text.
+    ALIGNMENT_SCORE" because the blank controls were saved as empty text. The
+    case really saves, so it runs in a throwaway project (see run_gui_script).
     """
 
     @classmethod
     def setUpClass(cls):
+        project = tempfile.mkdtemp()
+        cls.addClassCleanup(shutil.rmtree, project, ignore_errors=True)
         cls.report = report_from(
             """
-            import tempfile
             select = namespace["select_combo_value"]
             value = namespace["combo_value"]
 
@@ -516,33 +508,30 @@ class BlastNetworkSaveTests(unittest.TestCase):
             select(window.cb_norm_mode, "average_sequence")
             window._set_network_type_controls("blast")
             blank = [window.cb_score_mode.currentIndex(), window.cb_norm_mode.currentIndex()]
-            with tempfile.TemporaryDirectory() as directory:
-                # Never the submodule's real settings file.
-                settings_file = os.path.join(directory, "viewer_settings.json")
-                with mock.patch.dict(
-                    window.save_settings.__globals__,
-                    {"DEFAULT_SETTINGS_FILE": settings_file},
-                ):
-                    saved_ok = window.save_settings()
-                saved = {}
-                if os.path.exists(settings_file):
-                    with open(settings_file, encoding="utf-8") as handle:
-                        saved = json.load(handle)
+            saved_ok = window.save_settings()
             window._set_network_type_controls("alignment")
             print("@@" + json.dumps({
                 "blank": blank,
                 "saved_ok": saved_ok,
                 "tip": window.tip_panel.text(),
-                "saved": [saved.get("ALIGNMENT_SCORE"), saved.get("NORM_MODE")],
                 "restored": [value(window.cb_score_mode), value(window.cb_norm_mode)],
             }))
-            """
+            """,
+            project_root=project,
         )
+        settings_file = os.path.join(project, "opt_vr", "viewer_settings_vr.json")
+        cls.saved = {}
+        if os.path.exists(settings_file):
+            with open(settings_file, encoding="utf-8") as handle:
+                cls.saved = json.load(handle)
 
     def test_save_keeps_the_choice_the_blank_controls_hide(self):
         self.assertEqual(self.report["blank"], [-1, -1])
         self.assertTrue(self.report["saved_ok"], self.report["tip"])
-        self.assertEqual(self.report["saved"], ["local", "average_sequence"])
+        self.assertEqual(
+            [self.saved.get("ALIGNMENT_SCORE"), self.saved.get("NORM_MODE")],
+            ["local", "average_sequence"],
+        )
 
     def test_leaving_blast_restores_the_choice(self):
         self.assertEqual(self.report["restored"], ["local", "average_sequence"])
@@ -680,6 +669,15 @@ class ConfigPersistenceTests(unittest.TestCase):
 
 class VRSettingsSourceTests(unittest.TestCase):
     """The Qt-free settings module the viewer itself reads."""
+
+    @classmethod
+    def setUpClass(cls):
+        # Settings_VR loads its settings file when first imported. Make that
+        # load a missing file, not the user's, as the sibling modules do.
+        with tempfile.TemporaryDirectory() as folder, mock.patch.dict(
+            os.environ, {"SSN_VIEWER_SETTINGS_PATH": os.path.join(folder, "missing.json")}
+        ):
+            import Settings_VR  # noqa: F401
 
     def setUp(self):
         self._saved = os.environ.pop("SSN_VIEWER_SETTINGS_PATH", None)
@@ -1066,6 +1064,40 @@ class QuitWithClientTests(unittest.TestCase):
             """
         )
         self.assertTrue(report["in_profile"])
+
+
+class VRAtomicWriteTests(unittest.TestCase):
+    """_atomic_write_json clears temporary copies an interrupted save left behind."""
+
+    def test_a_save_removes_stale_temporary_copies_but_not_recent_ones(self):
+        report = report_from(
+            """
+            import tempfile, time
+            from pathlib import Path
+            folder = Path(tempfile.mkdtemp())
+            target = folder / "viewer_settings_vr.json"
+            stale = folder / ".viewer_settings_vr.json.interrupted.partial"
+            recent = folder / ".viewer_settings_vr.json.inprogress.partial"
+            # Another file's copy is not this save's to remove, however old.
+            other = folder / ".layout_settings.json.1234.partial"
+            for path in (stale, recent, other):
+                path.write_text("{", encoding="utf-8")
+            old = time.time() - 2 * namespace["_STALE_PARTIAL_SECONDS"]
+            for path in (stale, other):
+                os.utime(path, (old, old))
+            namespace["_atomic_write_json"](target, {"NODE_SIZE": 12})
+            print("@@" + json.dumps({
+                "files": sorted(path.name for path in folder.iterdir()),
+                "saved": json.loads(target.read_text(encoding="utf-8")),
+            }))
+            """
+        )
+        self.assertEqual(report["saved"], {"NODE_SIZE": 12})
+        self.assertEqual(report["files"], sorted([
+            "viewer_settings_vr.json",
+            ".viewer_settings_vr.json.inprogress.partial",
+            ".layout_settings.json.1234.partial",
+        ]))
 
 
 if __name__ == "__main__":

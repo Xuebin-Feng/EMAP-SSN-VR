@@ -192,6 +192,8 @@ cython_debug/
 # Per-user VR configuration, written by EMAPSSN_Config_VR.py. The parent
 # project ignores its viewer_settings.json for the same reason: local paths.
 viewer_settings_vr.json
+# Temporary copies an interrupted save of it can leave beside it.
+.viewer_settings_vr.json.*.partial
 
 # Runtime working directory: layout caches, saved and exported settings, and
 # command history, all produced by a session and specific to one dataset. The
