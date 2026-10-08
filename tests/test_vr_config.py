@@ -57,6 +57,7 @@ import _bootstrap_vr  # noqa: E402
 USER_SETTINGS_FILES = (
     os.path.join(OPT_VR, "viewer_settings_vr.json"),
     os.path.join(_bootstrap_vr.PROJECT_ROOT, "viewer_settings.json"),
+    os.path.join(_bootstrap_vr.PROJECT_ROOT, "app_settings.json"),
 )
 
 #: Installed before anything else in a GUI script. An audit hook sees every
@@ -144,6 +145,8 @@ def run_gui_script(body, project_root=None, pseudo_translation=False):
     environment.pop("SSN_PSEUDO_TRANSLATION", None)
     if pseudo_translation:
         environment["SSN_PSEUDO_TRANSLATION"] = "1"
+    # The language setting, too, comes from the throwaway project.
+    environment["SSN_APP_SETTINGS_PATH"] = os.path.join(project_root, "app_settings.json")
     result = subprocess.run(
         [sys.executable, "-u", "-c", script],
         capture_output=True, text=True, env=environment, cwd=working_directory,
@@ -495,9 +498,10 @@ class TranslationTests(unittest.TestCase):
     """The window loads translations as it starts, as the desktop Config does.
 
     Under the test-only pseudo-language, text from the catalog shows
-    bracketed, so unbracketed text was never marked for translation. None is
-    marked yet; the main repository's tests/translation_fixtures.py lists a
-    window's text the same way for both Configs.
+    bracketed, so unbracketed text was never marked for translation. Only
+    the Language dropdown is marked so far; the main repository's
+    tests/translation_fixtures.py lists a window's text the same way for
+    both Configs.
     """
 
     @classmethod
@@ -522,6 +526,7 @@ class TranslationTests(unittest.TestCase):
                 "language": installed_language(),
                 "texts": len(texts),
                 "unmarked": sum(1 for _, text in texts if not is_pseudo_translated(text)),
+                "marked": [where for where, text in texts if is_pseudo_translated(text)],
                 "cut_off": fixtures.cut_off_texts(window),
             }))
             """,
@@ -547,10 +552,73 @@ class TranslationTests(unittest.TestCase):
         for later in ("SingleInstanceController", "configure_qt_application_fonts", "ConfigGUI"):
             self.assertGreater(first_call(later), install, later)
 
-    def test_no_text_is_marked_yet_and_none_is_cut_off(self):
+    def test_only_the_language_dropdown_is_marked_yet_and_none_is_cut_off(self):
         self.assertGreater(self.report["texts"], 100)
-        self.assertEqual(self.report["unmarked"], self.report["texts"])
+        self.assertEqual(sorted(self.report["marked"]), [
+            "LanguageSelector languageSelector choice 0",
+            "LanguageSelector languageSelector tooltip",
+        ])
+        self.assertEqual(self.report["unmarked"], self.report["texts"] - 2)
         self.assertEqual(self.report["cut_off"], [])
+
+
+class LanguageOptionTests(unittest.TestCase):
+    """The Language dropdown, and the redraw in another language, as in the desktop Config."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.report = report_from(
+            """
+            from PySide6.QtWidgets import QSplitter, QTabWidget
+            from desktop.Desktop_App import LanguageSelector, installed_language
+            window.show()
+            for _ in range(4):
+                app.processEvents()
+            window.resize(1300, 800)
+            window.move(40, 60)
+            window.tabs.setCurrentIndex(1)
+            window.inputs["NODE_SIZE"].setValue(window.inputs["NODE_SIZE"].value() + 1)
+            for _ in range(4):
+                app.processEvents()
+
+            def view(shown):
+                return {
+                    "geometry": shown.geometry().getRect(),
+                    "splitters": [splitter.sizes() for splitter in shown.findChildren(QSplitter)],
+                    "tabs": [tabs.currentIndex() for tabs in shown.findChildren(QTabWidget)],
+                }
+
+            before = view(window)
+            values = window.language_carry_over()["values"]
+            selectors = window.findChildren(LanguageSelector)
+            replacement = window.switch_language("pseudo")
+            for _ in range(4):
+                app.processEvents()
+            print("@@" + json.dumps({
+                "selectors": len(selectors),
+                "items": [selectors[0].itemData(i) for i in range(selectors[0].count())],
+                "language": installed_language(),
+                "replaced": replacement is not window and not window.isVisible(),
+                "before": before,
+                "after": view(replacement),
+                "values_kept": replacement.language_carry_over()["values"] == values,
+                "first_item": replacement.language_selector.itemText(0),
+            }, default=str))
+            window = replacement
+            """
+        )
+
+    def test_the_window_has_one_language_dropdown(self):
+        self.assertEqual(self.report["selectors"], 1)
+        self.assertEqual(self.report["items"][:2], ["system", "en"])
+
+    def test_a_redraw_keeps_size_place_splitters_tab_and_values(self):
+        report = self.report
+        self.assertEqual(report["language"], "pseudo")
+        self.assertTrue(report["replaced"])
+        self.assertEqual(report["after"], report["before"])
+        self.assertTrue(report["values_kept"])
+        self.assertTrue(report["first_item"].startswith("["), report["first_item"])
 
 
 class BlastNetworkSaveTests(unittest.TestCase):
