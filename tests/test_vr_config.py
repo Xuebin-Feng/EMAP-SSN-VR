@@ -499,7 +499,8 @@ class TranslationTests(unittest.TestCase):
 
     Under the test-only pseudo-language, text from the catalog shows
     bracketed, so unbracketed text was never marked for translation. Only
-    the Language dropdown is marked so far; the main repository's
+    the text Desktop_App supplies is marked so far: the Language dropdown
+    and a switch's default ON and OFF. The main repository's
     tests/translation_fixtures.py lists a window's text the same way for
     both Configs.
     """
@@ -552,13 +553,16 @@ class TranslationTests(unittest.TestCase):
         for later in ("SingleInstanceController", "configure_qt_application_fonts", "ConfigGUI"):
             self.assertGreater(first_call(later), install, later)
 
-    def test_only_the_language_dropdown_is_marked_yet_and_none_is_cut_off(self):
+    def test_only_desktop_app_text_is_marked_yet_and_none_is_cut_off(self):
         self.assertGreater(self.report["texts"], 100)
-        self.assertEqual(sorted(self.report["marked"]), [
+        marked = sorted(self.report["marked"])
+        # Four switches show the default ON and OFF.
+        self.assertEqual(marked, sorted([
             "LanguageSelector languageSelector choice 0",
             "LanguageSelector languageSelector tooltip",
-        ])
-        self.assertEqual(self.report["unmarked"], self.report["texts"] - 2)
+            *["ToggleSwitch off text", "ToggleSwitch on text"] * 4,
+        ]))
+        self.assertEqual(self.report["unmarked"], self.report["texts"] - len(marked))
         self.assertEqual(self.report["cut_off"], [])
 
 
