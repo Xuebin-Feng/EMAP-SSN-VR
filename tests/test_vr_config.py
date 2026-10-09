@@ -497,10 +497,10 @@ class TextSizedControlsTests(unittest.TestCase):
 class TranslationTests(unittest.TestCase):
     """The window loads translations as it starts, as the desktop Config does.
 
-    Under the test-only pseudo-language, text from the catalog shows
-    bracketed, so unbracketed text was never marked for translation. Only
-    the text Desktop_App supplies is marked so far: the Language dropdown
-    and a switch's default ON and OFF. The main repository's
+    Under the test-only pseudo-language, text from the catalogs shows
+    bracketed, so unbracketed text was never marked for translation. The
+    texts VR Config shares with the desktop Config come from the main
+    catalog, and its own from opt_vr's, emapssn_vr. The main repository's
     tests/translation_fixtures.py lists a window's text the same way for
     both Configs.
     """
@@ -526,8 +526,7 @@ class TranslationTests(unittest.TestCase):
             print("@@" + json.dumps({
                 "language": installed_language(),
                 "texts": len(texts),
-                "unmarked": sum(1 for _, text in texts if not is_pseudo_translated(text)),
-                "marked": [where for where, text in texts if is_pseudo_translated(text)],
+                "unmarked": [[where, text] for where, text in texts if not is_pseudo_translated(text)],
                 "cut_off": fixtures.cut_off_texts(window),
             }))
             """,
@@ -553,16 +552,9 @@ class TranslationTests(unittest.TestCase):
         for later in ("SingleInstanceController", "configure_qt_application_fonts", "ConfigGUI"):
             self.assertGreater(first_call(later), install, later)
 
-    def test_only_desktop_app_text_is_marked_yet_and_none_is_cut_off(self):
-        self.assertGreater(self.report["texts"], 100)
-        marked = sorted(self.report["marked"])
-        # Four switches show the default ON and OFF.
-        self.assertEqual(marked, sorted([
-            "LanguageSelector languageSelector choice 0",
-            "LanguageSelector languageSelector tooltip",
-            *["ToggleSwitch off text", "ToggleSwitch on text"] * 4,
-        ]))
-        self.assertEqual(self.report["unmarked"], self.report["texts"] - len(marked))
+    def test_every_text_is_marked_and_none_is_cut_off(self):
+        self.assertGreater(self.report["texts"], 150)
+        self.assertEqual(self.report["unmarked"], [])
         self.assertEqual(self.report["cut_off"], [])
 
 
@@ -607,6 +599,7 @@ class LanguageOptionTests(unittest.TestCase):
                 "after": view(replacement),
                 "values_kept": replacement.language_carry_over()["values"] == values,
                 "first_item": replacement.language_selector.itemText(0),
+                "title": replacement.windowTitle(),
             }, default=str))
             window = replacement
             """
@@ -623,6 +616,225 @@ class LanguageOptionTests(unittest.TestCase):
         self.assertEqual(report["after"], report["before"])
         self.assertTrue(report["values_kept"])
         self.assertTrue(report["first_item"].startswith("["), report["first_item"])
+        # The title is VR Config's own text: the redraw installs opt_vr's catalog too.
+        self.assertTrue(report["title"].startswith("["), report["title"])
+
+
+class RunTimeTextTests(unittest.TestCase):
+    """Text the window shows after it opens, under the pseudo-language, as for the desktop Config.
+
+    Tips, VR's own tooltips and client notes, the save message, profile
+    errors, the two reports and the score histogram. outside_the_catalog
+    (the main repository's tests/translation_fixtures.py) gives what is left
+    once every bracketed, translated piece is taken out: text from no catalog.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        foreign = tempfile.mkdtemp()
+        cls.addClassCleanup(shutil.rmtree, foreign, ignore_errors=True)
+        open(os.path.join(foreign, "EMAP-SSN-VR.exe"), "w").close()
+        cls.report = report_from(
+            """
+            import importlib.util, tempfile
+            from types import SimpleNamespace
+            from unittest import mock
+            import h5py, numpy
+            from PySide6.QtGui import QTextDocumentFragment
+            from utilities.Localization import display_text, is_pseudo_translated
+            fixtures_path = os.path.join(
+                os.path.dirname(_bootstrap_vr.SRC_DIR), "tests", "translation_fixtures.py"
+            )
+            spec = importlib.util.spec_from_file_location("translation_fixtures", fixtures_path)
+            fixtures = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(fixtures)
+            checked, left = [], {{}}
+
+            def check(name, text):
+                checked.append(name)
+                if not text or fixtures.outside_the_catalog(text):
+                    left[name] = text
+
+            def plain(html):
+                return QTextDocumentFragment.fromHtml(html).toPlainText()
+
+            for key, tip in window.tip_db_keys.items():
+                checked.append("tip " + key)
+                if not is_pseudo_translated(tip):
+                    left["tip " + key] = tip
+            for key in ("VR_APP_DIR", "VR_HOST", "VR_PORT", "ENABLE_EDGE_FILTERING",
+                        "MAX_RENDER_EDGES", "DISTANCE_SCALE", "EXIT_WITH_UNITY"):
+                check("tooltip " + key, window.inputs[key].toolTip())
+            decide = namespace["bridge_note_text"]
+            for name, note in (
+                ("missing", decide(None, "127.0.0.1", 5005)),
+                ("match", decide(("127.0.0.1", 5005), "127.0.0.1", 5005)),
+                ("differs", decide(("127.0.0.1", 5005), "127.0.0.1", 6000)),
+                ("foreign", decide(None, "127.0.0.1", 5005, build_dir={foreign!r})),
+            ):
+                check("note " + name, display_text(note))
+            check("save", window._save_success_message(
+                [("visual_effects", "mine"), ("directories", "shared")], ["simulation_physics"]
+            ))
+            validate = namespace["_validate_profile_name"]
+            for name, existing in (("", ()), ("(new)", ()), ("name.", ()), ("a/b", ()), ("con", ()),
+                                   ("taken", ("taken",))):
+                try:
+                    validate(name, existing)
+                    left["no profile name error " + repr(name)] = ""
+                except ValueError as error:
+                    check("profile name " + repr(name), display_text(error))
+            for tab_id, data in (("visual_effects", []), ("visual_effects", {{"BOGUS": 1}}),
+                                 ("visual_effects", {{"NODE_SIZE": 10.5}}),
+                                 ("visual_effects", {{"NODE_SIZE": 1e999}}),
+                                 ("visual_effects", {{"EDGE_COLOR": "nocolor"}}),
+                                 ("inputs_outputs", {{"ALIGNMENT_SCORE": "local",
+                                                      "NORM_MODE": "alignment_length"}})):
+                try:
+                    window._normalize_profile_data(tab_id, data)
+                    left["no profile data error " + repr(data)] = ""
+                except ValueError as error:
+                    check("profile data " + repr(data), display_text(error))
+
+            folder = tempfile.mkdtemp()
+            with open(os.path.join(folder, "subset.fasta"), "w", encoding="utf-8") as handle:
+                handle.write(">WP_1_alpha\\nMKTA\\n>WP_2_beta\\nMSEQ\\n>Other\\nMAAA\\n")
+            with open(os.path.join(folder, "alignment.fasta"), "w", encoding="utf-8") as handle:
+                handle.write(">WP_1_alpha\\nMKTA\\n")
+
+            def write_network(headers):
+                with h5py.File(os.path.join(folder, "network.h5"), "w") as hf:
+                    hf.create_dataset("headers", data=[header.encode() for header in headers])
+                    hf.create_dataset("score", data=numpy.asarray([4.0], dtype=numpy.float32))
+                    hf.create_dataset("i", data=numpy.asarray([0], dtype=numpy.int64))
+                    hf.create_dataset("j", data=numpy.asarray([1], dtype=numpy.int64))
+
+            for key in ("FASTA_DIR", "HDF5_DIR", "MSA_DIR"):
+                window.inputs[key].blockSignals(True)
+                window.inputs[key].setText(folder)
+                window.inputs[key].blockSignals(False)
+            for combo, name in ((window.cb_fasta, "subset.fasta"), (window.cb_hdf5, "network.h5"),
+                                (window.cb_msa, "alignment.fasta")):
+                combo.blockSignals(True)
+                combo.clear()
+                combo.addItem(name)
+                combo.blockSignals(False)
+            write_network(["WP_1_alpha", "WP_2_beta"])
+            window.line_ref.setText("WP_*")
+            window.run_consistency_check()
+            check("consistency report", plain(window.tip_panel.text()))
+            write_network(["WP_1_alpha", "WP_2_beta", "Other"])
+            blast = SimpleNamespace(network_type="blast", model_name="BLAST")
+            cache_manifest = window.run_statistics.__globals__["cache_manifest"]
+            with mock.patch.object(cache_manifest, "validate_network_schema", return_value=blast):
+                window.run_statistics()
+            check("statistics report", window.stat_display.toPlainText())
+            check("statistics tip", plain(window.tip_panel.text()))
+            figure = namespace["build_score_histogram_figure"](
+                [0.1, 0.2, 0.3], 0.2, is_evalue=False, norm_mode="alignment_length"
+            )
+            axes = figure.axes[0]
+            check("histogram title", axes.get_title())
+            for text in axes.get_legend().get_texts():
+                check("histogram legend", text.get_text())
+            print("@@" + json.dumps({{"checked": checked, "left": left}}))
+            """.format(foreign=foreign),
+            pseudo_translation=True,
+        )
+
+    def test_every_text_shown_later_comes_from_a_catalog(self):
+        checked = self.report["checked"]
+        self.assertGreater(sum(name.startswith("tip ") for name in checked), 50)
+        for name in ("tooltip VR_APP_DIR", "note foreign", "save", "consistency report",
+                     "statistics report", "histogram title", "histogram legend"):
+            self.assertIn(name, checked)
+        self.assertEqual(self.report["left"], {})
+
+
+class VRCatalogTests(unittest.TestCase):
+    """opt_vr's catalog, emapssn_vr.ts: the texts VR Config marks that the main catalog lacks."""
+
+    @classmethod
+    def setUpClass(cls):
+        import importlib.util
+
+        path = os.path.join(VR_SRC, "resources", "languages", "Update_Translations_VR.py")
+        spec = importlib.util.spec_from_file_location("Update_Translations_VR", path)
+        cls.updater = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(cls.updater)
+
+    def test_the_catalog_lists_every_text_the_code_marks(self):
+        lines = []
+        self.assertEqual(self.updater.update_vr_catalogs(check=True, report=lines.append), 0, "\n".join(lines))
+
+    def test_each_main_language_gets_a_vr_catalog(self):
+        from utilities.Localization import read_catalog
+
+        folder = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, folder, ignore_errors=True)
+        source = os.path.join(folder, "src")
+        own = os.path.join(source, "resources", "languages")
+        main = os.path.join(folder, "main")
+        os.makedirs(own)
+        os.makedirs(main)
+        with open(os.path.join(source, "window.py"), "w", encoding="utf-8") as handle:
+            handle.write(
+                "from PySide6.QtCore import QCoreApplication\n"
+                "SHARED = QCoreApplication.translate(\"Config\", \"Shared sentence\")\n"
+                "OWN = QCoreApplication.translate(\"Config\", \"Own sentence\")\n"
+            )
+        template = (
+            '<?xml version="1.0" encoding="utf-8"?>\n<!DOCTYPE TS>\n<TS version="2.1"{language} sourcelanguage="en">\n'
+            "<context>\n    <name>Config</name>\n    <message>\n        <source>Shared sentence</source>\n"
+            '        <translation type="unfinished"></translation>\n    </message>\n</context>\n</TS>\n'
+        )
+        with open(os.path.join(main, "emapssn.ts"), "w", encoding="utf-8") as handle:
+            handle.write(template.format(language=""))
+        with open(os.path.join(main, "emapssn_de.ts"), "w", encoding="utf-8") as handle:
+            handle.write(template.format(language=' language="de"'))
+        lines = []
+        options = dict(report=lines.append, source_dir=source, languages_dir=own, main_languages_dir=main)
+        self.assertEqual(self.updater.update_vr_catalogs(**options), 0, "\n".join(lines))
+        self.assertEqual(sorted(os.listdir(own)), ["emapssn_vr.ts", "emapssn_vr_de.qm", "emapssn_vr_de.ts"])
+        self.assertEqual(
+            [message.source for message in read_catalog(os.path.join(own, "emapssn_vr_de.ts"))], ["Own sentence"]
+        )
+        self.assertEqual(self.updater.update_vr_catalogs(check=True, **options), 0, "\n".join(lines))
+        os.remove(os.path.join(own, "emapssn_vr_de.ts"))
+        lines.clear()
+        self.assertEqual(self.updater.update_vr_catalogs(check=True, **options), 1)
+        self.assertTrue(any(line.startswith("emapssn_vr_de.ts is missing") for line in lines), lines)
+
+    def test_it_lists_no_text_the_main_catalog_lists(self):
+        from utilities.Localization import read_catalog
+
+        updater = self.updater
+        main = {message.key for message in read_catalog(updater.MAIN_LANGUAGES_DIR / "emapssn.ts")}
+        own = [message.key for message in read_catalog(updater.LANGUAGES_DIR / f"{updater.CATALOG_NAME}.ts")]
+        self.assertGreater(len(own), 20)
+        self.assertEqual([key for key in own if key in main], [])
+
+    def test_the_window_installs_it_with_the_main_catalog(self):
+        report = report_from(
+            """
+            from desktop import Desktop_App
+            installed = Desktop_App._installed_translations
+            print("@@" + json.dumps({
+                "language": installed.language,
+                "extra": [[str(directory), name] for directory, name in installed.extra_catalogs],
+                "title": window.windowTitle(),
+            }))
+            """,
+            pseudo_translation=True,
+        )
+        self.assertEqual(report["language"], "pseudo")
+        same_path = os.path.normcase(os.path.normpath(os.path.join(VR_SRC, "resources", "languages")))
+        self.assertEqual(
+            [[os.path.normcase(os.path.normpath(directory)), name] for directory, name in report["extra"]],
+            [[same_path, "emapssn_vr"]],
+        )
+        # Its title is VR Config's own text, so it comes from opt_vr's catalog.
+        self.assertTrue(report["title"].startswith("["), report["title"])
 
 
 class BlastNetworkSaveTests(unittest.TestCase):
@@ -951,7 +1163,11 @@ class ClientEndpointTests(unittest.TestCase):
         )
 
     def test_note_text_is_decided_without_qt(self):
-        """The wording is a pure function, so it is worth pinning directly."""
+        """The wording is a pure function, so it is worth pinning directly.
+
+        It is a Message, whose str() is the English the tests pin; the window
+        shows it translated.
+        """
         foreign = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, foreign, ignore_errors=True)
         open(os.path.join(foreign, "EMAP-SSN-VR.exe"), "w").close()
@@ -960,11 +1176,11 @@ class ClientEndpointTests(unittest.TestCase):
             decide = namespace["bridge_note_text"]
             player = os.path.join(str(namespace["PROJECT_ROOT"]), "player")
             print("@@" + json.dumps({{
-                "missing": decide(None, "127.0.0.1", 5005),
-                "match": decide(("127.0.0.1", 5005), "127.0.0.1", 5005),
-                "differs": decide(("127.0.0.1", 5005), "127.0.0.1", 6000),
-                "foreign": decide(None, "127.0.0.1", 5005, build_dir={foreign!r}),
-                "player": decide(None, "127.0.0.1", 5005, build_dir=player),
+                "missing": str(decide(None, "127.0.0.1", 5005)),
+                "match": str(decide(("127.0.0.1", 5005), "127.0.0.1", 5005)),
+                "differs": str(decide(("127.0.0.1", 5005), "127.0.0.1", 6000)),
+                "foreign": str(decide(None, "127.0.0.1", 5005, build_dir={foreign!r})),
+                "player": str(decide(None, "127.0.0.1", 5005, build_dir=player)),
             }}))
             """.format(foreign=foreign)
         )

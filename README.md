@@ -123,6 +123,7 @@ opt_vr/
     ├── Command_Engine.py                # name pinned: upstream imports it
     ├── Viewer_Command_Portal.py         # name pinned: upstream imports it
     ├── commands/                        # name pinned: upstream imports it
+    ├── resources/languages/             # VR Config's own translation catalog, emapssn_vr
     └── bin/                             # launchers, startup handshake, client installer
         └── logos/                       # the VR logo: window and shortcut icons, headset SVG
 ```
@@ -291,6 +292,14 @@ VR-only keys (VR client host and port, client folder, edge-render budget,
 when there is one, otherwise `viewer_settings_vr.json`. It imports no Qt, so
 the headless VR process stays headless, and it resolves every relative
 directory inside `opt_vr`.
+
+The VR Configuration GUI shows the language its 🌐 dropdown names, the one
+setting every EMAP-SSN window shares. The texts it shares with the desktop
+Configuration come from the main program's catalog; its own, such as the VR
+client's fields and notes, from `src/resources/languages/emapssn_vr.ts`.
+After changing one, run
+`python opt_vr/src/resources/languages/Update_Translations_VR.py`; the main
+program's `src/resources/languages/README.md` explains the catalogs.
 
 ## Which commands are shared
 

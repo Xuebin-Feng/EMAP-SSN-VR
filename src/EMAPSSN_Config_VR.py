@@ -46,6 +46,7 @@ import time
 from types import SimpleNamespace
 import traceback
 from pathlib import Path
+from utilities.Localization import QT_TRANSLATE_NOOP, JoinedMessage, Message, display_text
 from utilities.Terminal_Launcher import HoldMode, launch_in_terminal
 from desktop.Desktop_App import (
     APPLICATION_VERSION,
@@ -61,8 +62,13 @@ from desktop.Viewer_State import (
 )
 #: This window configures the VR front end, so it names itself accordingly
 #: rather than borrowing the desktop program's display names.
-VR_CONFIG_DISPLAY_NAME = "EMAP-SSN VR Configuration"
-VR_VIEWER_DISPLAY_NAME = "EMAP-SSN VR Viewer"
+VR_CONFIG_DISPLAY_NAME = QT_TRANSLATE_NOOP("Config", "EMAP-SSN VR Configuration")
+VR_VIEWER_DISPLAY_NAME = "EMAP-SSN VR Viewer"  # The terminal's title, which stays English.
+
+#: VR Config's own texts are in opt_vr's catalog, emapssn_vr; the texts it
+#: shares with the desktop Config come from the main catalog.
+VR_LANGUAGES_DIR = Path(_bootstrap_vr.VR_SRC_DIR) / "resources" / "languages"
+VR_TRANSLATION_CATALOGS = ((VR_LANGUAGES_DIR, "emapssn_vr"),)
 
 #: The window and taskbar icon is opt_vr's own logo, the parent's Config logo
 #: with a VR headset. The parent's Config logo stands in if it is missing.
@@ -84,8 +90,9 @@ def application_icon_path():
 
 #: The VR client connection tooltip. The viewer passes VR Client Host and
 #: Port to the client it launches, so the two ends always agree; the endpoint
-#: recorded in the build is only where a client started by hand dials.
-BRIDGE_NOTE_MISSING = (
+#: recorded in the build is only where a client started by hand dials. The
+#: notes are Messages: str() is English, and the window shows display_text().
+BRIDGE_NOTE_MISSING = Message(
     "No VR client is installed in this folder (vr_client.json is missing or "
     "unreadable). Save & Run downloads the pinned release into player/, as "
     "install_vr.bat does; or choose the folder that holds EMAP-SSN-VR.exe."
@@ -95,7 +102,7 @@ BRIDGE_NOTE_MISSING = (
 #: EMAP-SSN-VR client release - typically a Unity-era build a saved profile
 #: still names. Save & Run starts it as it is and installs nothing, so the
 #: download promise of BRIDGE_NOTE_MISSING would be wrong here.
-BRIDGE_NOTE_FOREIGN = (
+BRIDGE_NOTE_FOREIGN = Message(
     "This folder holds an executable but no vr_client.json, so it is not an "
     "EMAP-SSN-VR client release (a Unity-era build, for example). Save & Run "
     "starts it as it is and installs nothing. Choose player to use the pinned "
@@ -116,28 +123,28 @@ def _holds_foreign_client(build_dir):
         if name.lower().endswith(".exe")
     )
 
+#: VR's own tips; the window translates them (translate("Config", tip)).
 VR_CONTROL_TIPS = {
-    "VR_APP_DIR": "VR Client Build: Folder containing the VR client (EMAP-SSN-VR.exe). Relative paths start in opt_vr.\ninstall_vr.bat installs the client in player/.",
-    "VR_HOST": "VR Client Host: Local address where the Python viewer listens for the VR client.\nSave & Run passes it to the client it starts.",
-    "VR_PORT": "VR Client Port: TCP port where the Python viewer listens for the VR client (1–65535).\nSave & Run passes it to the client it starts.",
-    "ENABLE_EDGE_FILTERING": "Limit Rendered Edges: ON caps the edges sent to the VR client at Max Edges; OFF sends all retained edges.\nReducing the rendered edges can improve VR performance.",
-    "MAX_RENDER_EDGES": "Max Edges: Maximum number of edges sent to the VR client when Limit Rendered Edges is ON.\nAbove this limit, the viewer samples edges with a preference for weaker connections. Zero sends no edges.",
-    "DISTANCE_SCALE": "Distance Scale: Spacing between the nodes in the headset; 1.0 keeps the layout's own spacing.\nThe VR viewer starts at this value, and the two-hand gesture in the headset changes it during a session.",
-    "EXIT_WITH_UNITY": "Quit with VR Client: ON closes the Python viewer when the VR client closes.\nOFF keeps the viewer and its command console running for debugging.",
+    "VR_APP_DIR": QT_TRANSLATE_NOOP("Config", "VR Client Build: Folder containing the VR client (EMAP-SSN-VR.exe). Relative paths start in opt_vr.\ninstall_vr.bat installs the client in player/."),
+    "VR_HOST": QT_TRANSLATE_NOOP("Config", "VR Client Host: Local address where the Python viewer listens for the VR client.\nSave & Run passes it to the client it starts."),
+    "VR_PORT": QT_TRANSLATE_NOOP("Config", "VR Client Port: TCP port where the Python viewer listens for the VR client (1–65535).\nSave & Run passes it to the client it starts."),
+    "ENABLE_EDGE_FILTERING": QT_TRANSLATE_NOOP("Config", "Limit Rendered Edges: ON caps the edges sent to the VR client at Max Edges; OFF sends all retained edges.\nReducing the rendered edges can improve VR performance."),
+    "MAX_RENDER_EDGES": QT_TRANSLATE_NOOP("Config", "Max Edges: Maximum number of edges sent to the VR client when Limit Rendered Edges is ON.\nAbove this limit, the viewer samples edges with a preference for weaker connections. Zero sends no edges."),
+    "DISTANCE_SCALE": QT_TRANSLATE_NOOP("Config", "Distance Scale: Spacing between the nodes in the headset; 1.0 keeps the layout's own spacing.\nThe VR viewer starts at this value, and the two-hand gesture in the headset changes it during a session."),
+    "EXIT_WITH_UNITY": QT_TRANSLATE_NOOP("Config", "Quit with VR Client: ON closes the Python viewer when the VR client closes.\nOFF keeps the viewer and its command console running for debugging."),
 }
 
 
 def bridge_note_text(endpoint, host, port, build_dir=None):
-    """Describe the selected client and the endpoint Save & Run gives it."""
+    """Describe the selected client and the endpoint Save & Run gives it, as a Message."""
     if endpoint is None:
         return BRIDGE_NOTE_FOREIGN if _holds_foreign_client(build_dir) else BRIDGE_NOTE_MISSING
     build_host, build_port = endpoint
-    note = f"Save & Run starts this VR client dialling {host}:{port}."
+    note = Message("Save & Run starts this VR client dialling {host}:{port}.", host=host, port=port)
     if (host, port) != (build_host, build_port):
-        note += (
-            f" Started by hand, it dials its default {build_host}:{build_port} "
-            "instead."
-        )
+        return JoinedMessage([note, Message(
+            "Started by hand, it dials its default {host}:{port} instead.", host=build_host, port=build_port
+        )])
     return note
 
 
@@ -268,13 +275,18 @@ PACKING_GEOMETRY = "Square"
 
 
 
-DIRECTORY_DISPLAY_NAMES = {
-    "INPUT_FILE_DIR": "Input File Directory",
-    "CACHE_FILE_DIR": "Cache File Directory",
-    "ANALYSIS_RESULT_DIR": "Analysis Results Directory",
-    "FASTA_DIR": "Input FASTA Directory",
-    "SAVED_LAYOUT_DIR": "Layout Directory",
-    "SETTING_EXPORT_DIR": "Setting Export Directory",
+# Each directory's label on the Directories tab, in the order the tab lists them.
+DIRECTORY_LABELS = {
+    "INPUT_FILE_DIR": QT_TRANSLATE_NOOP("Config", "Input File Directory:"),
+    "CACHE_FILE_DIR": QT_TRANSLATE_NOOP("Config", "Cache File Directory:"),
+    "ANALYSIS_RESULT_DIR": QT_TRANSLATE_NOOP("Config", "Analysis Results Directory:"),
+    "FASTA_DIR": QT_TRANSLATE_NOOP("Config", "Input FASTA Directory:"),
+    "MSA_DIR": QT_TRANSLATE_NOOP("Config", "MSA Directory:"),
+    "HDF5_DIR": QT_TRANSLATE_NOOP("Config", "Network Directory:"),
+    "METADATA_DIR": QT_TRANSLATE_NOOP("Config", "Metadata Directory:"),
+    "HEADER_LIST_DIR": QT_TRANSLATE_NOOP("Config", "Header List Directory:"),
+    "SAVED_LAYOUT_DIR": QT_TRANSLATE_NOOP("Config", "Layout Directory:"),
+    "SETTING_EXPORT_DIR": QT_TRANSLATE_NOOP("Config", "Setting Export Directory:"),
 }
 
 #: Settings that belong to the Python/VR client bridge. The desktop program has no
@@ -343,15 +355,21 @@ TAB_PROFILE_SPECS = {
 }
 
 PROFILE_TAB_DISPLAY_NAMES = {
-    "inputs_outputs": "Inputs & Outputs",
-    "visual_effects": "Visual Effects",
-    "simulation_physics": "Simulation & Physics",
-    "directories": "Directories",
+    "inputs_outputs": QT_TRANSLATE_NOOP("Config", "Inputs & Outputs"),
+    "visual_effects": QT_TRANSLATE_NOOP("Config", "Visual Effects"),
+    "simulation_physics": QT_TRANSLATE_NOOP("Config", "Simulation & Physics"),
+    "directories": QT_TRANSLATE_NOOP("Config", "Directories"),
 }
 
 # The bracketed names are the Saved Config selector's own entries, whose stored
 # values a profile of the same name would duplicate.
 RESERVED_PROFILE_NAMES = {"custom", "default", "new", "(custom)", "(default)", "(new)"}
+# What the selector shows for its own entries; a named profile shows its name.
+PROFILE_ITEM_LABELS = {
+    "(custom)": QT_TRANSLATE_NOOP("Config", "(custom)"),
+    "(default)": QT_TRANSLATE_NOOP("Config", "(default)"),
+    "(new)": QT_TRANSLATE_NOOP("Config", "(new)"),
+}
 CONFIG_TAB_CONTENT_MARGIN = 18
 CONFIG_TAB_ROW_SPACING = 12
 CONFIG_FIELD_HORIZONTAL_SPACING = 12
@@ -466,21 +484,23 @@ def _validate_profile_name(name, existing_names=()):
     if normalized.lower().endswith(".json"):
         normalized = normalized[:-5].rstrip()
     if not normalized:
-        raise ValueError("Enter a profile name.")
+        raise ValueError(Message("Enter a profile name."))
     if normalized.casefold() in RESERVED_PROFILE_NAMES:
-        raise ValueError(f"'{normalized}' is a reserved profile name.")
+        raise ValueError(Message("'{name}' is a reserved profile name.", name=normalized))
     if normalized in {".", ".."} or normalized.endswith((" ", ".")):
-        raise ValueError("Profile names cannot end with a space or period.")
+        raise ValueError(Message("Profile names cannot end with a space or period."))
     if re.search(r'[<>:"/\\|?*\x00-\x1f]', normalized):
-        raise ValueError("Profile names cannot contain path separators or Windows-reserved characters.")
+        raise ValueError(Message(
+            "Profile names cannot contain path separators or Windows-reserved characters."
+        ))
     windows_stem = normalized.split(".", 1)[0].casefold()
     windows_reserved = {"con", "prn", "aux", "nul"}
     windows_reserved.update(f"com{i}" for i in range(1, 10))
     windows_reserved.update(f"lpt{i}" for i in range(1, 10))
     if windows_stem in windows_reserved:
-        raise ValueError(f"'{normalized}' is reserved by Windows.")
+        raise ValueError(Message("'{name}' is reserved by Windows.", name=normalized))
     if normalized.casefold() in {str(item).casefold() for item in existing_names}:
-        raise ValueError(f"A profile named '{normalized}' already exists.")
+        raise ValueError(Message("A profile named '{name}' already exists.", name=normalized))
     return normalized
 
 
@@ -712,10 +732,16 @@ def build_score_histogram_figure(
     *,
     is_evalue,
     norm_mode,
+    font_families=None,
 ):
-    """Build a score histogram without starting or owning a GUI event loop."""
+    """Build a score histogram without starting or owning a GUI event loop.
+
+    Its text shows in the window's language; font_families, when given,
+    draws it (see Desktop_App.matplotlib_language_families).
+    """
     from matplotlib.figure import Figure
 
+    font = {} if font_families is None else {"family": font_families}
     figure = Figure(figsize=(10, 6))
     axes = figure.add_subplot(111)
     axes.hist(
@@ -729,11 +755,11 @@ def build_score_histogram_figure(
         threshold,
         color="red",
         linestyle="dashed",
-        label=f"Threshold {threshold}",
+        label=Message("Threshold {threshold}", threshold=threshold).display(),
     )
-    mode_label = "E-Value" if is_evalue else norm_mode
-    axes.set_title(f"Score Distribution ({mode_label})")
-    axes.legend()
+    mode_label = Message("E-Value").display() if is_evalue else norm_mode
+    axes.set_title(Message("Score Distribution ({mode})", mode=mode_label).display(), **font)
+    axes.legend(prop=font or None)
     figure.tight_layout()
     return figure
 
@@ -775,11 +801,16 @@ if __name__ == "__main__":
         installed_language,
         language_selector_row,
         LanguageSelector,
+        mark_name_item,
+        matplotlib_language_families,
         qt_monospace_font,
         redraw_in_language,
         select_combo_value,
         show_window_in_front,
         startup_language,
+        # Config and VR Config file their texts under one context, "Config",
+        # so a sentence the two share is translated once.
+        translate,
     )
     from PySide6.QtCore import Qt, QUrl, QThread, Signal
     from PySide6.QtGui import (
@@ -819,14 +850,14 @@ if __name__ == "__main__":
 
         def __init__(self, figure, parent=None):
             super().__init__(parent)
-            self.setWindowTitle("Score Histogram")
+            self.setWindowTitle(translate("Config", "Score Histogram"))
             self.resize(1000, 650)
 
             self.figure = figure
             self.canvas = FigureCanvasQTAgg(figure)
             self.toolbar = NavigationToolbar2QT(self.canvas, self)
 
-            close_button = QPushButton("Close")
+            close_button = QPushButton(translate("Config", "Close"))
             close_button.clicked.connect(self.accept)
 
             button_layout = QHBoxLayout()
@@ -990,7 +1021,7 @@ if __name__ == "__main__":
         def __init__(self, carried=None):
             # carried: what a redraw in another language keeps (language_carry_over).
             super().__init__()
-            self.setWindowTitle(VR_CONFIG_DISPLAY_NAME)
+            self.setWindowTitle(translate("Config", VR_CONFIG_DISPLAY_NAME))
             
             # Set Window Icon
             icon_path = application_icon_path()
@@ -1028,7 +1059,9 @@ if __name__ == "__main__":
             self.left_bottom_layout.setContentsMargins(0, 0, 0, 6)
             self.left_bottom_layout.setSpacing(6)
             
-            self.tip_panel = SpacedTipLabel("Click or tab to an input or its label to see helpful tips here.")
+            self.tip_panel = SpacedTipLabel(translate(
+                "Config", "Click or tab to an input or its label to see helpful tips here."
+            ))
             self.tip_panel.setWordWrap(True)
             self.tip_panel.setStyleSheet("color: #444; font-style: normal; background-color: #e8eaed; padding: 10px; border-radius: 5px;")
             self.left_bottom_layout.addWidget(self.tip_panel, 1)
@@ -1037,29 +1070,29 @@ if __name__ == "__main__":
             action_row.setObjectName("configActionButtons")
             action_row.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
             btn_layout = ResponsiveFlowLayout(action_row)
-            self.btn_check = QPushButton("Consistency Check")
+            self.btn_check = QPushButton(translate("Config", "Consistency Check"))
             self.btn_check.setStyleSheet("background-color: #f39c12; color: white; font-weight: bold; padding: 5px;")
             self.btn_check.clicked.connect(self.run_consistency_check)
             
-            self.btn_save_run = QPushButton("Save && Run")
+            self.btn_save_run = QPushButton(translate("Config", "Save && Run"))
             self.btn_save_run.clicked.connect(self.save_and_run)
             self.btn_save_run.setStyleSheet("background-color: #4CAF50; color: white; font-weight: bold; padding: 5px;")
 
-            self.btn_export_layout = QPushButton("Export Layout Settings")
+            self.btn_export_layout = QPushButton(translate("Config", "Export Layout Settings"))
             self.btn_export_layout.clicked.connect(self.export_layout_settings)
             self.btn_export_layout.setEnabled(False)
             self.btn_export_layout.setStyleSheet(
                 "background-color: #2196F3; color: white; "
                 "font-weight: bold; padding: 5px;"
             )
-            self.btn_export_layout.setToolTip(
-                "Export a generation-only JSON file for the selected new layout cache."
-            )
+            self.btn_export_layout.setToolTip(translate(
+                "Config", "Export a generation-only JSON file for the selected new layout cache."
+            ))
             
-            btn_save = QPushButton("Save")
+            btn_save = QPushButton(translate("Config", "Save"))
             btn_save.clicked.connect(self.save_only)
             
-            btn_exit = QPushButton("Exit")
+            btn_exit = QPushButton(translate("Config", "Exit"))
             btn_exit.clicked.connect(self.close)
             
             btn_layout.addWidget(self.btn_save_run, 1)
@@ -1083,11 +1116,13 @@ if __name__ == "__main__":
             self.right_panel = QWidget()
             self.right_layout = QVBoxLayout(self.right_panel)
             self.right_layout.setContentsMargins(0, 0, 0, 0)
-            self.stat_label = QLabel("Network Statistics Report")
+            self.stat_label = QLabel(translate("Config", "Network Statistics Report"))
             self.stat_label.setStyleSheet("font-weight: bold; font-size: 14px;")
             self.stat_display = QTextEdit()
             self.stat_display.setReadOnly(True)
-            self.stat_display.setPlaceholderText("Select Fasta subset and HDF5 Network file, then click compute.")
+            self.stat_display.setPlaceholderText(translate(
+                "Config", "Select Fasta subset and HDF5 Network file, then click compute."
+            ))
             self.stat_display.setFont(qt_monospace_font(self.stat_display.font()))
             self.stat_display.setStyleSheet("background-color: #f5f5f5;")
             self.right_layout.addWidget(self.stat_label)
@@ -1283,16 +1318,16 @@ if __name__ == "__main__":
                 lambda selected_tab=tab_id: self._refresh_profile_combo(selected_tab)
             )
             name_input = QLineEdit()
-            name_input.setPlaceholderText("New profile name")
+            name_input.setPlaceholderText(translate("Config", "New profile name"))
             name_input.setVisible(False)
             folder_button = QPushButton("📂")
             folder_button.setFixedWidth(30)
-            folder_button.setToolTip("Open this tab's saved config folder")
+            folder_button.setToolTip(translate("Config", "Open this tab's saved config folder"))
             row_layout.addWidget(selector, 1)
             row_layout.addWidget(name_input, 1)
             row_layout.addWidget(folder_button)
 
-            label = QLabel("Saved Config:")
+            label = QLabel(translate("Config", "Saved Config:"))
             self._label_column.append(label)
             form_layout.addRow(label, container)
 
@@ -1360,7 +1395,11 @@ if __name__ == "__main__":
             selector.blockSignals(True)
             try:
                 selector.clear()
-                add_combo_options(selector, items)
+                add_combo_options(selector, items, [
+                    translate("Config", PROFILE_ITEM_LABELS[item])
+                    if item in PROFILE_ITEM_LABELS else item
+                    for item in items
+                ])
                 select_combo_value(selector, "(custom)" if disappeared else current)
             finally:
                 selector.blockSignals(False)
@@ -1391,8 +1430,9 @@ if __name__ == "__main__":
             return candidate
 
         def _normalize_profile_data(self, tab_id, raw_data, *, allow_extra=False):
+            # The errors print in English and show translated (display_text).
             if not isinstance(raw_data, dict):
-                raise ValueError("the JSON root must be an object")
+                raise ValueError(Message("the JSON root must be an object"))
 
             defaults = TAB_PROFILE_SPECS[tab_id]["defaults"]
             if tab_id == "directories":
@@ -1404,7 +1444,7 @@ if __name__ == "__main__":
             unknown = set(raw_data) - set(defaults) - ignored
             if unknown and not allow_extra:
                 names = ", ".join(sorted(unknown))
-                raise ValueError(f"unknown setting key(s): {names}")
+                raise ValueError(Message("unknown setting key(s): {names}", names=names))
 
             normalized = dict(defaults)
             for key in defaults:
@@ -1430,41 +1470,46 @@ if __name__ == "__main__":
                         elif str(value).strip().lower() in {"false", "0", "f", "n", "no"}:
                             value = False
                         else:
-                            raise ValueError("expected true or false")
+                            raise ValueError(Message("expected true or false"))
                     elif isinstance(default, int):
                         if isinstance(value, bool) or float(value) != int(float(value)):
-                            raise ValueError("expected an integer")
+                            raise ValueError(Message("expected an integer"))
                         value = int(float(value))
                     elif isinstance(default, float):
                         if isinstance(value, bool):
-                            raise ValueError("expected a number")
+                            raise ValueError(Message("expected a number"))
                         value = float(value)
                     else:
                         if not isinstance(value, str):
-                            raise ValueError("expected text")
+                            raise ValueError(Message("expected text"))
                 except (TypeError, ValueError, OverflowError) as error:
-                    raise ValueError(f"invalid value for {key}: {error}") from error
+                    raise ValueError(
+                        Message("invalid value for {key}: {error}", key=key, error=error)
+                    ) from error
 
                 if isinstance(value, float) and not math.isfinite(value):
-                    raise ValueError(f"invalid value for {key}: expected a finite number")
+                    raise ValueError(Message("invalid value for {key}: expected a finite number", key=key))
                 if key in PROFILE_ENUM_VALUES and value not in PROFILE_ENUM_VALUES[key]:
                     allowed = ", ".join(sorted(PROFILE_ENUM_VALUES[key]))
-                    raise ValueError(f"invalid value for {key}; expected one of: {allowed}")
+                    raise ValueError(Message(
+                        "invalid value for {key}; expected one of: {allowed}", key=key, allowed=allowed
+                    ))
                 if value is not None and key in PROFILE_RANGES:
                     minimum, maximum = PROFILE_RANGES[key]
                     if value < minimum or value > maximum:
-                        raise ValueError(
-                            f"invalid value for {key}; expected {minimum} to {maximum}"
-                        )
+                        raise ValueError(Message(
+                            "invalid value for {key}; expected {minimum} to {maximum}",
+                            key=key, minimum=minimum, maximum=maximum,
+                        ))
                 normalized[key] = value
 
             if (
                 normalized.get("ALIGNMENT_SCORE") == "local"
                 and normalized.get("NORM_MODE") == "alignment_length"
             ):
-                raise ValueError(
+                raise ValueError(Message(
                     "NORM_MODE alignment_length is unavailable for local alignment scores"
-                )
+                ))
 
             color_keys = {
                 "TEXT_COLOR", "INITIAL_NODE_COLOR", "HOVER_COLOR",
@@ -1472,7 +1517,9 @@ if __name__ == "__main__":
             }
             for key in color_keys.intersection(normalized):
                 if not QColor(normalized[key]).isValid():
-                    raise ValueError(f"invalid color value for {key}: {normalized[key]}")
+                    raise ValueError(Message(
+                        "invalid color value for {key}: {value}", key=key, value=normalized[key]
+                    ))
             return normalized
 
         def _custom_profile_data(self, tab_id):
@@ -1502,7 +1549,10 @@ if __name__ == "__main__":
                 if key == "LAYOUT_DEVICE_SELECTION":
                     index = widget.findData(value)
                     if index < 0:
-                        widget.addItem(f"Unavailable saved device [{value}]", value)
+                        widget.addItem(
+                            translate("Config", "Unavailable saved device [{device}]").format(device=value),
+                            value,
+                        )
                         index = widget.count() - 1
                     widget.setCurrentIndex(index)
                 elif widget.property("persistItemData"):
@@ -1617,7 +1667,7 @@ if __name__ == "__main__":
                     read_only = False
                 elif value == "(default)":
                     if not TAB_PROFILE_SPECS[tab_id]["allow_default"]:
-                        raise ValueError("this tab does not provide a default profile")
+                        raise ValueError(translate("Config", "this tab does not provide a default profile"))
                     data = dict(TAB_PROFILE_SPECS[tab_id]["defaults"])
                     read_only = True
                 else:
@@ -1630,8 +1680,10 @@ if __name__ == "__main__":
                 self._set_new_profile_field_visible(tab_id, previous == "(new)")
                 QMessageBox.critical(
                     self,
-                    "Saved Config Error",
-                    f"Could not load profile '{value}':\n{error}",
+                    translate("Config", "Saved Config Error"),
+                    translate("Config", "Could not load profile '{name}':\n{error}").format(
+                        name=value, error=display_text(error)
+                    ),
                 )
 
         def _load_all_custom_profiles(self):
@@ -1664,7 +1716,10 @@ if __name__ == "__main__":
             if language == installed_language():
                 return self
             carried = self.language_carry_over()
-            return redraw_in_language(self, language, lambda: type(self)(carried=carried), **options)
+            return redraw_in_language(
+                self, language, lambda: type(self)(carried=carried),
+                extra_catalogs=VR_TRANSLATION_CATALOGS, **options,
+            )
 
         def language_carry_over(self):
             """What a redraw in another language keeps beyond the view."""
@@ -1781,7 +1836,7 @@ if __name__ == "__main__":
                 if msa_file else None
             )
                 
-            self.tip_panel.setText("Running Consistency Check...")
+            self.tip_panel.setText(translate("Config", "Running Consistency Check..."))
             from PySide6.QtWidgets import QApplication
             QApplication.processEvents()
             
@@ -1801,12 +1856,18 @@ if __name__ == "__main__":
                 num_matched = len(fasta_headers) - len(missing_nodes)
                 num_missing = len(missing_nodes)
                 
-                msg = f"FASTA vs HDF5:\nMatched: {num_matched} of {len(fasta_headers)} | Missing: {num_missing}"
+                summary = translate(
+                    "Config", "FASTA vs HDF5:\nMatched: {matched} of {total} | Missing: {missing}"
+                ).format(matched=num_matched, total=len(fasta_headers), missing=num_missing)
                 
                 if missing_nodes:
-                    msg = f"ERROR: FASTA is NOT a subset of HDF5.\n{msg}\nMissing examples: {', '.join(missing_nodes[:5])}"
+                    msg = translate(
+                        "Config", "ERROR: FASTA is NOT a subset of HDF5.\n{summary}\nMissing examples: {examples}"
+                    ).format(summary=summary, examples=", ".join(missing_nodes[:5]))
                 else:
-                    msg = f"SUCCESS: FASTA is a strict subset of HDF5.\n{msg}"
+                    msg = translate(
+                        "Config", "SUCCESS: FASTA is a strict subset of HDF5.\n{summary}"
+                    ).format(summary=summary)
 
                 msa_headers = None
                 if msa_path and os.path.exists(msa_path):
@@ -1817,20 +1878,24 @@ if __name__ == "__main__":
                     ]
                     msa_matched = len(fasta_headers) - len(msa_missing)
                     
-                    msa_msg = (
-                        f"FASTA vs MSA:\nMatched: {msa_matched} of "
-                        f"{len(fasta_headers)} network headers | Missing: {len(msa_missing)}"
-                    )
+                    msa_summary = translate(
+                        "Config",
+                        "FASTA vs MSA:\nMatched: {matched} of %n network header(s) | Missing: {missing}",
+                        None, len(fasta_headers),
+                    ).format(matched=msa_matched, missing=len(msa_missing))
                     
                     if msa_missing:
-                        msg += (
-                            f"\n\nWARNING: MSA coverage is incomplete.\n{msa_msg}\n"
-                            f"Missing examples: {', '.join(msa_missing[:5])}\n"
+                        msg += "\n\n" + translate(
+                            "Config",
+                            "WARNING: MSA coverage is incomplete.\n{summary}\n"
+                            "Missing examples: {examples}\n"
                             "Missing nodes remain plotted but are excluded from "
-                            "alignment-dependent analyses."
-                        )
+                            "alignment-dependent analyses.",
+                        ).format(summary=msa_summary, examples=", ".join(msa_missing[:5]))
                     else:
-                        msg += f"\n\nSUCCESS: MSA covers all FASTA nodes.\n{msa_msg}"
+                        msg += "\n\n" + translate(
+                            "Config", "SUCCESS: MSA covers all FASTA nodes.\n{summary}"
+                        ).format(summary=msa_summary)
                 
                 # Check Reference ID if provided. Resolve it exactly as the
                 # Viewer will: the same rules over the same candidates, the
@@ -1841,33 +1906,41 @@ if __name__ == "__main__":
                     candidates = [header for header in headers if header in fasta_set]
                     matched_refs = reference_header_matches(candidates, ref_id)
                     if not matched_refs:
-                        msg += (
-                            f"\n\nWARNING: Reference ID '{ref_id}' matches no network "
-                            "header, so reference numbering will be inactive."
-                        )
+                        msg += "\n\n" + translate(
+                            "Config",
+                            "WARNING: Reference ID '{reference}' matches no network "
+                            "header, so reference numbering will be inactive.",
+                        ).format(reference=ref_id)
                     else:
                         resolved = matched_refs[0]
                         if msa_headers is not None and resolved not in msa_headers:
-                            msg += (
-                                f"\n\nWARNING: Reference ID '{ref_id}' resolves to "
-                                f"{resolved}, which the MSA lacks, so positions will be "
-                                "numbered by occupancy and the offset ignored."
-                            )
+                            msg += "\n\n" + translate(
+                                "Config",
+                                "WARNING: Reference ID '{reference}' resolves to "
+                                "{header}, which the MSA lacks, so positions will be "
+                                "numbered by occupancy and the offset ignored.",
+                            ).format(reference=ref_id, header=resolved)
                         else:
-                            msg += f"\n\nSUCCESS: Reference ID '{ref_id}' resolves to {resolved}."
+                            msg += "\n\n" + translate(
+                                "Config", "SUCCESS: Reference ID '{reference}' resolves to {header}."
+                            ).format(reference=ref_id, header=resolved)
                         if len(matched_refs) > 1:
                             others = ", ".join(matched_refs[1:4])
                             if len(matched_refs) > 4:
                                 others += ", ..."
-                            msg += (
-                                f"\nIt matches {len(matched_refs)} headers equally; the "
-                                f"first in network order is used. Others: {others}"
-                            )
+                            msg += "\n" + translate(
+                                "Config",
+                                "It matches %n header(s) equally; the "
+                                "first in network order is used. Others: {others}",
+                                None, len(matched_refs),
+                            ).format(others=others)
                 
                 self.tip_panel.setText(msg)
             
             except Exception as e:
-                self.tip_panel.setText(f"Error during consistency check: {e}")
+                self.tip_panel.setText(
+                    translate("Config", "Error during consistency check: {error}").format(error=display_text(e))
+                )
             
         def eventFilter(self, obj, event):
             from PySide6.QtCore import QEvent
@@ -1899,61 +1972,61 @@ if __name__ == "__main__":
 
         def setup_tips(self):
             self.tip_db_keys = {
-                **VR_CONTROL_TIPS,
-                "SAVED_CONFIG": "Saved Config: Selects the settings profile used for this tab.\n(custom) uses the current viewer_settings_vr.json values; (default) uses read-only built-in defaults; (new) creates a named profile; named entries load profiles from the Saved Config Directory.",
-                "NODE_FASTA_FILE": "Primary FASTA file containing sequences visualized as nodes in the SSN.\nMust match sequences present in the selected network edges and multiple alignments.",
-                "MSA_FILE": "Multiple sequence alignment file (.fasta, .h5, or _sparse.h5) for the sequence set.\nUsed to calculate positional conservation, gaps, and occupancy thresholds during analysis.",
-                "INPUT_HDF5": "Network or similarity matrix file (.h5) containing pairwise sequence similarity scores and edge coordinates.\nMust contain alignment metrics for at least all sequences present in the active sequence set.",
-                "ALIGNMENT_SCORE": "(For embedding SSNs) Specifies whether to use global (Needleman-Wunsch) or local (Smith-Waterman) scores.\nLocal alignment is recommended for multi-domain proteins; global alignment is best for full-length comparisons.",
-                "NORM_MODE": "(For embedding SSNs) Normalization strategy for pairwise sequence alignment scores.\nNormalizes by alignment length, shorter sequence, longer sequence, or average sequence length to reduce length bias.",
-                "ALIGNMENT_REFERENCE": "Full header, leading identifier (e.g. WP_0123.1), substring, or wildcard (e.g. WP_01*) naming the reference sequence; an exact header or identifier takes priority.\nUsed to anchor absolute relative residue numbering and mapping offsets across the entire network.",
-                "ALIGNMENT_OFFSET": "Integer offset added to reference-anchored alignment residue positions (e.g. +10 shifts position 1 to 11).\nApplied only when the Alignment Reference ID resolves successfully in the alignment.",
-                "SIMILARITY_THRESHOLD": "Minimum similarity score threshold (identity fraction, normalized score, or -Log10 E-Value) to retain an edge.\nEdges below this cutoff are filtered out and excluded from physics simulation and rendering.",
-                "TOP_EDGE_PERCENT": "Alternative edge filter that retains only the top N% highest-scoring edges in the network.\nMaintains consistent network connectivity and density without manually tuning raw score cutoffs (overrides threshold).",
-                "FILTER_MIN_OCCUPANCY": "Minimum percentage of non-gap characters required at an alignment column to retain it in residue analyses.\nColumns with occupancy below this percentage are excluded from logo and conservation calculations.",
-                "TARGET_CACHE": "Target Cache: Compatibility-specific folder for layout cache files matching the selected sequence set and network.\nThe status reports whether a compatible target folder is available; the folder button opens the layout-cache root.",
-                "TARGET_CACHE_FILE": "Selects a pre-computed 3D layout coordinate cache file (.h5) from the cache directory.\nInstantly restores previously computed node positions to bypass physics simulation.",
-                "NEW_CACHE_NAME": "Specifies a custom filename when saving a new layout configuration iteration.\nOnly editable when Selected Cache File is set to '(New Layout Cache)'.",
-                "NODE_SIZE": "Visual rendering diameter (in pixels) for each sequence node in the network plot.\nAdjust to optimize visual density; smaller node sizes are recommended for large networks.",
-                "EDGE_WIDTH": "Line thickness (in pixels) of connection lines drawn between related sequence nodes.\nThinner lines reduce visual clutter in dense networks; thicker lines highlight strong relationships.",
-                "EDGE_ALPHA": "Opacity of network edge lines, ranging from 0.0 (fully transparent) to 1.0 (opaque).\nLower opacity reveals underlying node clustering and density in highly connected graphs.",
-                "TEXT_SIZE": "Font size used for rendering cluster annotations, node labels, and sequence IDs in the visualizer.\nAdjust to ensure labels remain legible without obstructing structural network features.",
-                "TEXT_COLOR": "Color of viewer HUD text, slider values, and control labels. The top interaction instruction remains gray, and a nonzero Hidden Nodes count remains red.\nCan be specified as a standard color name or hex code (e.g. 'grey', '#333333').",
-                "INITIAL_NODE_COLOR": "Baseline fill color applied to all nodes when the network is first loaded.\nServes as the default background color before custom cluster or metadata coloring is applied.",
-                "HOVER_COLOR": "Highlight color applied to a node and its adjacent connections on hover or selection.\nProvides high-contrast interactive visual feedback in the viewer.",
-                "CONNECTED_NODE_COLOR": "Border highlight color applied to neighboring nodes directly connected to the currently selected node.\nSet it to the same rendered RGBA color as Node Boundary Color to disable connected-node identification, border highlighting, and render promotion.",
-                "EDGE_COLOR": "Color of connection lines (edges) drawn between similar nodes in the network.\nLighter or neutral colors reduce edge dominance in dense network clusters.",
-                "NODE_BOUNDARY_COLOR": "Color of the outer border ring outline drawn around each sequence node.\nProvides visual contrast to cleanly separate adjacent and overlapping nodes.",
-                "NODE_BOUNDARY_WIDTH": "Stroke width (in pixels) of the outer border ring outline drawn around each node.\nSetting a non-zero width helps distinguish overlapping nodes in dense clusters.",
-                "LOW_RESOURCE_MODE": "Performance mode that simplifies graphics and hides edge lines during pan/zoom/drag interactions.\nSignificantly improves responsiveness and reduces rendering latency for large networks.",
-                "LAYOUT_DEVICE_SELECTION": "Selects the compute device used for SSN layout generation (CPU, CUDA, XPU, MPS).\nAuto Benchmark measures representative workloads and may choose a different backend for each component-size class.",
-                "SPRING_K": "Attractive Hookean spring constant pulling nodes joined by retained network edges closer together.\nEvery retained edge has the same spring strength; its similarity score determines filtering, not attraction strength.",
-                "COULOMB_K": "Repulsive constant controlling the electrostatic-like force between nodes in the same connected component.\nLarger values spread nearby nodes apart; disconnected components are positioned later by component packing.",
-                "COULOMB_CUTOFF": "Maximum spatial distance threshold beyond which node repulsive forces drop to zero.\nLower cutoffs accelerate computation and prevent distant clusters from exerting unnecessary forces.",
-                "DAMPING": "Frictional resistance coefficient applied to node velocities during layout simulation.\nHigher values dissipate kinetic energy and suppress oscillatory motion more quickly.",
-                "DT": "Timestep size for each numerical integration step of the physics simulation.\nSmaller timesteps increase stability and precision; larger timesteps speed up convergence but may jitter.",
-                "AUTO_DT": "When ON, each simulation stage uses the largest step size that keeps it stable, worked out from its springs and repulsion, and the Step Size field is ignored.\nMax Steps, RMSD Threshold and RMSD Window still count steps of whatever size each stage uses.",
-                "MAX_STEPS": "Maximum number of physics iterations the simulation engine will run before terminating.\nEnsure this is large enough to allow node positions to settle into a stable configuration.",
-                "RMSD_THRESHOLD": "Root-Mean-Square Deviation convergence threshold for early simulation termination.\nIf average node displacement between consecutive steps falls below this value, layout halts as converged.",
-                "PERCENTAGE_DROP_THRESHOLD": "Early termination threshold based on the rate of RMSD change over the moving window.\nTerminates simulation when layout change plateaus (set to 0 to disable).",
-                "RMSD_WINDOW": "Number of simulation steps over which moving-average RMSD is calculated for plateau detection.\nSmoothes transient velocity spikes to ensure early termination triggers only on true convergence.",
-                "ENABLE_PROGRESSIVE_SIMULATION": "Progressively lowers the similarity threshold in stages for massive connected components.\nHelps resolve fine-grained sub-clusters and prevents gridlock in large, dense components.",
-                "PACKING_GEOMETRY": "Macro-level boundary packing geometry (Square or Circle) used to arrange disconnected components.\nControls how independent clusters are organized in the overall visualization window.",
-                "PACKING_GRID_SIZE": "Minimum gap kept between independent clusters as they are packed onto concentric spherical shells around the largest one.\nLarger values spread the packed clusters further apart in the final 3D layout.",
-                "UMAP_MODE": "Uses UMAP manifold learning to compute 3D coordinates directly from sequence distances.\nProvides fast non-linear dimensionality reduction as an alternative to iterative physics simulations.",
-                "UMAP_NEIGHBORS": "Maximum number of other nodes in each UMAP neighborhood (K excludes self).\nK=15 supplies up to 15 neighbors plus self to UMAP.\nSmaller values emphasize local sub-clusters; larger values preserve broad global relationships.",
-                "UMAP_MIN_DIST": "Minimum distance between points in low-dimensional UMAP space (0.0 to 1.0).\nLower values produce tight, dense point clusters; larger values distribute nodes more evenly.",
-                "FASTA_DIR": "Directory containing input FASTA files for sequence sets and subsets.\nPopulates the Sequence Set dropdown in the Inputs tab.",
-                "MSA_DIR": "Directory containing multiple sequence alignment files (.fasta, .h5, or _sparse.h5).\nPopulates the MSA dropdown in the Inputs tab.",
-                "HDF5_DIR": "Directory containing HDF5 pairwise sequence similarity scores and network edge files.\nPopulates the Network Edges dropdown in the Inputs tab.",
-                "SAVED_LAYOUT_DIR": "Directory where calculated 3D layout coordinate files and network metadata (.h5) are saved and loaded.\nServes as the layout cache to avoid recalculating layouts when reopening networks.",
-                "SETTING_EXPORT_DIR": "Directory where command-line layout generation JSON settings are exported.",
-                "METADATA_DIR": "Directory where uploaded node metadata spreadsheets and CSV files are stored and loaded.\nUsed for custom node coloring, categorization, and annotation in the visualizer.",
-                "HEADER_LIST_DIR": "Directory containing text files with lists of sequence headers matching network query criteria.\nUsed to store and track sequence cohorts identified in the visualizer.",
-                "INPUT_FILE_DIR": "Base directory represented by $input_file$.\nRelative paths are resolved from the project root; absolute paths remain absolute.",
-                "CACHE_FILE_DIR": "Base directory represented by $cache_file$.\nRelative paths are resolved from the project root; absolute paths remain absolute.",
-                "ANALYSIS_RESULT_DIR": "Base directory represented by $analysis_result$.\nViewer commands place their output subdirectories beneath this location.",
-                "SAVED_CONFIG_DIR": "Directory containing named per-tab configuration profiles.\nThe default uses $cache_file$ and follows the Cache File Directory; custom relative and absolute paths remain supported."
+                **{key: translate("Config", tip) for key, tip in VR_CONTROL_TIPS.items()},
+                "SAVED_CONFIG": translate("Config", "Saved Config: Selects the settings profile used for this tab.\n(custom) uses the current viewer_settings_vr.json values; (default) uses read-only built-in defaults; (new) creates a named profile; named entries load profiles from the Saved Config Directory."),
+                "NODE_FASTA_FILE": translate("Config", "Primary FASTA file containing sequences visualized as nodes in the SSN.\nMust match sequences present in the selected network edges and multiple alignments."),
+                "MSA_FILE": translate("Config", "Multiple sequence alignment file (.fasta, .h5, or _sparse.h5) for the sequence set.\nUsed to calculate positional conservation, gaps, and occupancy thresholds during analysis."),
+                "INPUT_HDF5": translate("Config", "Network or similarity matrix file (.h5) containing pairwise sequence similarity scores and edge coordinates.\nMust contain alignment metrics for at least all sequences present in the active sequence set."),
+                "ALIGNMENT_SCORE": translate("Config", "(For embedding SSNs) Specifies whether to use global (Needleman-Wunsch) or local (Smith-Waterman) scores.\nLocal alignment is recommended for multi-domain proteins; global alignment is best for full-length comparisons."),
+                "NORM_MODE": translate("Config", "(For embedding SSNs) Normalization strategy for pairwise sequence alignment scores.\nNormalizes by alignment length, shorter sequence, longer sequence, or average sequence length to reduce length bias."),
+                "ALIGNMENT_REFERENCE": translate("Config", "Full header, leading identifier (e.g. WP_0123.1), substring, or wildcard (e.g. WP_01*) naming the reference sequence; an exact header or identifier takes priority.\nUsed to anchor absolute relative residue numbering and mapping offsets across the entire network."),
+                "ALIGNMENT_OFFSET": translate("Config", "Integer offset added to reference-anchored alignment residue positions (e.g. +10 shifts position 1 to 11).\nApplied only when the Alignment Reference ID resolves successfully in the alignment."),
+                "SIMILARITY_THRESHOLD": translate("Config", "Minimum similarity score threshold (identity fraction, normalized score, or -Log10 E-Value) to retain an edge.\nEdges below this cutoff are filtered out and excluded from physics simulation and rendering."),
+                "TOP_EDGE_PERCENT": translate("Config", "Alternative edge filter that retains only the top N% highest-scoring edges in the network.\nMaintains consistent network connectivity and density without manually tuning raw score cutoffs (overrides threshold)."),
+                "FILTER_MIN_OCCUPANCY": translate("Config", "Minimum percentage of non-gap characters required at an alignment column to retain it in residue analyses.\nColumns with occupancy below this percentage are excluded from logo and conservation calculations."),
+                "TARGET_CACHE": translate("Config", "Target Cache: Compatibility-specific folder for layout cache files matching the selected sequence set and network.\nThe status reports whether a compatible target folder is available; the folder button opens the layout-cache root."),
+                "TARGET_CACHE_FILE": translate("Config", "Selects a pre-computed 3D layout coordinate cache file (.h5) from the cache directory.\nInstantly restores previously computed node positions to bypass physics simulation."),
+                "NEW_CACHE_NAME": translate("Config", "Specifies a custom filename when saving a new layout configuration iteration.\nOnly editable when Selected Cache File is set to '(New Layout Cache)'."),
+                "NODE_SIZE": translate("Config", "Visual rendering diameter (in pixels) for each sequence node in the network plot.\nAdjust to optimize visual density; smaller node sizes are recommended for large networks."),
+                "EDGE_WIDTH": translate("Config", "Line thickness (in pixels) of connection lines drawn between related sequence nodes.\nThinner lines reduce visual clutter in dense networks; thicker lines highlight strong relationships."),
+                "EDGE_ALPHA": translate("Config", "Opacity of network edge lines, ranging from 0.0 (fully transparent) to 1.0 (opaque).\nLower opacity reveals underlying node clustering and density in highly connected graphs."),
+                "TEXT_SIZE": translate("Config", "Font size used for rendering cluster annotations, node labels, and sequence IDs in the visualizer.\nAdjust to ensure labels remain legible without obstructing structural network features."),
+                "TEXT_COLOR": translate("Config", "Color of viewer HUD text, slider values, and control labels. The top interaction instruction remains gray, and a nonzero Hidden Nodes count remains red.\nCan be specified as a standard color name or hex code (e.g. 'grey', '#333333')."),
+                "INITIAL_NODE_COLOR": translate("Config", "Baseline fill color applied to all nodes when the network is first loaded.\nServes as the default background color before custom cluster or metadata coloring is applied."),
+                "HOVER_COLOR": translate("Config", "Highlight color applied to a node and its adjacent connections on hover or selection.\nProvides high-contrast interactive visual feedback in the viewer."),
+                "CONNECTED_NODE_COLOR": translate("Config", "Border highlight color applied to neighboring nodes directly connected to the currently selected node.\nSet it to the same rendered RGBA color as Node Boundary Color to disable connected-node identification, border highlighting, and render promotion."),
+                "EDGE_COLOR": translate("Config", "Color of connection lines (edges) drawn between similar nodes in the network.\nLighter or neutral colors reduce edge dominance in dense network clusters."),
+                "NODE_BOUNDARY_COLOR": translate("Config", "Color of the outer border ring outline drawn around each sequence node.\nProvides visual contrast to cleanly separate adjacent and overlapping nodes."),
+                "NODE_BOUNDARY_WIDTH": translate("Config", "Stroke width (in pixels) of the outer border ring outline drawn around each node.\nSetting a non-zero width helps distinguish overlapping nodes in dense clusters."),
+                "LOW_RESOURCE_MODE": translate("Config", "Performance mode that simplifies graphics and hides edge lines during pan/zoom/drag interactions.\nSignificantly improves responsiveness and reduces rendering latency for large networks."),
+                "LAYOUT_DEVICE_SELECTION": translate("Config", "Selects the compute device used for SSN layout generation (CPU, CUDA, XPU, MPS).\nAuto Benchmark measures representative workloads and may choose a different backend for each component-size class."),
+                "SPRING_K": translate("Config", "Attractive Hookean spring constant pulling nodes joined by retained network edges closer together.\nEvery retained edge has the same spring strength; its similarity score determines filtering, not attraction strength."),
+                "COULOMB_K": translate("Config", "Repulsive constant controlling the electrostatic-like force between nodes in the same connected component.\nLarger values spread nearby nodes apart; disconnected components are positioned later by component packing."),
+                "COULOMB_CUTOFF": translate("Config", "Maximum spatial distance threshold beyond which node repulsive forces drop to zero.\nLower cutoffs accelerate computation and prevent distant clusters from exerting unnecessary forces."),
+                "DAMPING": translate("Config", "Frictional resistance coefficient applied to node velocities during layout simulation.\nHigher values dissipate kinetic energy and suppress oscillatory motion more quickly."),
+                "DT": translate("Config", "Timestep size for each numerical integration step of the physics simulation.\nSmaller timesteps increase stability and precision; larger timesteps speed up convergence but may jitter."),
+                "AUTO_DT": translate("Config", "When ON, each simulation stage uses the largest step size that keeps it stable, worked out from its springs and repulsion, and the Step Size field is ignored.\nMax Steps, RMSD Threshold and RMSD Window still count steps of whatever size each stage uses."),
+                "MAX_STEPS": translate("Config", "Maximum number of physics iterations the simulation engine will run before terminating.\nEnsure this is large enough to allow node positions to settle into a stable configuration."),
+                "RMSD_THRESHOLD": translate("Config", "Root-Mean-Square Deviation convergence threshold for early simulation termination.\nIf average node displacement between consecutive steps falls below this value, layout halts as converged."),
+                "PERCENTAGE_DROP_THRESHOLD": translate("Config", "Early termination threshold based on the rate of RMSD change over the moving window.\nTerminates simulation when layout change plateaus (set to 0 to disable)."),
+                "RMSD_WINDOW": translate("Config", "Number of simulation steps over which moving-average RMSD is calculated for plateau detection.\nSmoothes transient velocity spikes to ensure early termination triggers only on true convergence."),
+                "ENABLE_PROGRESSIVE_SIMULATION": translate("Config", "Progressively lowers the similarity threshold in stages for massive connected components.\nHelps resolve fine-grained sub-clusters and prevents gridlock in large, dense components."),
+                "PACKING_GEOMETRY": translate("Config", "Macro-level boundary packing geometry (Square or Circle) used to arrange disconnected components.\nControls how independent clusters are organized in the overall visualization window."),
+                "PACKING_GRID_SIZE": translate("Config", "Minimum gap kept between independent clusters as they are packed onto concentric spherical shells around the largest one.\nLarger values spread the packed clusters further apart in the final 3D layout."),
+                "UMAP_MODE": translate("Config", "Uses UMAP manifold learning to compute 3D coordinates directly from sequence distances.\nProvides fast non-linear dimensionality reduction as an alternative to iterative physics simulations."),
+                "UMAP_NEIGHBORS": translate("Config", "Maximum number of other nodes in each UMAP neighborhood (K excludes self).\nK=15 supplies up to 15 neighbors plus self to UMAP.\nSmaller values emphasize local sub-clusters; larger values preserve broad global relationships."),
+                "UMAP_MIN_DIST": translate("Config", "Minimum distance between points in low-dimensional UMAP space (0.0 to 1.0).\nLower values produce tight, dense point clusters; larger values distribute nodes more evenly."),
+                "FASTA_DIR": translate("Config", "Directory containing input FASTA files for sequence sets and subsets.\nPopulates the Sequence Set dropdown in the Inputs tab."),
+                "MSA_DIR": translate("Config", "Directory containing multiple sequence alignment files (.fasta, .h5, or _sparse.h5).\nPopulates the MSA dropdown in the Inputs tab."),
+                "HDF5_DIR": translate("Config", "Directory containing HDF5 pairwise sequence similarity scores and network edge files.\nPopulates the Network Edges dropdown in the Inputs tab."),
+                "SAVED_LAYOUT_DIR": translate("Config", "Directory where calculated 3D layout coordinate files and network metadata (.h5) are saved and loaded.\nServes as the layout cache to avoid recalculating layouts when reopening networks."),
+                "SETTING_EXPORT_DIR": translate("Config", "Directory where command-line layout generation JSON settings are exported."),
+                "METADATA_DIR": translate("Config", "Directory where uploaded node metadata spreadsheets and CSV files are stored and loaded.\nUsed for custom node coloring, categorization, and annotation in the visualizer."),
+                "HEADER_LIST_DIR": translate("Config", "Directory containing text files with lists of sequence headers matching network query criteria.\nUsed to store and track sequence cohorts identified in the visualizer."),
+                "INPUT_FILE_DIR": translate("Config", "Base directory represented by $input_file$.\nRelative paths are resolved from the project root; absolute paths remain absolute."),
+                "CACHE_FILE_DIR": translate("Config", "Base directory represented by $cache_file$.\nRelative paths are resolved from the project root; absolute paths remain absolute."),
+                "ANALYSIS_RESULT_DIR": translate("Config", "Base directory represented by $analysis_result$.\nViewer commands place their output subdirectories beneath this location."),
+                "SAVED_CONFIG_DIR": translate("Config", "Directory containing named per-tab configuration profiles.\nThe default uses $cache_file$ and follows the Cache File Directory; custom relative and absolute paths remain supported."),
             }
             
             self.tip_db = {}
@@ -2093,7 +2166,7 @@ if __name__ == "__main__":
                 self.cb_cache_file.clear()
                 for filename, relative_path in cache_items:
                     self.cb_cache_file.addItem(filename, relative_path)
-                self.cb_cache_file.addItem("(New Layout Cache)", None)
+                self.cb_cache_file.addItem(translate("Config", "(New Layout Cache)"), None)
 
                 if new_cache_was_selected:
                     selected_index = self.cb_cache_file.count() - 1
@@ -2215,7 +2288,7 @@ if __name__ == "__main__":
         def _apply_cache_discovery(self, records):
             sequence_path, network_path = self._cache_paths_from_inputs()
             if not sequence_path or not network_path:
-                self._set_cache_unavailable("Target Cache: Missing input files")
+                self._set_cache_unavailable(translate("Config", "Target Cache: Missing input files"))
                 return
 
             network_type = records["network_type"]
@@ -2245,7 +2318,8 @@ if __name__ == "__main__":
                 )
             except Exception as error:
                 self._set_cache_unavailable(
-                    f"Cache compatibility error: {error}", "#d32f2f"
+                    translate("Config", "Cache compatibility error: {error}").format(error=error),
+                    "#d32f2f",
                 )
                 return
 
@@ -2261,9 +2335,9 @@ if __name__ == "__main__":
                 self.cb_cache_file.setEnabled(False)
                 self._toggle_new_cache_input()
                 self.btn_open_target_folder.setEnabled(False)
-                self.lbl_cache_tracker.setText(
-                    f"Error: {len(folders)} compatible cache folders found"
-                )
+                self.lbl_cache_tracker.setText(translate(
+                    "Config", "Error: %n compatible cache folder(s) found", None, len(folders)
+                ))
                 self.lbl_cache_tracker.setStyleSheet(
                     "color: #d32f2f; font-weight: bold;"
                 )
@@ -2294,9 +2368,9 @@ if __name__ == "__main__":
                         saved_layout_dir, active_folder, filename
                     )
                     self.cb_cache_file.addItem(filename, relative_path)
-                self.lbl_cache_tracker.setText(
-                    f"Compatible Folder: {os.path.basename(active_folder)}"
-                )
+                self.lbl_cache_tracker.setText(translate(
+                    "Config", "Compatible Folder: {folder}"
+                ).format(folder=os.path.basename(active_folder)))
                 self.lbl_cache_tracker.setStyleSheet(
                     "color: green; font-weight: bold;"
                 )
@@ -2305,16 +2379,16 @@ if __name__ == "__main__":
                 active_folder = default_folder
                 default_name = os.path.basename(default_folder)
                 self.current_cache_folder = active_folder
-                self.lbl_cache_tracker.setText(
-                    f"Target Folder: {default_name} [Needs Computing]"
-                )
+                self.lbl_cache_tracker.setText(translate(
+                    "Config", "Target Folder: {folder} [Needs Computing]"
+                ).format(folder=default_name))
                 self.lbl_cache_tracker.setStyleSheet("color: #d32f2f;")
                 self.btn_open_target_folder.setEnabled(False)
 
             self.line_new_cache.setPlaceholderText(
                 self._default_new_cache_name(active_folder)
             )
-            self.cb_cache_file.addItem("(New Layout Cache)", None)
+            self.cb_cache_file.addItem(translate("Config", "(New Layout Cache)"), None)
             self.cb_cache_file.setEnabled(True)
             self.cb_cache_file.setCurrentIndex(0)
             self.cb_cache_file.blockSignals(False)
@@ -2331,7 +2405,9 @@ if __name__ == "__main__":
                 return
             self._cache_hash_pending_keys = None
             if error:
-                self._set_cache_unavailable(f"Cache hashing failed: {error}", "#d32f2f")
+                self._set_cache_unavailable(
+                    translate("Config", "Cache hashing failed: {error}").format(error=error), "#d32f2f"
+                )
                 return
             sequence_key, network_key = cache_keys
             self._cache_hash_cache[sequence_key] = records["sequence"]
@@ -2342,11 +2418,13 @@ if __name__ == "__main__":
             sequence_path, network_path = self._cache_paths_from_inputs()
             if not sequence_path or not network_path:
                 self._cancel_cache_hashing()
-                self._set_cache_unavailable("Target Cache: Missing FASTA or HDF5")
+                self._set_cache_unavailable(translate("Config", "Target Cache: Missing FASTA or HDF5"))
                 return
             if not os.path.isfile(sequence_path) or not os.path.isfile(network_path):
                 self._cancel_cache_hashing()
-                self._set_cache_unavailable("Target Cache: Selected input file is missing", "#d32f2f")
+                self._set_cache_unavailable(
+                    translate("Config", "Target Cache: Selected input file is missing"), "#d32f2f"
+                )
                 return
 
             try:
@@ -2354,7 +2432,9 @@ if __name__ == "__main__":
                 network_key = cache_manifest.file_cache_key(network_path)
             except OSError as error:
                 self._cancel_cache_hashing()
-                self._set_cache_unavailable(f"Cache input error: {error}", "#d32f2f")
+                self._set_cache_unavailable(
+                    translate("Config", "Cache input error: {error}").format(error=error), "#d32f2f"
+                )
                 return
 
             cached_records = {
@@ -2372,7 +2452,8 @@ if __name__ == "__main__":
                     self._apply_cache_discovery(cached_records)
                 except Exception as error:
                     self._set_cache_unavailable(
-                        f"Cache compatibility error: {error}", "#d32f2f"
+                        translate("Config", "Cache compatibility error: {error}").format(error=error),
+                        "#d32f2f",
                     )
                 return
 
@@ -2383,7 +2464,7 @@ if __name__ == "__main__":
             self._cancel_cache_hashing()
             request_id = self._cache_hash_request_id
             self._cache_hash_pending_keys = pending_keys
-            self._set_cache_unavailable("Checking input files…")
+            self._set_cache_unavailable(translate("Config", "Checking input files…"))
             worker = CacheHashWorker(
                 request_id,
                 sequence_path,
@@ -2433,7 +2514,7 @@ if __name__ == "__main__":
                 
                 btn = QPushButton("📂")
                 btn.setFixedWidth(30)
-                btn.setToolTip("Open Folder")
+                btn.setToolTip(translate("Config", "Open Folder"))
                 
                 def open_folder(checked):
                     import os
@@ -2465,7 +2546,10 @@ if __name__ == "__main__":
             fasta_val = globals().get("NODE_FASTA_FILE") or ""
             if os.path.basename(fasta_val) in fasta_files:
                 self.cb_fasta.setCurrentText(os.path.basename(fasta_val))
-            add_row_with_dynamic_btn("NODE_FASTA_FILE", "Sequence Set / Subset (.fasta):", self.cb_fasta, "FASTA_DIR", seq_dir)
+            add_row_with_dynamic_btn(
+                "NODE_FASTA_FILE", translate("Config", "Sequence Set / Subset (.fasta):"),
+                self.cb_fasta, "FASTA_DIR", seq_dir,
+            )
             
             # --- HDF5 Input ---
             self.cb_hdf5 = DynamicComboBox(lambda: self.refresh_combo(self.cb_hdf5, "HDF5_DIR", ['.h5']))
@@ -2475,7 +2559,10 @@ if __name__ == "__main__":
             hdf5_val = globals().get("INPUT_HDF5") or ""
             if os.path.basename(hdf5_val) in hdf5_files:
                 self.cb_hdf5.setCurrentText(os.path.basename(hdf5_val))
-            add_row_with_dynamic_btn("INPUT_HDF5", "Network Edges Input (.h5):", self.cb_hdf5, "HDF5_DIR", hdf5_dir)
+            add_row_with_dynamic_btn(
+                "INPUT_HDF5", translate("Config", "Network Edges Input (.h5):"),
+                self.cb_hdf5, "HDF5_DIR", hdf5_dir,
+            )
             
             # --- MSA Input ---
             self.cb_msa = DynamicComboBox(lambda: self.refresh_combo(self.cb_msa, "MSA_DIR", ['.fasta', '.h5']))
@@ -2485,17 +2572,23 @@ if __name__ == "__main__":
             msa_val = globals().get("MSA_FILE") or ""
             if os.path.basename(msa_val) in msa_files:
                 self.cb_msa.setCurrentText(os.path.basename(msa_val))
-            add_row_with_dynamic_btn("MSA_FILE", "MSA Input (.fasta / _sparse.h5):", self.cb_msa, "MSA_DIR", msa_dir_path)
+            add_row_with_dynamic_btn(
+                "MSA_FILE", translate("Config", "MSA Input (.fasta / _sparse.h5):"),
+                self.cb_msa, "MSA_DIR", msa_dir_path,
+            )
 
             # --- Rest of Inputs ---
             # Use NoScrollComboBox here to prevent accidental scroll wheel changes
             self.cb_score_mode = NoScrollComboBox()
-            add_combo_options(self.cb_score_mode, ["global", "local"])
+            add_combo_options(self.cb_score_mode, ["global", "local"], [
+                translate("Config", "global", "alignment score mode"),
+                translate("Config", "local", "alignment score mode"),
+            ])
             select_combo_value(self.cb_score_mode, str(globals().get("ALIGNMENT_SCORE", "global")))
             
             self.cb_norm_mode = NoScrollComboBox()
-            score_label = QLabel("Alignment Score Mode:")
-            norm_label = QLabel("Normalization Mode:")
+            score_label = QLabel(translate("Config", "Alignment Score Mode:"))
+            norm_label = QLabel(translate("Config", "Normalization Mode:"))
             mode_container = self._make_field_group(
                 [(score_label, self.cb_score_mode), (norm_label, self.cb_norm_mode)],
                 name="alignmentModeRow", equal_fields=True,
@@ -2520,7 +2613,7 @@ if __name__ == "__main__":
             ref_container = QWidget()
             ref_container.setObjectName("alignment_reference_wrapper")
 
-            self.lbl_alignment_offset = QLabel("Alignment Offset:")
+            self.lbl_alignment_offset = QLabel(translate("Config", "Alignment Offset:"))
             self.spin_alignment_offset = NoScrollSpinBox()
             self.spin_alignment_offset.setRange(-1000000, 1000000)
             try:
@@ -2541,9 +2634,9 @@ if __name__ == "__main__":
             self.spin_min_occ.setSingleStep(1.0)
             self.spin_min_occ.setValue(float(globals().get("FILTER_MIN_OCCUPANCY") or 10.0))
 
-            lbl_min_occ = QLabel("Min Occupancy %:")
+            lbl_min_occ = QLabel(translate("Config", "Min Occupancy %:"))
 
-            ref_label = QLabel("Alignment Reference ID:")
+            ref_label = QLabel(translate("Config", "Alignment Reference ID:"))
             self._make_field_group(
                 [(ref_label, self.line_ref), (lbl_min_occ, self.spin_min_occ),
                  (self.lbl_alignment_offset, self.spin_alignment_offset)],
@@ -2565,8 +2658,8 @@ if __name__ == "__main__":
                 umap_mode_val = umap_mode_val.lower() in ['true', '1', 't', 'y', 'yes']
             self.check_umap.setChecked(bool(umap_mode_val))
             
-            lbl_k = QLabel("UMAP Nearest Neighbors:")
-            lbl_md = QLabel("UMAP Min Distance:")
+            lbl_k = QLabel(translate("Config", "UMAP Nearest Neighbors:"))
+            lbl_md = QLabel(translate("Config", "UMAP Min Distance:"))
             
             self.spin_umap_k = NoScrollSpinBox()
             self.spin_umap_k.setRange(2, 500)
@@ -2602,7 +2695,7 @@ if __name__ == "__main__":
             
             self.check_umap.toggled.connect(self.update_live_validators)
             self.spin_umap_k.valueChanged.connect(self.update_live_validators)
-            self.labels["UMAP_MODE"] = QLabel("Plot UMAP Instead:")
+            self.labels["UMAP_MODE"] = QLabel(translate("Config", "Plot UMAP Instead:"))
 
             self.inputs["UMAP_MODE"] = self.check_umap
             self.inputs["UMAP_NEIGHBORS"] = self.spin_umap_k
@@ -2640,11 +2733,11 @@ if __name__ == "__main__":
             top_edge_layout = QHBoxLayout(top_edge_control)
             top_edge_layout.setContentsMargins(0, 0, 0, 0)
             top_edge_layout.setSpacing(6)
-            self.btn_clear_top_edge = QPushButton("Clear")
+            self.btn_clear_top_edge = QPushButton(translate("Config", "Clear"))
             self.btn_clear_top_edge.setObjectName("clearTopEdgeButton")
-            self.btn_clear_top_edge.setToolTip(
-                "Unset Top Edge % to use Similarity Threshold when UMAP is off."
-            )
+            self.btn_clear_top_edge.setToolTip(translate(
+                "Config", "Unset Top Edge % to use Similarity Threshold when UMAP is off."
+            ))
             self.btn_clear_top_edge.clicked.connect(
                 lambda: self.spin_top.setOptionalValue(None)
             )
@@ -2654,9 +2747,9 @@ if __name__ == "__main__":
             filter_container = QWidget()
             filter_container.setObjectName("wrapper")
 
-            lbl_thresh = QLabel("Similarity Threshold:")
+            lbl_thresh = QLabel(translate("Config", "Similarity Threshold:"))
             lbl_thresh.setStyleSheet("QLabel:disabled { color: #888; }")
-            lbl_top = QLabel("Top Edge %:")
+            lbl_top = QLabel(translate("Config", "Top Edge %:"))
             lbl_top.setStyleSheet("QLabel:disabled { color: #888; }")
 
             # Keep separate widgets and settings for each mode while sharing two slots.
@@ -2734,11 +2827,11 @@ if __name__ == "__main__":
             btn_lay = ResponsiveFlowLayout(btn_container)
             btn_lay.setContentsMargins(0, 0, 0, 0)
             
-            self.btn_stats = QPushButton("Compute Network Statistics")
+            self.btn_stats = QPushButton(translate("Config", "Compute Network Statistics"))
             self.btn_stats.setStyleSheet("background-color: #2196F3; color: white;")
             self.btn_stats.clicked.connect(self.run_statistics)
 
-            self.btn_hist = QPushButton("Histogram")
+            self.btn_hist = QPushButton(translate("Config", "Histogram"))
             self.btn_hist.setStyleSheet("background-color: #9C27B0; color: white;")
             self.btn_hist.clicked.connect(self.run_histogram)
             
@@ -2755,7 +2848,7 @@ if __name__ == "__main__":
             cache_lay = QHBoxLayout(cache_container)
             cache_lay.setContentsMargins(0, 0, 0, 0)
             
-            self.lbl_cache_tracker = QLabel("Target Folder: None")
+            self.lbl_cache_tracker = QLabel(translate("Config", "Target Folder: None"))
             self.lbl_cache_tracker.setStyleSheet("color: gray;")
             self.lbl_cache_tracker.setWordWrap(False)
             self.lbl_cache_tracker.setMinimumWidth(0)
@@ -2765,7 +2858,7 @@ if __name__ == "__main__":
             
             self.btn_open_cache = QPushButton("📂")
             self.btn_open_cache.setFixedWidth(30)
-            self.btn_open_cache.setToolTip("Open Target Cache Folder")
+            self.btn_open_cache.setToolTip(translate("Config", "Open Target Cache Folder"))
             
             def open_cache_folder(checked):
                 import os
@@ -2784,7 +2877,7 @@ if __name__ == "__main__":
             
             cache_lay.addWidget(self.lbl_cache_tracker, 1)
             cache_lay.addWidget(self.btn_open_cache)
-            target_cache_label = QLabel("Target Cache:")
+            target_cache_label = QLabel(translate("Config", "Target Cache:"))
             self._label_column.append(target_cache_label)
             layout.addRow(target_cache_label, cache_container)
             self.labels["TARGET_CACHE"] = target_cache_label
@@ -2804,7 +2897,7 @@ if __name__ == "__main__":
             
             self.btn_open_target_folder = QPushButton("📂")
             self.btn_open_target_folder.setFixedWidth(30)
-            self.btn_open_target_folder.setToolTip("Open Specific Target Folder")
+            self.btn_open_target_folder.setToolTip(translate("Config", "Open Specific Target Folder"))
             self.btn_open_target_folder.setEnabled(False)  # Greyed out by default
             
             def open_target_folder(checked):
@@ -2823,7 +2916,7 @@ if __name__ == "__main__":
             target_lay.addWidget(self.line_new_cache, 1)
             target_lay.addWidget(self.btn_open_target_folder)
             
-            layout.addRow("Selected Cache File:", target_container)
+            layout.addRow(translate("Config", "Selected Cache File:"), target_container)
             self.labels["TARGET_CACHE_FILE"] = layout.labelForField(target_container)
             self._label_column.append(self.labels["TARGET_CACHE_FILE"])
             self.inputs["TARGET_CACHE_FILE"] = self.cb_cache_file
@@ -2833,7 +2926,7 @@ if __name__ == "__main__":
             self.cb_cache_file.currentIndexChanged.connect(self._toggle_new_cache_input)
             self.cb_cache_file.activated.connect(self._cache_file_activated)
 
-            self._add_scroll_tab(tab, "Inputs && Outputs")
+            self._add_scroll_tab(tab, translate("Config", "Inputs && Outputs"))
             
         def update_norm_mode_options(self):
             if not hasattr(self, 'cb_score_mode') or not hasattr(self, 'cb_norm_mode'):
@@ -2842,13 +2935,20 @@ if __name__ == "__main__":
             self.cb_norm_mode.blockSignals(True)
             self.cb_norm_mode.clear()
             
+            labels = {
+                "alignment_length": translate("Config", "alignment_length", "normalization mode"),
+                "shorter_sequence": translate("Config", "shorter_sequence", "normalization mode"),
+                "longer_sequence": translate("Config", "longer_sequence", "normalization mode"),
+                "average_sequence": translate("Config", "average_sequence", "normalization mode"),
+            }
             is_local = combo_value(self.cb_score_mode) == "local"
             if is_local:
-                add_combo_options(self.cb_norm_mode, ["shorter_sequence", "longer_sequence", "average_sequence"])
+                modes = ["shorter_sequence", "longer_sequence", "average_sequence"]
                 if current_norm == "alignment_length":
                     current_norm = "longer_sequence"
             else:
-                add_combo_options(self.cb_norm_mode, ["alignment_length", "shorter_sequence", "longer_sequence", "average_sequence"])
+                modes = ["alignment_length", "shorter_sequence", "longer_sequence", "average_sequence"]
+            add_combo_options(self.cb_norm_mode, modes, [labels[mode] for mode in modes])
                 
             select_combo_value(self.cb_norm_mode, current_norm)
             self.cb_norm_mode.blockSignals(False)
@@ -2948,7 +3048,9 @@ if __name__ == "__main__":
                 self.cb_hdf5.currentText(),
             )
             
-            self.tip_panel.setText("Computing network statistics... This may take a moment for large HDF5 networks.")
+            self.tip_panel.setText(translate(
+                "Config", "Computing network statistics... This may take a moment for large HDF5 networks."
+            ))
             QApplication.processEvents()
             
             try:
@@ -2974,7 +3076,12 @@ if __name__ == "__main__":
                         net_id_set = {h.split()[0] for h in headers}
                         missing_nodes = [hid for hid in fasta_ids if hid not in net_id_set and hid not in net_headers_set]
                         if missing_nodes:
-                            raise ValueError(f"FASTA file is NOT a strict subset of the network file. {len(missing_nodes)} sequences are missing from the network.")
+                            raise ValueError(translate(
+                                "Config",
+                                "FASTA file is NOT a strict subset of the network file. "
+                                "The network lacks %n sequence(s).",
+                                None, len(missing_nodes),
+                            ))
                         
                         valid_indices = []
                         for i, h in enumerate(headers):
@@ -3036,7 +3143,9 @@ if __name__ == "__main__":
                         scores = (raw_scores / denom).astype(np.float32)
                 
                 if len(scores) == 0:
-                    self.tip_panel.setText("Warning: No valid edges were found in the selected FASTA subset.")
+                    self.tip_panel.setText(translate(
+                        "Config", "Warning: No valid edges were found in the selected FASTA subset."
+                    ))
                     return
                     
                 max_score = np.max(scores)
@@ -3067,18 +3176,52 @@ if __name__ == "__main__":
                 
                 model_name = metadata.model_name
                 
-                lines = []
-                lines.append(f"====== Network Statistics ======")
-                lines.append(f"Network Model: {model_name}")
-                lines.append(f"Fasta Node Subset: {os.path.basename(fasta_path)}")
-                lines.append(f"Total Nodes Processed: {total_nodes}")
-                display_norm = norm_mode.replace('_', ' ').title()
-                lines.append(f"Metric: {'Log10(E-Value)' if is_blast else f'{score_mode.title()} Alignment Score with {display_norm} Normalization'}")
-                lines.append(f"Stored Edges: {stored_edges} (Max possible: {int(theoretical_max_edges)})")
-                lines.append(f"Max: {max_score:.4f} | Min: {min_score:.4f} | Avg: {avg_score:.4f}")
-                lines.append("-" * 40)
-                lines.append(f"{'Threshold':<10} | {'Count':<10} | {'Percentage':<10}")
-                lines.append("-" * 40)
+                if is_blast:
+                    metric = translate("Config", "Metric: Log10(E-Value)")
+                else:
+                    score_names = {
+                        "global": translate("Config", "Global", "alignment score"),
+                        "local": translate("Config", "Local", "alignment score"),
+                    }
+                    norm_names = {
+                        "alignment_length": translate("Config", "Alignment Length", "normalization"),
+                        "shorter_sequence": translate("Config", "Shorter Sequence", "normalization"),
+                        "longer_sequence": translate("Config", "Longer Sequence", "normalization"),
+                        "average_sequence": translate("Config", "Average Sequence", "normalization"),
+                    }
+                    metric = translate(
+                        "Config", "Metric: {score} Alignment Score with {normalization} Normalization"
+                    ).format(
+                        score=score_names.get(score_mode, score_mode.title()),
+                        normalization=norm_names.get(norm_mode, norm_mode.replace('_', ' ').title()),
+                    )
+
+                def column(heading, width=10):
+                    # A wide character, as in Chinese, takes two columns of the report.
+                    used = sum(2 if unicodedata.east_asian_width(character) in "WF" else 1
+                               for character in heading)
+                    return heading + " " * max(0, width - used)
+
+                lines = [
+                    translate("Config", "====== Network Statistics ======"),
+                    translate("Config", "Network Model: {model}").format(model=model_name),
+                    translate("Config", "Fasta Node Subset: {name}").format(name=os.path.basename(fasta_path)),
+                    translate("Config", "Total Nodes Processed: {count}").format(count=total_nodes),
+                    metric,
+                    translate("Config", "Stored Edges: {stored} (Max possible: {possible})").format(
+                        stored=stored_edges, possible=int(theoretical_max_edges)
+                    ),
+                    translate("Config", "Max: {maximum:.4f} | Min: {minimum:.4f} | Avg: {mean:.4f}").format(
+                        maximum=max_score, minimum=min_score, mean=avg_score
+                    ),
+                    "-" * 40,
+                    " | ".join(column(heading) for heading in (
+                        translate("Config", "Threshold", "statistics column"),
+                        translate("Config", "Count", "statistics column"),
+                        translate("Config", "Percentage", "statistics column"),
+                    )),
+                    "-" * 40,
+                ]
                 
                 for thresh, count in zip(thresholds, counts):
                     pct = (count / theoretical_max_edges) * 100.0 if theoretical_max_edges > 0 else 0
@@ -3088,10 +3231,12 @@ if __name__ == "__main__":
                          lines.append(f"{thresh:<10.1f} | {count:<10} | {pct:<9.2f}%")
                          
                 self.stat_display.setText("\n".join(lines))
-                self.tip_panel.setText("Network statistics computed successfully.")
+                self.tip_panel.setText(translate("Config", "Network statistics computed successfully."))
 
             except Exception as e:
-                self.tip_panel.setText(f"Error during network statistics calculation: {e}")
+                self.tip_panel.setText(translate(
+                    "Config", "Error during network statistics calculation: {error}"
+                ).format(error=display_text(e)))
 
         def run_histogram(self):
             import h5py
@@ -3107,7 +3252,7 @@ if __name__ == "__main__":
                 self.cb_hdf5.currentText(),
             )
             
-            self.tip_panel.setText("Computing score distribution... This may take a moment.")
+            self.tip_panel.setText(translate("Config", "Computing score distribution... This may take a moment."))
             QApplication.processEvents()
             
             try:
@@ -3133,7 +3278,12 @@ if __name__ == "__main__":
                         net_id_set = {h.split()[0] for h in headers}
                         missing_nodes = [hid for hid in fasta_ids if hid not in net_id_set and hid not in net_headers_set]
                         if missing_nodes:
-                            raise ValueError(f"FASTA file is NOT a strict subset of the network file. {len(missing_nodes)} sequences are missing from the network.")
+                            raise ValueError(translate(
+                                "Config",
+                                "FASTA file is NOT a strict subset of the network file. "
+                                "The network lacks %n sequence(s).",
+                                None, len(missing_nodes),
+                            ))
                         
                         valid_indices = []
                         for i, h in enumerate(headers):
@@ -3195,7 +3345,9 @@ if __name__ == "__main__":
                         scores = (raw_scores / denom).astype(np.float32)
                 
                 if len(scores) == 0:
-                    self.tip_panel.setText("Warning: No valid edges were found in the selected FASTA subset.")
+                    self.tip_panel.setText(translate(
+                        "Config", "Warning: No valid edges were found in the selected FASTA subset."
+                    ))
                     return
                 
                 # Determine threshold based on top edge % override
@@ -3217,7 +3369,7 @@ if __name__ == "__main__":
                     if threshold is None:
                         threshold = 0.0
                 
-                self.tip_panel.setText("Displaying score histogram...")
+                self.tip_panel.setText(translate("Config", "Displaying score histogram..."))
                 QApplication.processEvents()
                 
                 print("Displaying Score Histogram... (Close histogram to continue)")
@@ -3225,7 +3377,8 @@ if __name__ == "__main__":
                     scores,
                     threshold,
                     is_evalue=is_blast,
-                    norm_mode=norm_mode,
+                    norm_mode=self.cb_norm_mode.currentText(),  # as the dropdown shows it
+                    font_families=matplotlib_language_families(installed_language()),
                 )
                 dialog = ScoreHistogramDialog(figure, self)
                 try:
@@ -3234,10 +3387,12 @@ if __name__ == "__main__":
                     dialog.release_figure()
                     dialog.deleteLater()
                 
-                self.tip_panel.setText("Histogram displayed successfully.")
+                self.tip_panel.setText(translate("Config", "Histogram displayed successfully."))
 
             except Exception as e:
-                self.tip_panel.setText(f"Error during histogram generation: {e}")
+                self.tip_panel.setText(translate(
+                    "Config", "Error during histogram generation: {error}"
+                ).format(error=display_text(e)))
 
         def create_visuals_tab(self):
             tab = QWidget()
@@ -3275,16 +3430,14 @@ if __name__ == "__main__":
             
             # 1. Sliders Setup
             slider_settings = [
-                {"key": "NODE_SIZE", "type": "int", "min": 1, "max": 20, "default": 10},
-                {"key": "EDGE_WIDTH", "type": "float", "min": 0.1, "max": 3.0, "scale": 10.0, "decimals": 1, "default": 1.0},
-                {"key": "NODE_BOUNDARY_WIDTH", "type": "float", "min": 0.0, "max": 2.0, "scale": 10.0, "decimals": 1, "default": 0.5},
-                {"key": "EDGE_ALPHA", "type": "float", "min": 0.0, "max": 1.0, "scale": 100.0, "decimals": 2, "default": 0.1},
+                {"key": "NODE_SIZE", "label": translate("Config", "Node Size:"), "type": "int", "min": 1, "max": 20, "default": 10},
+                {"key": "EDGE_WIDTH", "label": translate("Config", "Edge Width:"), "type": "float", "min": 0.1, "max": 3.0, "scale": 10.0, "decimals": 1, "default": 1.0},
+                {"key": "NODE_BOUNDARY_WIDTH", "label": translate("Config", "Node Boundary Width:"), "type": "float", "min": 0.0, "max": 2.0, "scale": 10.0, "decimals": 1, "default": 0.5},
+                {"key": "EDGE_ALPHA", "label": translate("Config", "Edge Opacity:"), "type": "float", "min": 0.0, "max": 1.0, "scale": 100.0, "decimals": 2, "default": 0.1},
             ]
             
             for s in slider_settings:
                 key = s["key"]
-                display_name = key.replace('_', ' ').title()
-                if key == "EDGE_ALPHA": display_name = "Edge Opacity"
                 
                 val_raw = globals().get(key, s["default"])
                 
@@ -3338,7 +3491,7 @@ if __name__ == "__main__":
                 h_lay.addWidget(sl)
                 h_lay.addWidget(box)
 
-                lbl = QLabel(f"{display_name}:")
+                lbl = QLabel(s["label"])
                 visual_grid.addWidget(lbl, visual_row, 0)
                 visual_grid.addWidget(ui_element, visual_row, 1, 1, 4)
                 visual_row += 1
@@ -3349,14 +3502,19 @@ if __name__ == "__main__":
             # TEXT_COLOR is gone with the HUD text it coloured. INITIAL_NODE_COLOR
             # stays: Settings_VR republishes it as NEIGHBOR_COLOR, which is the key
             # the VR client actually reads.
-            color_keys = ["INITIAL_NODE_COLOR", "HOVER_COLOR", "CONNECTED_NODE_COLOR", "EDGE_COLOR", "NODE_BOUNDARY_COLOR"]
+            color_labels = {
+                "INITIAL_NODE_COLOR": translate("Config", "Initial Node Color:"),
+                "HOVER_COLOR": translate("Config", "Highlight Color:"),
+                "CONNECTED_NODE_COLOR": translate("Config", "Connected Node Color:"),
+                "EDGE_COLOR": translate("Config", "Edge Color:"),
+                "NODE_BOUNDARY_COLOR": translate("Config", "Node Boundary Color:"),
+            }
+            color_keys = list(color_labels)
             self.visual_defaults = VISUAL_PROFILE_DEFAULTS
 
             color_row_start = visual_row
 
             for index, key in enumerate(color_keys):
-                if key == "HOVER_COLOR": display_name = "Highlight Color"
-                else: display_name = key.replace('_', ' ').title()
                 
                 color_container = QWidget()
                 color_container.setObjectName("wrapper")
@@ -3380,12 +3538,14 @@ if __name__ == "__main__":
 
                 le.textChanged.connect(update_color_swatch)
                 
-                btn = QPushButton("Pick")
+                btn = QPushButton(translate("Config", "Pick"))
                 fit_buttons_to_text(btn)
                 
                 def pick_color(checked, line_edit=le, color_swatch=swatch):
                     initial = line_edit.text()
-                    color = QColorDialog.getColor(QColor(initial) if initial else QColor("white"), self, "Select Color")
+                    color = QColorDialog.getColor(
+                        QColor(initial) if initial else QColor("white"), self, translate("Config", "Select Color")
+                    )
                     if color.isValid():
                         hex_val = color.name()
                         line_edit.setText(hex_val)
@@ -3397,7 +3557,7 @@ if __name__ == "__main__":
                 h_layout.addWidget(le)
                 h_layout.addWidget(btn)
                 
-                lbl = QLabel(f"{display_name}:")
+                lbl = QLabel(color_labels[key])
                 row = color_row_start + index // 2
                 column = 0 if index % 2 == 0 else 3
                 visual_grid.addWidget(lbl, row, column)
@@ -3419,7 +3579,7 @@ if __name__ == "__main__":
 
             main_layout.addStretch()
             
-            self._add_scroll_tab(tab, "Visual Effects")
+            self._add_scroll_tab(tab, translate("Config", "Visual Effects"))
             
         def create_physics_tab(self):
             tab = QWidget()
@@ -3456,18 +3616,23 @@ if __name__ == "__main__":
             
             cb_layout_device = NoScrollComboBox()
             for display_name, specification in Hardware_Utils.device_selection_options():
-                cb_layout_device.addItem(display_name, specification)
+                if specification == Hardware_Utils.AUTO_DEVICE:
+                    cb_layout_device.addItem(translate("Config", "Auto Benchmark"), specification)
+                else:
+                    cb_layout_device.addItem(display_name, specification)
+                    mark_name_item(cb_layout_device, cb_layout_device.count() - 1)
             saved_device = Hardware_Utils.normalize_device_selection(
                 globals().get("LAYOUT_DEVICE_SELECTION", "auto")
             )
             saved_index = cb_layout_device.findData(saved_device)
             if saved_index < 0:
                 cb_layout_device.addItem(
-                    f"Unavailable saved device [{saved_device}]", saved_device
+                    translate("Config", "Unavailable saved device [{device}]").format(device=saved_device),
+                    saved_device,
                 )
                 saved_index = cb_layout_device.count() - 1
             cb_layout_device.setCurrentIndex(saved_index)
-            lbl_layout_device = QLabel("Layout Device:")
+            lbl_layout_device = QLabel(translate("Config", "Layout Device:"))
             self._label_column.append(lbl_layout_device)
             form_layout.addRow(lbl_layout_device, cb_layout_device)
             self.inputs["LAYOUT_DEVICE_SELECTION"] = cb_layout_device
@@ -3476,21 +3641,15 @@ if __name__ == "__main__":
             
             # --- Physics sliders ---
             slider_settings = [
-                {"key": "SPRING_K", "type": "float", "min": 1.0, "max": 20.0, "scale": 10.0, "decimals": 1, "default": 5.0, "tick": 10},
-                {"key": "COULOMB_K", "type": "float", "min": 1.0, "max": 30.0, "scale": 10.0, "decimals": 1, "default": 10.0, "tick": 10},
-                {"key": "COULOMB_CUTOFF", "type": "float", "min": 1.0, "max": 100.0, "scale": 10.0, "decimals": 1, "default": 30.0, "tick": 100},
-                {"key": "DAMPING", "type": "float", "min": 0.1, "max": 2.0, "scale": 100.0, "decimals": 2, "default": 0.9, "tick": 10}
+                {"key": "SPRING_K", "label": translate("Config", "Spring Constant:"), "type": "float", "min": 1.0, "max": 20.0, "scale": 10.0, "decimals": 1, "default": 5.0, "tick": 10},
+                {"key": "COULOMB_K", "label": translate("Config", "Repulsion Constant:"), "type": "float", "min": 1.0, "max": 30.0, "scale": 10.0, "decimals": 1, "default": 10.0, "tick": 10},
+                {"key": "COULOMB_CUTOFF", "label": translate("Config", "Max Repulsion Cutoff:"), "type": "float", "min": 1.0, "max": 100.0, "scale": 10.0, "decimals": 1, "default": 30.0, "tick": 100},
+                {"key": "DAMPING", "label": translate("Config", "Damping Coefficient:"), "type": "float", "min": 0.1, "max": 2.0, "scale": 100.0, "decimals": 2, "default": 0.9, "tick": 10}
             ]
 
             physics_slider_controls = {}
             for s in slider_settings:
                 key = s["key"]
-                display_name = key.replace('_', ' ').title()
-                if key == "COULOMB_K": display_name = "Repulsion Constant"
-                elif key == "COULOMB_CUTOFF": display_name = "Max Repulsion Cutoff"
-                elif key == "SPRING_K": display_name = "Spring Constant"
-                elif key == "DAMPING": display_name = "Damping Coefficient"
-                    
                 val_raw = globals().get(key, s["default"])
                 
                 ui_element = QWidget()
@@ -3524,7 +3683,7 @@ if __name__ == "__main__":
                 h_lay.addWidget(sl)
                 h_lay.addWidget(box)
 
-                lbl = QLabel(f"{display_name}:")
+                lbl = QLabel(s["label"])
                 physics_slider_controls[key] = (lbl, ui_element)
                 self.labels[key] = lbl
                 self.inputs[key] = box
@@ -3565,14 +3724,14 @@ if __name__ == "__main__":
             convergence_grid.setColumnStretch(2, 1)
             convergence_grid.setColumnStretch(6, 1)
 
-            lbl_dt = QLabel("Step Size:")
+            lbl_dt = QLabel(translate("Config", "Step Size:"))
             le_dt = QLineEdit(str(globals().get("DT", 0.005)))
             self.inputs["DT"] = le_dt
             self.labels["DT"] = lbl_dt
 
             # Auto lets each simulation stage pick its own fastest stable step,
             # so the Step Size field is greyed out while it is on.
-            btn_auto_dt = ToggleSwitch("Auto ON", "Auto OFF")
+            btn_auto_dt = ToggleSwitch(translate("Config", "Auto ON"), translate("Config", "Auto OFF"))
             self.inputs["AUTO_DT"] = btn_auto_dt
             btn_auto_dt.toggled.connect(
                 lambda checked, field=le_dt: field.setEnabled(not checked)
@@ -3596,7 +3755,7 @@ if __name__ == "__main__":
                 "sharedCellWidth", btn_auto_dt.width() + dt_field_layout.spacing()
             )
 
-            lbl_steps = QLabel("Max Steps:")
+            lbl_steps = QLabel(translate("Config", "Max Steps:"))
             le_steps = QLineEdit(str(globals().get("MAX_STEPS", 10000)))
             self.inputs["MAX_STEPS"] = le_steps
             self.labels["MAX_STEPS"] = lbl_steps
@@ -3606,12 +3765,12 @@ if __name__ == "__main__":
             convergence_grid.addWidget(lbl_steps, 0, 4)
             convergence_grid.addWidget(le_steps, 0, 6)
 
-            lbl_rmsd = QLabel("RMSD Threshold:")
+            lbl_rmsd = QLabel(translate("Config", "RMSD Threshold:"))
             le_rmsd = QLineEdit(str(globals().get("RMSD_THRESHOLD", 0.005)))
             self.inputs["RMSD_THRESHOLD"] = le_rmsd
             self.labels["RMSD_THRESHOLD"] = lbl_rmsd
 
-            lbl_drop = QLabel("Min % Drop Threshold:")
+            lbl_drop = QLabel(translate("Config", "Min % Drop Threshold:"))
             le_drop = QLineEdit(str(globals().get("PERCENTAGE_DROP_THRESHOLD", 0.1)))
             self.inputs["PERCENTAGE_DROP_THRESHOLD"] = le_drop
             self.labels["PERCENTAGE_DROP_THRESHOLD"] = lbl_drop
@@ -3669,14 +3828,14 @@ if __name__ == "__main__":
             h_lay_window.addWidget(sl_window)
             h_lay_window.addWidget(box_window)
             
-            lbl_window = QLabel("RMSD Window:")
+            lbl_window = QLabel(translate("Config", "RMSD Window:"))
             self._label_column.append(lbl_window)
             form_layout.addRow(lbl_window, ui_window)
             self.inputs["RMSD_WINDOW"] = box_window
             self.labels["RMSD_WINDOW"] = lbl_window
             
             # --- 5. Packing controls ---
-            lbl_prog = QLabel("Progressive Annealing:")
+            lbl_prog = QLabel(translate("Config", "Progressive Annealing:"))
             cb_prog = ToggleSwitch()
             prog_field = QWidget()
             prog_field.setObjectName("wrapper")
@@ -3743,7 +3902,7 @@ if __name__ == "__main__":
             pgs_layout.addWidget(sl_pgs)
             pgs_layout.addWidget(box_pgs)
             
-            lbl_pgs = QLabel("Packing Grid Size:")
+            lbl_pgs = QLabel(translate("Config", "Packing Grid Size:"))
             self.inputs["PACKING_GRID_SIZE"] = box_pgs
             self.labels["PACKING_GRID_SIZE"] = lbl_pgs
 
@@ -3781,7 +3940,7 @@ if __name__ == "__main__":
             main_layout.addLayout(form_layout)
             main_layout.addStretch()
  
-            self._add_scroll_tab(tab, "Simulation && Physics")
+            self._add_scroll_tab(tab, translate("Config", "Simulation && Physics"))
             
         def _build_lifecycle_field(self):
             """Whether the viewer follows the VR client out when it closes."""
@@ -3790,15 +3949,16 @@ if __name__ == "__main__":
             row.setContentsMargins(0, 0, 0, 0)
             row.setSpacing(CONFIG_FIELD_HORIZONTAL_SPACING)
 
-            label = QLabel("Quit with VR Client:")
+            label = QLabel(translate("Config", "Quit with VR Client:"))
             toggle = ToggleSwitch()
             initial = bool(globals().get("EXIT_WITH_UNITY", True))
             toggle.setChecked(initial)
 
             self.labels["EXIT_WITH_UNITY"] = label
             self.inputs["EXIT_WITH_UNITY"] = toggle
-            label.setToolTip(VR_CONTROL_TIPS["EXIT_WITH_UNITY"])
-            toggle.setToolTip(VR_CONTROL_TIPS["EXIT_WITH_UNITY"])
+            tip = translate("Config", VR_CONTROL_TIPS["EXIT_WITH_UNITY"])
+            label.setToolTip(tip)
+            toggle.setToolTip(tip)
             row.addWidget(label)
             row.addWidget(toggle)
             return content
@@ -3828,14 +3988,15 @@ if __name__ == "__main__":
                 label = QLabel(label_text)
                 self.labels[key] = label
                 self.inputs[key] = widget
-                label.setToolTip(VR_CONTROL_TIPS[key])
-                widget.setToolTip(VR_CONTROL_TIPS[key])
+                tip = translate("Config", VR_CONTROL_TIPS[key])
+                label.setToolTip(tip)
+                widget.setToolTip(tip)
                 return label
 
             # --- Row 1: which build, and where it connects --------------------
             app_dir = QLineEdit(str(globals().get("VR_APP_DIR", Player_Build_VR.DEFAULT_CLIENT_DIR)))
-            browse = QPushButton("Browse")
-            browse.setToolTip(VR_CONTROL_TIPS["VR_APP_DIR"])
+            browse = QPushButton(translate("Config", "Browse"))
+            browse.setToolTip(translate("Config", VR_CONTROL_TIPS["VR_APP_DIR"]))
             self._client_browse_button = browse
 
             def choose_app_dir(_checked=False, field=app_dir):
@@ -3843,7 +4004,7 @@ if __name__ == "__main__":
                 if not os.path.isabs(start):
                     start = os.path.join(str(PROJECT_ROOT), start)
                 chosen = QFileDialog.getExistingDirectory(
-                    self, "VR Client Build Directory", start
+                    self, translate("Config", "VR Client Build Directory"), start
                 )
                 if chosen:
                     try:
@@ -3863,13 +4024,13 @@ if __name__ == "__main__":
             port.setRange(1, 65535)
             port.setValue(int(globals().get("VR_PORT", 5005) or 5005))
 
-            build_label = label_for("VR_APP_DIR", "VR Client Build:", app_dir)
+            build_label = label_for("VR_APP_DIR", translate("Config", "VR Client Build:"), app_dir)
             self._label_column.append(build_label)
             left.addWidget(build_label, 0, 0)
             left.addWidget(app_dir, 0, 1, 1, 3)
             left.addWidget(browse, 0, 4)
-            host_label = label_for("VR_HOST", "VR Client Host:", host)
-            port_label = label_for("VR_PORT", "VR Client Port:", port)
+            host_label = label_for("VR_HOST", translate("Config", "VR Client Host:"), host)
+            port_label = label_for("VR_PORT", translate("Config", "VR Client Port:"), port)
             right.addWidget(host_label, 0, 0)
             right.addWidget(host, 0, 1)
             right.addWidget(port_label, 0, 2)
@@ -3889,16 +4050,16 @@ if __name__ == "__main__":
             scale.setValue(float(globals().get("DISTANCE_SCALE", 1.0) or 1.0))
 
             filtering_label = label_for(
-                "ENABLE_EDGE_FILTERING", "Limit Rendered Edges:", filtering
+                "ENABLE_EDGE_FILTERING", translate("Config", "Limit Rendered Edges:"), filtering
             )
             self._label_column.append(filtering_label)
             left.addWidget(filtering_label, 1, 0)
             left.addWidget(filtering, 1, 1)
-            budget_label = label_for("MAX_RENDER_EDGES", "Max Edges:", budget)
+            budget_label = label_for("MAX_RENDER_EDGES", translate("Config", "Max Edges:"), budget)
             budget_label.setContentsMargins(CONFIG_FIELD_HORIZONTAL_SPACING, 0, 0, 0)
             left.addWidget(budget_label, 1, 2)
             left.addWidget(budget, 1, 3, 1, 2)
-            scale_label = label_for("DISTANCE_SCALE", "Distance Scale:", scale)
+            scale_label = label_for("DISTANCE_SCALE", translate("Config", "Distance Scale:"), scale)
             # Matching label widths keep the endpoint groups equal-sized.
             right_label_width = max(
                 label.sizeHint().width() for label in (host_label, port_label, scale_label)
@@ -3946,7 +4107,7 @@ if __name__ == "__main__":
                     build_dir=build_dir,
                 )
                 for key in ("VR_APP_DIR", "VR_HOST", "VR_PORT"):
-                    tip = VR_CONTROL_TIPS[key] + "\n" + text
+                    tip = translate("Config", VR_CONTROL_TIPS[key]) + "\n" + display_text(text)
                     targets = [self.inputs[key], self.labels[key]]
                     if key == "VR_APP_DIR":
                         targets.append(browse)
@@ -3983,7 +4144,7 @@ if __name__ == "__main__":
             def add_open_folder_button(line_edit, key):
                 button = QPushButton("📂")
                 button.setFixedWidth(30)
-                button.setToolTip("Open Folder")
+                button.setToolTip(translate("Config", "Open Folder"))
                 button.setEnabled(bool(line_edit.text().strip()))
 
                 def open_selected_folder(checked=False):
@@ -4009,11 +4170,11 @@ if __name__ == "__main__":
             saved_config_open_button = add_open_folder_button(
                 saved_config_input, "SAVED_CONFIG_DIR"
             )
-            saved_config_button = QPushButton("Browse...")
+            saved_config_button = QPushButton(translate("Config", "Browse..."))
             saved_config_layout.addWidget(saved_config_input)
             saved_config_layout.addWidget(saved_config_open_button)
             saved_config_layout.addWidget(saved_config_button)
-            layout.addRow("Saved Config Directory:", saved_config_container)
+            layout.addRow(translate("Config", "Saved Config Directory:"), saved_config_container)
             self.inputs["SAVED_CONFIG_DIR"] = saved_config_input
             self.labels["SAVED_CONFIG_DIR"] = layout.labelForField(saved_config_container)
             self._label_column.append(self.labels["SAVED_CONFIG_DIR"])
@@ -4021,7 +4182,7 @@ if __name__ == "__main__":
             def browse_saved_config_directory(checked=False):
                 folder = QFileDialog.getExistingDirectory(
                     self,
-                    "Select Saved Config Directory",
+                    translate("Config", "Select Saved Config Directory"),
                     str(self._saved_config_root()),
                 )
                 if folder:
@@ -4054,7 +4215,7 @@ if __name__ == "__main__":
                 val = DIRECTORY_PROFILE_DEFAULTS.get(key, globals().get(key, ""))
                 le = QLineEdit("" if val in [None, "None"] else str(val))
                 open_button = add_open_folder_button(le, key)
-                btn = QPushButton("Browse...")
+                btn = QPushButton(translate("Config", "Browse..."))
                 
                 def browse_dir(checked, line_edit=le):
                     starting_path = (
@@ -4062,7 +4223,7 @@ if __name__ == "__main__":
                         if line_edit.text().strip() else ""
                     )
                     folder = QFileDialog.getExistingDirectory(
-                        self, "Select Directory", starting_path
+                        self, translate("Config", "Select Directory"), starting_path
                     )
                     if folder:
                         import os
@@ -4074,14 +4235,7 @@ if __name__ == "__main__":
                 h_lay.addWidget(open_button)
                 h_lay.addWidget(btn)
                 
-                display_name = DIRECTORY_DISPLAY_NAMES.get(key)
-                if display_name is None:
-                    display_name = key.replace('_', ' ').title()
-                    display_name = display_name.replace('Msa', 'MSA')
-                    display_name = display_name.replace('Hdf5', 'Network')
-                    display_name = display_name.replace('Dir', 'Directory')
-                
-                lbl = QLabel(f"{display_name}:")
+                lbl = QLabel(translate("Config", DIRECTORY_LABELS[key]))
                 self._label_column.append(lbl)
                 layout.addRow(lbl, container)
                 directory_profile_controls.extend((lbl, container))
@@ -4106,7 +4260,7 @@ if __name__ == "__main__":
                     lambda _text, key=base_key: self._base_directory_changed(key)
                 )
                 
-            self._add_scroll_tab(tab, "Directories")
+            self._add_scroll_tab(tab, translate("Config", "Directories"))
 
         def collect_data(self):
             data = {}
@@ -4236,21 +4390,24 @@ if __name__ == "__main__":
             return writes, custom_settings, created_profiles, default_tabs
 
         def _save_success_message(self, created_profiles, default_tabs):
-            messages = ["Settings saved successfully."]
+            messages = [translate("Config", "Settings saved successfully.")]
             if created_profiles:
                 created = ", ".join(
-                    f"{PROFILE_TAB_DISPLAY_NAMES[tab_id]}: '{name}'"
+                    translate("Config", "{tab}: '{name}'").format(
+                        tab=translate("Config", PROFILE_TAB_DISPLAY_NAMES[tab_id]), name=name
+                    )
                     for tab_id, name in created_profiles
                 )
-                messages.append(f"Created profile(s): {created}.")
+                messages.append(translate(
+                    "Config", "Created profile(s): {profiles}.", None, len(created_profiles)
+                ).format(profiles=created))
             if default_tabs:
                 unchanged = ", ".join(
-                    PROFILE_TAB_DISPLAY_NAMES[tab_id] for tab_id in default_tabs
+                    translate("Config", PROFILE_TAB_DISPLAY_NAMES[tab_id]) for tab_id in default_tabs
                 )
-                messages.append(
-                    "Built-in default settings were left unchanged for: "
-                    f"{unchanged}."
-                )
+                messages.append(translate(
+                    "Config", "Built-in default settings were left unchanged for: {tabs}."
+                ).format(tabs=unchanged))
             return " ".join(messages)
 
         def save_settings(self):
@@ -4274,14 +4431,16 @@ if __name__ == "__main__":
                 )
                 return True
             except Exception as e:
-                self.tip_panel.setText(f"Failed to save settings: {e}")
+                self.tip_panel.setText(
+                    translate("Config", "Failed to save settings: {error}").format(error=display_text(e))
+                )
                 return False
 
         def _selected_new_cache_filename(self):
             if not self._new_cache_selected():
-                raise ValueError(
-                    "Layout settings can only be exported for (New Layout Cache)."
-                )
+                raise ValueError(translate(
+                    "Config", "Layout settings can only be exported for (New Layout Cache)."
+                ))
             cache_name = self.line_new_cache.text().strip()
             if not cache_name:
                 cache_name = self.line_new_cache.placeholderText()
@@ -4292,7 +4451,7 @@ if __name__ == "__main__":
 
         def _collect_layout_generation_settings(self):
             if not self._cache_launch_allowed or not self.current_cache_folder:
-                raise ValueError("A unique compatible cache folder has not been resolved.")
+                raise ValueError(translate("Config", "A unique compatible cache folder has not been resolved."))
 
             cache_name = self._selected_new_cache_filename()
             collected = self.collect_data()
@@ -4346,9 +4505,9 @@ if __name__ == "__main__":
                 suggested_name = f"{Path(settings.CACHE_FILENAME).stem}_layout.json"
                 selected_path, _selected_filter = QFileDialog.getSaveFileName(
                     self,
-                    "Export Layout Settings",
+                    translate("Config", "Export Layout Settings"),
                     str(export_directory / suggested_name),
-                    "JSON Files (*.json)",
+                    translate("Config", "JSON Files (*.json)"),
                 )
                 if not selected_path:
                     return
@@ -4366,13 +4525,14 @@ if __name__ == "__main__":
                 )
                 QMessageBox.information(
                     self,
-                    "Layout Settings Exported",
-                    f"Settings exported to:\n{target_path.resolve()}\n\n"
-                    f"Command-line usage:\n{command}",
+                    translate("Config", "Layout Settings Exported"),
+                    translate(
+                        "Config", "Settings exported to:\n{path}\n\nCommand-line usage:\n{command}"
+                    ).format(path=target_path.resolve(), command=command),
                 )
             except Exception as error:
                 QMessageBox.critical(
-                    self, "Export Layout Settings Error", str(error)
+                    self, translate("Config", "Export Layout Settings Error"), display_text(error)
                 )
 
         def save_and_run(self):
@@ -4383,15 +4543,15 @@ if __name__ == "__main__":
                     )
                 except ValueError as error:
                     QMessageBox.critical(
-                        self, "Layout Device Unavailable", str(error)
+                        self, translate("Config", "Layout Device Unavailable"), display_text(error)
                     )
                     return
 
             if not self._cache_launch_allowed or not self.current_cache_folder:
                 QMessageBox.critical(
                     self,
-                    "Cache Selection Error",
-                    "A unique compatible cache folder has not been resolved.",
+                    translate("Config", "Cache Selection Error"),
+                    translate("Config", "A unique compatible cache folder has not been resolved."),
                 )
                 return
 
@@ -4412,7 +4572,7 @@ if __name__ == "__main__":
                     )
                     cache_mode = "existing"
             except Exception as error:
-                QMessageBox.critical(self, "Cache Selection Error", str(error))
+                QMessageBox.critical(self, translate("Config", "Cache Selection Error"), display_text(error))
                 return
 
             settings_data = self.collect_data()
@@ -4433,8 +4593,10 @@ if __name__ == "__main__":
             except OSError as error:
                 QMessageBox.critical(
                     self,
-                    "Viewer Launch Error",
-                    f"Failed to create the per-launch settings snapshot:\n{error}",
+                    translate("Config", "Viewer Launch Error"),
+                    translate("Config", "Failed to create the per-launch settings snapshot:\n{error}").format(
+                        error=error
+                    ),
                 )
                 return
 
@@ -4459,8 +4621,10 @@ if __name__ == "__main__":
                         pass
                     QMessageBox.critical(
                         self,
-                        "Layout Settings Error",
-                        f"Failed to prepare layout generation settings:\n{error}",
+                        translate("Config", "Layout Settings Error"),
+                        translate("Config", "Failed to prepare layout generation settings:\n{error}").format(
+                            error=display_text(error)
+                        ),
                     )
                     return
 
@@ -4480,8 +4644,10 @@ if __name__ == "__main__":
                         pass
                     QMessageBox.critical(
                         self,
-                        "Layout Generator Launch Error",
-                        f"Failed to launch Layout_Cache_Generator.py:\n{error}",
+                        translate("Config", "Layout Generator Launch Error"),
+                        translate("Config", "Failed to launch Layout_Cache_Generator.py:\n{error}").format(
+                            error=error
+                        ),
                     )
                     return
             else:
@@ -4499,8 +4665,8 @@ if __name__ == "__main__":
                         pass
                     QMessageBox.critical(
                         self,
-                        "Viewer Launch Error",
-                        f"Failed to launch EMAPSSN_Viewer.py:\n{error}",
+                        translate("Config", "Viewer Launch Error"),
+                        translate("Config", "Failed to launch EMAPSSN_Viewer.py:\n{error}").format(error=error),
                     )
                     return
 
@@ -4511,7 +4677,7 @@ if __name__ == "__main__":
     app = existing_qt_application or QApplication(sys.argv)
     app.setApplicationVersion(APPLICATION_VERSION)
     try:
-        install_translations(app, startup_language())
+        install_translations(app, startup_language(), extra_catalogs=VR_TRANSLATION_CATALOGS)
     except Exception as e:
         print(f"Warning: Could not load translations, so text stays English: {e}")
     single_instance = None
@@ -4523,7 +4689,11 @@ if __name__ == "__main__":
             is_primary_instance = single_instance.acquire_or_notify()
         except RuntimeError as error:
             QMessageBox.critical(
-                None, f"{VR_CONFIG_DISPLAY_NAME} Startup Error", str(error)
+                None,
+                translate("Config", "{window} Startup Error").format(
+                    window=translate("Config", VR_CONFIG_DISPLAY_NAME)
+                ),
+                str(error),
             )
             raise SystemExit(1)
         if not is_primary_instance:
