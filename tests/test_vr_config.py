@@ -427,7 +427,8 @@ class DropdownValueTests(unittest.TestCase):
 
 class TextSizedControlsTests(unittest.TestCase):
     """Labels share one column sized by the longest, and switches fit their text,
-    as in the desktop Config. The VR client block joins both."""
+    as in the desktop Config. The VR client block joins both. The statistics
+    report's hint wraps to the report's width."""
 
     @classmethod
     def setUpClass(cls):
@@ -435,6 +436,7 @@ class TextSizedControlsTests(unittest.TestCase):
             """
             from PySide6.QtCore import QPoint
             from PySide6.QtGui import QFont, QFontMetrics
+            from PySide6.QtWidgets import QTextEdit
             from desktop.Desktop_App import BUTTON_TEXT_PADDING, ToggleSwitch
             window.show()
 
@@ -470,12 +472,24 @@ class TextSizedControlsTests(unittest.TestCase):
                     "needed": needed + 2 * BUTTON_TEXT_PADDING,
                 })
             client_keys = ("VR_APP_DIR", "ENABLE_EDGE_FILTERING")
+            report_box = window.stat_display
+            hint = report_box.findChild(namespace["QLabel"], "wrappedPlaceholder")
             print("@@" + json.dumps({
                 "column": window.label_column_width,
                 "column_labels": [window.labels[key].width() for key in client_keys],
                 "client_fields": [x(window.inputs[key]) for key in client_keys],
                 "visual_field": x(window.inputs["NODE_SIZE"].parentWidget()),
                 "switches": switches,
+                "statistics_hint": {
+                    "shown": hint.isVisible(),
+                    "text": hint.text() == report_box.placeholderText() != "",
+                    "qt_placeholder": QTextEdit.placeholderText(report_box),
+                    "fonts": [hint.font().family(), report_box.viewport().font().family()],
+                    "one_line": QFontMetrics(hint.font()).horizontalAdvance(hint.text()),
+                    "size": [hint.width(), hint.height()],
+                    "wrapped_height": hint.heightForWidth(hint.width()),
+                    "inside": report_box.viewport().rect().contains(hint.geometry()),
+                },
             }))
             """
         )
@@ -492,6 +506,20 @@ class TextSizedControlsTests(unittest.TestCase):
             with self.subTest(texts=switch["texts"]):
                 self.assertTrue(switch["toggle_switch"])
                 self.assertEqual(switch["sizes"], [[switch["needed"], 28]])
+
+    def test_statistics_hint_wraps_inside_the_report(self):
+        """Qt shows only the first line of a QTextEdit placeholder, which the
+        report at the default size cuts off; the hint wraps instead, in the
+        report's font."""
+        hint = self.report["statistics_hint"]
+        width, height = hint["size"]
+        self.assertTrue(hint["shown"])
+        self.assertTrue(hint["text"])
+        self.assertEqual(hint["qt_placeholder"], "")
+        self.assertEqual(hint["fonts"][0], hint["fonts"][1])
+        self.assertTrue(hint["inside"])
+        self.assertGreater(hint["one_line"], width)
+        self.assertLessEqual(hint["wrapped_height"], height)
 
 
 class TranslationTests(unittest.TestCase):
