@@ -814,6 +814,28 @@ class VRCatalogTests(unittest.TestCase):
         self.assertGreater(len(own), 20)
         self.assertEqual([key for key in own if key in main], [])
 
+    def test_the_bundled_chinese_font_draws_what_the_chinese_translations_add(self):
+        from fontTools.ttLib import TTFont
+
+        from desktop.Desktop_App import DESKTOP_FONT_DIR, LANGUAGE_FONTS
+        from utilities.Localization import read_catalog
+
+        # A translation keeps the English's emoji and symbols, which the
+        # system's fonts draw in every language; the rest is the font's.
+        catalog = self.updater.LANGUAGES_DIR / f"{self.updater.CATALOG_NAME}_zh_CN.ts"
+        added = {
+            char
+            for message in read_catalog(catalog)
+            for translation in message.translations
+            for char in translation
+            if not char.isspace() and char not in message.source
+        }
+        self.assertGreater(len(added), 20, "the Chinese catalog holds translations")
+        for face in LANGUAGE_FONTS["zh_CN"].files:
+            cmap = TTFont(DESKTOP_FONT_DIR / face).getBestCmap()
+            self.assertNotIn(ord("龘"), cmap, "the check can fail: 龘 is not in GB2312")
+            self.assertEqual(sorted(char for char in added if ord(char) not in cmap), [], face)
+
     def test_the_window_installs_it_with_the_main_catalog(self):
         report = report_from(
             """
