@@ -10,6 +10,11 @@
 # opt_vr is Windows-only, so .bat is the only launcher form it ships.
 *.bat      text eol=crlf
 
+# Translation catalogs, as in the main program: lupdate writes .ts files
+# with LF everywhere, and the compiled .qm files VR Config loads are binary.
+src/resources/languages/*.ts  text eol=lf
+src/resources/languages/*.qm  binary
+
 # Binary assets: never touch, never diff as text.
 *.png   binary
 *.ico   binary
