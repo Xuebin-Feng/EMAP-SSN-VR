@@ -1,11 +1,13 @@
 """The shared generator must hand back to VR without losing its settings."""
 
+import io
 import json
 import os
 from pathlib import Path
 import sys
 import tempfile
 import unittest
+from contextlib import redirect_stderr
 from types import SimpleNamespace
 from unittest import mock
 
@@ -31,20 +33,28 @@ class LayoutLauncherTests(unittest.TestCase):
             published = str(Path(folder) / "new_version_2.h5")
             calls = []
 
+            def generate(layout_settings, *, delete_settings):
+                # Read and deleted before generation: closing the window
+                # from here on leaves no snapshot behind.
+                self.assertFalse(snapshot.exists())
+                return published
+
             def run(command, **kwargs):
                 calls.append((command, kwargs))
-                self.assertEqual(json.loads(snapshot.read_text(encoding="utf-8")),
+                handed = command[4]
+                self.assertEqual(json.loads(Path(handed).read_text(encoding="utf-8")),
                                  {**payload, "TARGET_CACHE_PATH": published, "TARGET_CACHE_MODE": "existing"})
                 self.assertEqual(Path(command[2]), Path(launcher._bootstrap_vr.VR_SRC_DIR) / "EMAPSSN_Viewer_VR.py")
-                self.assertEqual(command[3:], ["--settings", str(snapshot), "--delete-settings"])
-                self.assertEqual(kwargs["env"]["SSN_VIEWER_SETTINGS_PATH"], str(snapshot))
+                self.assertEqual(command[3:], ["--settings", handed, "--delete-settings"])
+                self.assertEqual(kwargs["env"]["SSN_VIEWER_SETTINGS_PATH"], handed)
                 self.assertNotIn("SSN_TARGET_CACHE", kwargs["env"])
                 return 7
 
-            with mock.patch.dict(os.environ, {"SSN_VIEWER_SETTINGS_PATH": str(snapshot), "SSN_TARGET_CACHE": "stale"}), mock.patch.object(launcher, "generate", return_value=published) as generate, mock.patch.object(launcher.subprocess, "call", side_effect=run):
+            with mock.patch.dict(os.environ, {"SSN_VIEWER_SETTINGS_PATH": str(snapshot), "SSN_TARGET_CACHE": "stale"}), mock.patch.object(launcher, "generate", side_effect=generate) as generated, mock.patch.object(launcher.subprocess, "call", side_effect=run):
                 self.assertEqual(launcher.main([str(layout), "--delete-settings"]), 7)
-                generate.assert_called_once_with(str(layout))
+                generated.assert_called_once_with(str(layout), delete_settings=True)
             self.assertEqual(len(calls), 1)
+            self.assertFalse(Path(calls[0][0][4]).exists())
             self.assertFalse(snapshot.exists())
             self.assertFalse(layout.exists())
 
@@ -61,6 +71,27 @@ class LayoutLauncherTests(unittest.TestCase):
                 self.assertFalse(snapshot.exists())
                 self.assertFalse(layout.exists())
 
+    def test_an_unreadable_snapshot_stops_before_generating(self):
+        with tempfile.TemporaryDirectory() as folder:
+            snapshot = Path(folder) / "viewer.json"
+            layout = Path(folder) / "layout.json"
+            snapshot.write_text("{", encoding="utf-8")
+            layout.write_text("{}", encoding="utf-8")
+            with mock.patch.dict(os.environ, {"SSN_VIEWER_SETTINGS_PATH": str(snapshot)}), mock.patch.object(launcher, "generate") as generate, mock.patch.object(launcher.subprocess, "call") as run, redirect_stderr(io.StringIO()):
+                self.assertEqual(launcher.main([str(layout), "--delete-settings"]), 1)
+            generate.assert_not_called()
+            run.assert_not_called()
+            self.assertFalse(snapshot.exists())
+            self.assertFalse(layout.exists())
+
+    def test_a_missing_snapshot_still_deletes_the_layout_settings(self):
+        with tempfile.TemporaryDirectory() as folder:
+            layout = Path(folder) / "layout.json"
+            layout.write_text("{}", encoding="utf-8")
+            with mock.patch.dict(os.environ, {"SSN_VIEWER_SETTINGS_PATH": str(Path(folder) / "gone.json")}), redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+                launcher.main([str(layout), "--delete-settings"])
+            self.assertFalse(layout.exists())
+
     def test_generation_delegates_to_the_shared_pipeline(self):
         pipeline = SimpleNamespace(
             LayoutGenerationSettings=mock.Mock(),
@@ -72,6 +103,23 @@ class LayoutLauncherTests(unittest.TestCase):
         pipeline.generate_layout_cache.assert_called_once_with(
             pipeline.LayoutGenerationSettings.from_json_file.return_value
         )
+
+    def test_generation_deletes_its_settings_once_read(self):
+        with tempfile.TemporaryDirectory() as folder:
+            layout = Path(folder) / "layout.json"
+            layout.write_text("{}", encoding="utf-8")
+
+            def generate_layout_cache(settings):
+                self.assertFalse(layout.exists())
+                return SimpleNamespace(cache_path=Path("published.h5"))
+
+            pipeline = SimpleNamespace(
+                LayoutGenerationSettings=mock.Mock(),
+                generate_layout_cache=mock.Mock(side_effect=generate_layout_cache),
+            )
+            with mock.patch.dict(sys.modules, {"Layout_Cache_Generator": pipeline}):
+                self.assertEqual(launcher.generate(str(layout), delete_settings=True), "published.h5")
+            pipeline.generate_layout_cache.assert_called_once()
 
 
 if __name__ == "__main__":

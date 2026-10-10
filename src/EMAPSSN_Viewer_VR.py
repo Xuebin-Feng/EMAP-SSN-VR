@@ -1782,6 +1782,9 @@ def start_server(host=None, port=None):
         server_socket.close()
 
 if __name__ == "__main__":
+    # Settings_VR read the launch snapshot on import. Delete it before any
+    # check below can refuse to start, so a refused launch leaves none behind.
+    _consume_launch_snapshot()
     # The server exists to drive the Windows VR client in player/, so it
     # refuses to start elsewhere rather than binding a socket nothing can
     # ever connect to.

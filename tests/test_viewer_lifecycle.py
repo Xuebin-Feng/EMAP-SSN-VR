@@ -113,6 +113,32 @@ class SingleInstanceTests(unittest.TestCase):
         self.assertIn("already running", result.stdout + result.stderr)
         self.assertNotIn("Loading layout cache", result.stdout)
 
+    @WINDOWS_ONLY
+    def test_a_refused_launch_still_deletes_its_settings_snapshot(self):
+        """The Config's per-launch snapshot must not outlive a refused launch."""
+        held = single_instance.acquire()
+        self.addCleanup(single_instance.release, held)
+        self.assertIsNotNone(held, "a real VR viewer is running; cannot test this")
+
+        with tempfile.TemporaryDirectory() as folder:
+            snapshot = os.path.join(folder, "ssn_viewer_refused.json")
+            with open(snapshot, "w", encoding="utf-8") as handle:
+                handle.write("{}")
+            environment = {key: value for key, value in os.environ.items()
+                           if key != "SSN_VIEWER_SETTINGS_PATH"}
+            result = subprocess.run(
+                [sys.executable, os.path.join(VR_SRC, "EMAPSSN_Viewer_VR.py"),
+                 "--settings", snapshot, "--delete-settings"],
+                capture_output=True,
+                text=True,
+                cwd=OPT_VR,
+                env=environment,
+                timeout=300,
+            )
+            self.assertEqual(result.returncode, 1)
+            self.assertIn("already running", result.stdout + result.stderr)
+            self.assertFalse(os.path.exists(snapshot))
+
 
 class ExitWithClientTests(unittest.TestCase):
     def setUp(self):
