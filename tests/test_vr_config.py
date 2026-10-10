@@ -587,6 +587,46 @@ class TextSizedControlsTests(unittest.TestCase):
         self.assertGreater(hint["one_line"], width)
         self.assertLessEqual(hint["wrapped_height"], height)
 
+    def test_fixed_width_labels_get_the_width_they_ask_for(self):
+        """A label given a fixed width gets its size hint, not its text's advance.
+        Linux font hinting can draw a text past its advance, which cut a pixel
+        off "Min % Drop Threshold:" there. A right contents margin makes every
+        label need 1 px more than its text's advance, on every platform."""
+        rows = report_from(
+            """
+            from PySide6.QtWidgets import QLabel
+
+            class OverhangLabel(QLabel):
+                def __init__(self, *args, **kwargs):
+                    super().__init__(*args, **kwargs)
+                    self.setContentsMargins(0, 0, 1, 0)
+
+            # The window was built on import; build another whose labels overhang.
+            gui = namespace["ConfigGUI"]
+            with mock.patch.dict(gui.__init__.__globals__, {"QLabel": OverhangLabel}):
+                overhang = gui()
+            overhang.show()
+            rows = []
+            for width in (1600, 700):
+                overhang.resize(width + 360, 850)
+                for _ in range(6):
+                    app.processEvents()
+                rows += [{"width": width, "text": label.text(), "fixed": label.width(),
+                          "hint": label.sizeHint().width(),
+                          "drop": label is overhang.labels["PERCENTAGE_DROP_THRESHOLD"]}
+                         for label in overhang.findChildren(OverhangLabel)
+                         if label.text() and label.minimumWidth() == label.maximumWidth()]
+            overhang.close()
+            print("@@" + json.dumps(rows))
+            """
+        )
+        self.assertEqual(sum(row["drop"] for row in rows), 2)
+        for row in rows:
+            with self.subTest(width=row["width"], label=row["text"]):
+                # QLabel's size hint is at least its minimum width, so this
+                # fails only when the fixed width is narrower than the text.
+                self.assertGreaterEqual(row["fixed"], row["hint"])
+
 
 class TranslationTests(unittest.TestCase):
     """The window loads translations as it starts, as the desktop Config does.
