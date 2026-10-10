@@ -924,20 +924,22 @@ class VRCatalogTests(unittest.TestCase):
         )
         with open(os.path.join(main, "emapssn.ts"), "w", encoding="utf-8") as handle:
             handle.write(template.format(language=""))
-        with open(os.path.join(main, "emapssn_de.ts"), "w", encoding="utf-8") as handle:
+        os.makedirs(os.path.join(main, "de"))  # Each language in a folder of its own.
+        with open(os.path.join(main, "de", "emapssn_de.ts"), "w", encoding="utf-8") as handle:
             handle.write(template.format(language=' language="de"'))
         lines = []
         options = dict(report=lines.append, source_dir=source, languages_dir=own, main_languages_dir=main)
         self.assertEqual(self.updater.update_vr_catalogs(**options), 0, "\n".join(lines))
-        self.assertEqual(sorted(os.listdir(own)), ["emapssn_vr.ts", "emapssn_vr_de.qm", "emapssn_vr_de.ts"])
+        self.assertEqual(sorted(os.listdir(own)), ["de", "emapssn_vr.ts"])
+        self.assertEqual(sorted(os.listdir(os.path.join(own, "de"))), ["emapssn_vr_de.qm", "emapssn_vr_de.ts"])
         self.assertEqual(
-            [message.source for message in read_catalog(os.path.join(own, "emapssn_vr_de.ts"))], ["Own sentence"]
+            [message.source for message in read_catalog(os.path.join(own, "de", "emapssn_vr_de.ts"))], ["Own sentence"]
         )
         self.assertEqual(self.updater.update_vr_catalogs(check=True, **options), 0, "\n".join(lines))
-        os.remove(os.path.join(own, "emapssn_vr_de.ts"))
+        os.remove(os.path.join(own, "de", "emapssn_vr_de.ts"))
         lines.clear()
         self.assertEqual(self.updater.update_vr_catalogs(check=True, **options), 1)
-        self.assertTrue(any(line.startswith("emapssn_vr_de.ts is missing") for line in lines), lines)
+        self.assertTrue(any(line.startswith("de/emapssn_vr_de.ts is missing") for line in lines), lines)
 
     def test_it_lists_no_text_the_main_catalog_lists(self):
         from utilities.Localization import read_catalog
@@ -956,7 +958,7 @@ class VRCatalogTests(unittest.TestCase):
 
         # A translation keeps the English's emoji and symbols, which the
         # system's fonts draw in every language; the rest is the font's.
-        catalog = self.updater.LANGUAGES_DIR / f"{self.updater.CATALOG_NAME}_zh_CN.ts"
+        catalog = self.updater.LANGUAGES_DIR / "zh_CN" / f"{self.updater.CATALOG_NAME}_zh_CN.ts"
         added = {
             char
             for message in read_catalog(catalog)

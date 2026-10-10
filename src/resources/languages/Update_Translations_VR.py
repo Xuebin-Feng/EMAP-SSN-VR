@@ -12,8 +12,9 @@ does. The texts the two share come from the main catalog, emapssn.ts, so
 this catalog, emapssn_vr.ts, lists only the texts the main one lacks. The
 update runs the main repository's Update_Translations.py on opt_vr/src,
 leaving out every text emapssn.ts lists, and keeps a catalog,
-emapssn_vr_<language>.ts, for each language the main catalogs have. VR
-Config shows a text this catalog doesn't translate yet in English.
+<language>/emapssn_vr_<language>.ts, in a folder named as the main
+catalogs' folder for each language they have. VR Config shows a text this
+catalog doesn't translate yet in English.
 
 Run the main update first: a text VR Config shares with the desktop Config
 leaves this catalog once emapssn.ts lists it.
@@ -58,14 +59,12 @@ def update_vr_catalogs(
     updater = _main_updater()
     languages_dir = Path(languages_dir)
     main_languages = sorted(updater.language_catalogs(main_languages_dir))
-    missing = [
-        language for language in main_languages
-        if not (languages_dir / f"{CATALOG_NAME}_{language}.ts").is_file()
-    ]
+    present = updater.language_catalogs(languages_dir, CATALOG_NAME)
+    missing = [language for language in main_languages if language not in present]
     if check:
         for language in missing:
-            report(f"{CATALOG_NAME}_{language}.ts is missing, though the main catalogs have {language}: "
-                   "run the update.")
+            report(f"{language}/{CATALOG_NAME}_{language}.ts is missing, though the main catalogs have "
+                   f"{language}: run the update.")
     result = updater.update_catalogs(
         source_dir=source_dir,
         languages_dir=languages_dir,
