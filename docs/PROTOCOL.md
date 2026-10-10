@@ -198,6 +198,15 @@ Each of these needs a coordinated change to both server and client to lift.
    colours, sizes and visibility as JSON text: about 0.8 MB for a
    13,000-node network, with no delta encoding.
 
+Limitations 1 to 3 mean a terminal command can succeed without the headset
+showing its change. The VR terminal ends the output of such a command with a
+note, for example `(Not shown in the headset: the VR protocol does not carry
+node shapes.)`. It does so for `select` (the selection), for `color` and
+`reset` (node shapes, and `reset network`'s positions) and for `undo` and
+`redo` (shapes, and positions), and only when the command succeeded and
+changed that state. The table is `HEADSET_LIMITS` in `src/Command_Engine.py`;
+lifting a limitation means removing its row.
+
 ## Tools and tests
 
 | File | Purpose |

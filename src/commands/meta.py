@@ -39,13 +39,16 @@ What is not shared, and why:
 * **``show`` / ``display``.** Upstream attaches a HUD that prints the property
   beside the status indicators on node click. The headset has no HUD and no
   click, so a property the session has is acknowledged rather than shown, and
-  one it does not have is refused with the names it does have: ``spectrum``
-  issues it automatically after every run, with a property it has just matched.
+  one it does not have is refused with the names it does have. ``spectrum``
+  issues it automatically on the desktop, but skips it for a viewer with no
+  ``hud_displays``, as this one is, so it prints nothing about it here.
 
 One addition: ``download`` accepts a trailing selection expression.
 ``Metadata_Core.download_metadata`` has always taken an ``expr`` filter and
 evaluates it with the shared selection grammar; the desktop CLI simply never
 exposed it, and this command did. Keeping it costs nothing and forks nothing.
+The expression runs to the end of the line, so it may hold spaces, as
+``{Length > 500} & #cluster_1#`` does.
 """
 
 import os
@@ -60,8 +63,8 @@ from Metadata_Core import (
     upload_metadata,
 )
 
-#: Characters that make a token unambiguously a selection expression rather
-#: than a filename. ``classify_selection_expression`` alone would read a bare
+#: Characters that make a word able to open a selection expression rather than
+#: a filename. ``classify_selection_expression`` alone would read a bare
 #: ``x2`` as an amino-acid predicate, and that is a plausible file name.
 _EXPRESSION_MARKERS = '{}#@&|!^"$'
 
@@ -86,7 +89,9 @@ def print_help(meta_dir):
           when no extension is given). Overwrites the file if it already exists.
       meta download <filename> <expression>
           Downloads only the nodes matching a selection expression, for example
-          {{Length>500}}, #cluster_1# or $sele$. The expression comes last.
+          {{Length>500}}, #cluster_1# or $sele$. The expression comes last and
+          runs to the end of the line, so it may hold spaces:
+          {{Length > 500}} & #cluster_1#
       meta show/display <property_name>
           Accepted for compatibility with the desktop viewer. The VR viewer has
           no on-canvas HUD, so nothing is displayed. The property must be one
@@ -110,19 +115,35 @@ def print_help(meta_dir):
       meta download my_exported_data
       meta download filtered.csv {{Length>500}}
       meta download cluster_one.csv #cluster_1#
+      meta download long_ones.csv {{Length > 500}} & #cluster_1#
       meta delete Organism Taxonomy
     """)
 
 
-def _is_expression(token):
-    """True when ``token`` is meant as a selection expression, not a filename."""
-    if not token or not any(marker in token for marker in _EXPRESSION_MARKERS):
-        return False
-    classification = Command_Engine.classify_selection_expression(token)
-    return (
-        classification.kind
-        is Command_Engine.SelectionClassificationKind.VALID_EXPRESSION
-    )
+def _split_download_arguments(tokens):
+    """Split the words after ``download`` into (file name words, expression words).
+
+    The expression is the end of the line, so it may hold spaces. It starts at
+    the first word that opens a valid expression together with everything
+    after it: ``out.csv {Length > 500}`` is the name ``out.csv`` and the
+    expression ``{Length > 500}``. A line with no such word names a file
+    only, except that one whose expression is broken from a word starting with
+    ``{`` still gets its expression, so the error says what is wrong with it
+    and not that the "file name" is unsupported.
+    """
+    valid = Command_Engine.SelectionClassificationKind.VALID_EXPRESSION
+    malformed = Command_Engine.SelectionClassificationKind.MALFORMED_EXPRESSION
+    for index, token in enumerate(tokens):
+        if any(marker in token for marker in _EXPRESSION_MARKERS):
+            kind = Command_Engine.classify_selection_expression(" ".join(tokens[index:])).kind
+            if kind is valid:
+                return tokens[:index], tokens[index:]
+    for index, token in enumerate(tokens):
+        if token.startswith("{"):
+            kind = Command_Engine.classify_selection_expression(" ".join(tokens[index:])).kind
+            if kind is malformed:
+                return tokens[:index], tokens[index:]
+    return tokens, []
 
 
 def _resolve_upload_paths(viewer, tokens, meta_dir):
@@ -245,14 +266,11 @@ def run(viewer, args):
 
     # --- Download ---
     if first_arg in ['download', 'retrieve', 'export']:
-        rest = list(args[1:])
-        expr = None
-        if rest and _is_expression(rest[-1]):
-            expr = rest[-1]
-            rest = rest[:-1]
+        name_words, expression_words = _split_download_arguments(list(args[1:]))
+        expr = " ".join(expression_words) or None
 
         try:
-            filepath = metadata_download_path(meta_dir, " ".join(rest).strip())
+            filepath = metadata_download_path(meta_dir, " ".join(name_words).strip())
         except ValueError as error:
             Command_Engine.print_help(viewer, f"Error: {error}")
             Command_Engine.command_failed(viewer, f"Error: {error}")

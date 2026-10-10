@@ -556,7 +556,8 @@ class DesktopParityTests(unittest.TestCase):
     def test_spectrum_uses_the_desktop_grammar_and_stays_quiet(self):
         """Braced property, and no spurious error from the meta follow-up.
 
-        Upstream `spectrum` calls `meta display <prop>` on success. Before
+        Upstream `spectrum` calls `meta display <prop>` on success, but only
+        for a viewer that has a metadata HUD; this one has none. Before
         meta learned that verb it was read as a filename, so a working
         spectrum ended in "Could not find file 'display Length.xlsx'".
         """
@@ -564,6 +565,10 @@ class DesktopParityTests(unittest.TestCase):
         output = run_command(viewer, "spectrum {Length}")
         self.assertIn("Spectrum coloring applied", output)
         self.assertNotIn("Could not find file", output)
+        # The viewer has no metadata HUD, so spectrum does not even ask for it:
+        # `meta display` would print a paragraph about the missing HUD each run.
+        self.assertNotIn("Noted", output)
+        self.assertNotIn("HUD", output)
 
         legacy = run_command(viewer, "spectrum prop:Length")
         self.assertIn("Legacy spectrum prefixes", legacy)
@@ -772,6 +777,54 @@ class MetadataCommandTests(unittest.TestCase):
         run_command(self.viewer, "meta extra.csv")
         run_command(self.viewer, "meta download plain_name.csv")
         self.assertIn("plain_name.csv", os.listdir(self.folder))
+        # A marker character does not make a file name an expression.
+        run_command(self.viewer, "meta download run#1.csv")
+        self.assertIn("run#1.csv", os.listdir(self.folder))
+
+    def downloaded_rows(self, name):
+        """The node rows of a downloaded sheet, after its two header rows."""
+        return len(pd.read_csv(os.path.join(self.folder, name), header=None)) - 2
+
+    def test_a_filter_may_hold_spaces(self):
+        """Every word after the file name is the filter, not just the last one."""
+        run_command(self.viewer, "meta extra.csv")
+        # Score is 10 * the node's index: more than 50 holds nodes 6 to 11.
+        for command, name in (
+            ("meta download spaced.csv {Score > 50}", "spaced.csv"),
+            ("meta download spaced_by_one.csv {Score>50}", "spaced_by_one.csv"),
+            ("meta download {Score > 50}", "metadata.csv"),
+        ):
+            with self.subTest(command=command):
+                output = run_command(self.viewer, command)
+                self.assertNotIn("Error", output)
+                self.assertEqual(self.downloaded_rows(name), 6)
+
+        run_command(self.viewer, "meta download either.csv #cluster_0# | #cluster_1#")
+        self.assertEqual(self.downloaded_rows("either.csv"), 10)
+        run_command(self.viewer, "meta download both.csv {Score > 50} & #cluster_1#")
+        self.assertEqual(self.downloaded_rows("both.csv"), 4)
+
+    def test_a_file_name_with_spaces_still_takes_a_filter(self):
+        run_command(self.viewer, "meta extra.csv")
+        output = run_command(self.viewer, "meta download my sheet.csv {Score > 50}")
+        self.assertNotIn("Error", output)
+        self.assertEqual(self.downloaded_rows("my sheet.csv"), 6)
+        run_command(self.viewer, "meta download my other sheet")
+        self.assertIn("my other sheet.csv", os.listdir(self.folder))
+        self.assertEqual(self.downloaded_rows("my other sheet.csv"), 12)
+
+    def test_a_broken_filter_is_reported_as_one_and_writes_nothing(self):
+        run_command(self.viewer, "meta extra.csv")
+        for command in ("meta download bad.csv {Score > 50", "meta download bad.csv {Score > 50} &"):
+            with self.subTest(command=command):
+                output = run_command(self.viewer, command)
+                self.assertIn("Metadata export failed for expression", output)
+                self.assertNotIn("unsupported characters", output)
+                self.assertNotIn("bad.csv", os.listdir(self.folder))
+        # No file name, and a filter that matches nothing, say so as before.
+        output = run_command(self.viewer, "meta download none.csv {Score > 5000}")
+        self.assertIn("No nodes matched the expression '{Score > 5000}'", output)
+        self.assertNotIn("none.csv", os.listdir(self.folder))
 
     def test_download_refuses_a_path_and_writes_nothing(self):
         """Download names stay in METADATA_DIR, by the desktop's own rule."""

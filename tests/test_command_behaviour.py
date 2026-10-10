@@ -311,6 +311,151 @@ class UndoTests(unittest.TestCase):
                 self.assertIn(("succeeded", expected), context.reports)
 
 
+class HeadsetNoteTests(unittest.TestCase):
+    """A command that succeeds but changes what the protocol cannot carry says so.
+
+    The note is added where the viewer dispatches a command, from the
+    HEADSET_LIMITS table, so none of the upstream commands knows about it.
+    """
+
+    SELECTION = "(Not shown in the headset: the VR protocol does not carry the selection.)"
+    SHAPES = "(Not shown in the headset: the VR protocol does not carry node shapes.)"
+    POSITIONS = (
+        "(Not shown in the headset: the VR protocol does not carry node position "
+        "changes after the headset connects.)"
+    )
+
+    def setUp(self):
+        self.viewer = build_viewer()
+        self.viewer.cluster_labels = np.array([0] * 5 + [1] * 5 + [-1] * 2)
+        self.viewer.group_labels = [set() for _ in range(self.viewer.n_nodes)]
+
+    def test_select_says_the_headset_does_not_show_the_selection(self):
+        output = run_command(self.viewer, "select #cluster_0#")
+        self.assertIn("Selected 5 nodes", output)
+        # The note ends the output, after the command's own report.
+        self.assertTrue(output.rstrip().endswith(self.SELECTION), output)
+
+    def test_a_select_that_changes_nothing_says_nothing(self):
+        run_command(self.viewer, "select #cluster_0#")
+        self.assertNotIn("Not shown in the headset", run_command(self.viewer, "select #cluster_0#"))
+
+    def test_a_failed_command_gets_no_note(self):
+        output = run_command(self.viewer, "select #nope#")
+        self.assertIn("Selection failed", output)
+        self.assertNotIn("Not shown in the headset", output)
+
+    def test_a_shape_the_headset_cannot_draw_is_noted_and_a_colour_is_not(self):
+        output = run_command(self.viewer, "color red #cluster_0#")
+        self.assertIn("Applied: 5 nodes (red)", output)
+        self.assertNotIn("Not shown in the headset", output)
+
+        output = run_command(self.viewer, "color #cluster_0# triangle")
+        self.assertIn("Applied: 5 nodes (triangle_up)", output)
+        self.assertTrue(output.rstrip().endswith(self.SHAPES), output)
+
+        # The same shape again changes nothing.
+        self.assertNotIn(
+            "Not shown in the headset", run_command(self.viewer, "color #cluster_0# triangle")
+        )
+
+    def test_reset_notes_only_the_targets_the_headset_cannot_show(self):
+        viewer = self.viewer
+        viewer.current_shapes[:] = "star"
+        viewer.current_colors[:] = [0.0, 1.0, 0.0, 1.0]
+        viewer.pos = viewer.pos + 1.0
+
+        self.assertNotIn("Not shown in the headset", run_command(viewer, "reset colors"))
+        self.assertTrue(run_command(viewer, "reset shapes").rstrip().endswith(self.SHAPES))
+        self.assertTrue(run_command(viewer, "reset network").rstrip().endswith(self.POSITIONS))
+        # Nothing left to reset: the command succeeds, and there is nothing to note.
+        self.assertNotIn("Not shown in the headset", run_command(viewer, "reset shapes network"))
+
+    def test_reset_naming_both_says_both_in_one_note(self):
+        viewer = self.viewer
+        viewer.current_shapes[:] = "star"
+        viewer.pos = viewer.pos + 1.0
+        output = run_command(viewer, "reset shapes network")
+        self.assertEqual(output.count("Not shown in the headset"), 1)
+        self.assertTrue(
+            output.rstrip().endswith(
+                "(Not shown in the headset: the VR protocol does not carry node shapes "
+                "and node position changes after the headset connects.)"
+            ),
+            output,
+        )
+
+    def test_undo_and_redo_note_a_restored_layout(self):
+        viewer = self.viewer
+        original = viewer.pos.copy()
+        viewer._save_state()
+        viewer.pos = viewer.pos + 1.0
+
+        output = run_command(viewer, "undo")
+        np.testing.assert_array_equal(viewer.pos, original)
+        self.assertTrue(output.rstrip().endswith(self.POSITIONS), output)
+        self.assertTrue(run_command(viewer, "redo").rstrip().endswith(self.POSITIONS))
+
+    def test_undo_and_redo_note_a_restored_shape(self):
+        viewer = self.viewer
+        run_command(viewer, "color #cluster_0# star")
+        self.assertTrue(run_command(viewer, "undo").rstrip().endswith(self.SHAPES))
+        self.assertTrue(run_command(viewer, "redo").rstrip().endswith(self.SHAPES))
+
+    def test_undoing_a_colour_change_restores_nothing_the_headset_lacks(self):
+        run_command(self.viewer, "color red #cluster_0#")
+        self.assertNotIn("Not shown in the headset", run_command(self.viewer, "undo"))
+        self.assertNotIn("Not shown in the headset", run_command(self.viewer, "redo"))
+
+    def test_the_table_decides_which_commands_are_noted(self):
+        patched = {**Command_Engine.HEADSET_LIMITS, "color": (("current_colors", "node colours"),)}
+        with mock.patch.object(Command_Engine, "HEADSET_LIMITS", patched):
+            output = run_command(self.viewer, "color red #cluster_0#")
+        self.assertTrue(
+            output.rstrip().endswith(
+                "(Not shown in the headset: the VR protocol does not carry node colours.)"
+            ),
+            output,
+        )
+
+    def test_each_line_of_a_script_is_noted_as_typed(self):
+        with tempfile.TemporaryDirectory() as folder:
+            script = os.path.join(folder, "steps.txt")
+            with open(script, "w", encoding="utf-8") as handle:
+                handle.write("select #cluster_0#\ncolor red #cluster_0#\nselect #cluster_1#\n")
+            output = run_command(self.viewer, f"run {script}")
+        self.assertIn("Batch execution completed: 3 commands run.", output)
+        self.assertEqual(output.count(self.SELECTION), 2)
+
+    def test_a_command_run_outside_the_dispatcher_prints_no_note(self):
+        from commands import select
+
+        output = io.StringIO()
+        with redirect_stdout(output):
+            select.run(self.viewer, ["#cluster_0#"])
+        self.assertNotIn("Not shown in the headset", output.getvalue())
+
+    def test_a_command_that_raises_gets_no_note(self):
+        viewer = self.viewer
+        with redirect_stdout(io.StringIO()) as output:
+            with self.assertRaises(RuntimeError):
+                with Command_Engine.headset_notes(viewer, "select"):
+                    Command_Engine.command_succeeded(viewer, "done")
+                    viewer.selected_indices = [1]
+                    raise RuntimeError("boom")
+        self.assertEqual(output.getvalue(), "")
+
+    def test_a_failure_after_a_success_keeps_the_command_failed(self):
+        viewer = self.viewer
+        with redirect_stdout(io.StringIO()) as output:
+            with Command_Engine.headset_notes(viewer, "select"):
+                Command_Engine.command_succeeded(viewer, "part")
+                Command_Engine.command_failed(viewer, "rest")
+                Command_Engine.command_succeeded(viewer, "again")
+                viewer.selected_indices = [1]
+        self.assertEqual(output.getvalue(), "")
+
+
 class ArtifactTests(unittest.TestCase):
     """`logo` and `label` queue their work and write their files."""
 

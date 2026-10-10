@@ -336,7 +336,7 @@ override needs a reason that survives being said out loud:
 | `print` | Upstream screen-grabs the canvas. A VR figure has to be rebuilt from the state arrays and projected onto a chosen plane, which is a different command. Disabled until that is designed. |
 | `alignment`, `run` | Upstream opens a Qt file dialog. Identical once the file is chosen, except that a Python script `run` names runs in the foreground here, where the desktop viewer runs it in the background to keep its window responsive; the path is an argument here. |
 | `export` | Upstream pops the system file manager through `desktop.Desktop_App`, which reaches PySide6. Otherwise a verbatim copy — keep it diffable. |
-| `meta` | The web spreadsheet UI. Upload, download and column deletion are the main program's `Metadata_Core` functions, called directly. One addition: `meta download <file> <expression>` takes a trailing selection expression, which `Metadata_Core.download_metadata` has always accepted and the desktop command does not expose. |
+| `meta` | The web spreadsheet UI. Upload, download and column deletion are the main program's `Metadata_Core` functions, called directly. One addition: `meta download <file> <expression>` takes a trailing selection expression, which `Metadata_Core.download_metadata` has always accepted and the desktop command does not expose. The expression runs to the end of the line, so it may contain spaces (`meta download long.csv {Length > 500} & #cluster_1#`). |
 
 Anything not on that list is served from `src/commands`, so it cannot drift.
 
@@ -402,6 +402,16 @@ z) and the rendered and full edge lists - and then both sides exchange
 newline-delimited JSON: colour, size and visibility updates one way, the
 network's transform the other. [docs/PROTOCOL.md](docs/PROTOCOL.md) is the
 full contract.
+
+That contract carries nothing else, so a command whose change is not a colour,
+size, visibility or transform still succeeds but never reaches the headset:
+node shapes (`color` with a shape, `reset shapes`), node positions after the
+headset connects (`reset network`, undoing a layout change) and the selection
+(`select`). The terminal says so after such a command succeeds, for example
+`(Not shown in the headset: the VR protocol does not carry the selection.)`.
+The commands and what they cannot show are the `HEADSET_LIMITS` table in
+`src/Command_Engine.py`; the viewer's `process_command` applies it, so no
+upstream command carries VR-specific code for it.
 
 The client also records a default endpoint in `player/vr_client.json`, used
 only when it is started by hand. The Config GUI shows it in the tooltip of

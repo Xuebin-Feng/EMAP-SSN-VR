@@ -36,6 +36,7 @@ import Settings_VR as cfg
 # the real, Qt-importing EMAPSSN_Config load first.
 _bootstrap_vr.install_settings_alias(cfg)
 
+import Command_Engine
 import Viewer_Utils_VR as utils
 import Player_Build_VR
 import Background_Job_Scheduler_VR
@@ -616,7 +617,8 @@ class HeadlessViewer:
             return False
 
         try:
-            module.run(self, args)
+            with Command_Engine.headset_notes(self, command_name):
+                module.run(self, args)
         except Exception as error:
             print(f"Command Error: {error}")
             traceback.print_exc()
