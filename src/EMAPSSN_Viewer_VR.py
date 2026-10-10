@@ -348,15 +348,17 @@ class HeadlessViewer:
         self.console_text.text = "Redo successful."
         return True
 
-    def load_global_alignment(self):
+    def load_global_alignment(self, reuse_loaded=False):
         # `reference` reloads through here, so the offset must travel with it,
-        # as it does in the desktop viewer.
+        # as it does in the desktop viewer. It also passes REUSE_LOADED, which
+        # keeps the rows already loaded when the MSA file is unchanged.
         try:
             self.alignment = Alignment_Manager.Alignment_Manager(
                 cfg.MSA_FILE,
                 full_headers=self.full_headers,
                 active_reference=self.active_reference,
                 alignment_offset=self.alignment_offset,
+                reuse=getattr(self, 'alignment', None) if reuse_loaded else None,
             )
             # With no MSA, or one that failed to load, the manager has already
             # said why and holds no alignment.
