@@ -290,6 +290,39 @@ class CommandPackageTests(unittest.TestCase):
         self.assertIn("headset", output.lower())
         self.assertNotIn("canvas aspect ratio", output)
 
+    def test_help_accepts_a_help_flag(self):
+        viewer = build_viewer()
+        for flag in ("-h", "--help"):
+            with self.subTest(flag=flag):
+                output = run_command(viewer, f"help {flag}")
+                self.assertIn("EMAP-SSN VR viewer commands", output)
+                self.assertNotIn("Unknown command", output)
+
+    def test_help_lists_and_describes_the_terminal_words(self):
+        viewer = build_viewer()
+        output = run_command(viewer, "help")
+        self.assertRegex(output, r"(?m)^ +exit +Shut the viewer down")
+        self.assertRegex(output, r"(?m)^ +quit +Same as exit")
+        self.assertIn("Shut the viewer down", run_command(viewer, "help exit"))
+        self.assertNotIn("Unknown command", run_command(viewer, "help quit"))
+
+    def test_help_describes_local_commands_in_user_words(self):
+        viewer = build_viewer()
+        export_help = run_command(viewer, "help export")
+        self.assertIn("Export sequence subsets", export_help)
+        self.assertNotIn("headlessness", export_help)
+        meta_help = run_command(viewer, "help meta")
+        self.assertIn("Upload, download or delete", meta_help)
+        self.assertNotIn("sharing the desktop viewer", meta_help)
+
+    def test_export_accepts_every_help_spelling(self):
+        viewer = build_viewer()
+        for flag in ("help", "-h", "-?", "--help"):
+            with self.subTest(flag=flag):
+                output = run_command(viewer, f"export {flag}")
+                self.assertIn("FASTA Export Tool", output)
+                self.assertNotIn("Unrecognized export target", output)
+
 
 class CommandEngineAPITests(unittest.TestCase):
     """The surface upstream commands call unconditionally."""
@@ -784,6 +817,21 @@ class MetadataCommandTests(unittest.TestCase):
         self.assertIn("no on-canvas HUD", output)
         self.assertNotIn("Could not find file", output)
 
+    def test_display_refuses_a_property_the_session_lacks(self):
+        output = run_command(self.viewer, "meta show Organsim")
+        self.assertIn("Property 'Organsim' not found", output)
+        self.assertIn("Available properties: Length.", output)
+        self.assertNotIn("Noted", output)
+
+    def test_display_matches_a_property_name_regardless_of_case(self):
+        output = run_command(self.viewer, "meta show length")
+        self.assertIn("Noted 'length'", output)
+
+    def test_display_with_no_metadata_says_so(self):
+        self.viewer.metadata = {}
+        output = run_command(self.viewer, "meta show Length")
+        self.assertIn("No metadata is loaded in this session", output)
+
 
 class SelectSaveNameTests(unittest.TestCase):
     """`select save` keeps its file in HEADER_LIST_DIR, by the desktop's rule.
@@ -856,6 +904,25 @@ class DisabledCommandTests(unittest.TestCase):
             output = run_command(viewer, f"print {os.path.join(folder, for_name())}")
             self.assertIn("not available in the VR viewer yet", output)
             self.assertEqual(os.listdir(folder), before)
+
+    def test_desktop_only_commands_report_failure(self):
+        """A refused command reports failure to the outcome portal, as print does."""
+        import Viewer_Command_Portal
+
+        class Outcomes:
+            def __init__(self):
+                self.statuses = []
+
+            def report(self, status, message, artifact):
+                self.statuses.append(status)
+
+        viewer = build_viewer()
+        for name in ("agent", "esmfold", "zoom", "print"):
+            with self.subTest(command=name):
+                outcomes = Outcomes()
+                with Viewer_Command_Portal.bind(outcomes):
+                    run_command(viewer, name)
+                self.assertIn("failed", outcomes.statuses)
 
     def test_alignment_requires_a_path(self):
         viewer = build_viewer()

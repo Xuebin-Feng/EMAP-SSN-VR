@@ -37,12 +37,20 @@ except Exception:  # pragma: no cover - only if the parent checkout is broken
         raise KeyError(name)
 
 
+#: Words the terminal loop handles itself, before any command module is looked
+#: up. A run script cannot use them: process_command reports them as unknown.
+TERMINAL_COMMANDS = {
+    "exit": "Shut the viewer down. Works at the prompt only, not in a run script.",
+    "quit": "Same as exit.",
+}
+
+
 def _available_commands():
     """Every importable command, and whether VR overrides it.
 
     ``commands.__path__`` holds this package's directory followed by the main
     program's ``src/commands``, so the same search order the dispatcher uses is
-    reproduced here.
+    reproduced here. The terminal's own words are listed as VR's.
     """
     import commands
 
@@ -60,12 +68,19 @@ def _available_commands():
             name = filename[:-3]
             # First path entry wins, matching import resolution.
             found.setdefault(name, is_local)
+    for name in TERMINAL_COMMANDS:
+        found.setdefault(name, True)
     return found
 
 
-#: Fallback for VR-only commands whose module has no docstring to read.
+#: One-line summaries for VR commands, read in place of the module docstring's
+#: first line, which is written for developers. A command missing from here
+#: falls back to its docstring.
 LOCAL_SUMMARIES = {
+    "export": "Export sequence subsets (clusters, groups or #LABEL#) as FASTA files.",
     "help": "List the available commands, or describe one.",
+    "meta": "Upload, download or delete node metadata columns.",
+    "run": "Run the commands in a script file, one per line (.txt, or .py that prints them).",
 }
 
 
@@ -88,6 +103,11 @@ def _local_docstring(name):
     return first
 
 
+def _local_summary(name):
+    """A VR command's own one-liner: the table's, else its docstring's first line."""
+    return LOCAL_SUMMARIES.get(name) or _local_docstring(name)
+
+
 def _summary(name, is_local=False):
     """Describe a command, preferring the local override's own words.
 
@@ -96,8 +116,10 @@ def _summary(name, is_local=False):
     and `print` why figures are not available yet - so showing the upstream
     one-liner for them would actively mislead.
     """
+    if name in TERMINAL_COMMANDS:
+        return TERMINAL_COMMANDS[name]
     if is_local:
-        local = _local_docstring(name) or LOCAL_SUMMARIES.get(name)
+        local = _local_summary(name)
         if local:
             return local
     try:
@@ -108,10 +130,13 @@ def _summary(name, is_local=False):
 
 def _describe(name, is_local=False):
     lines = [f"{name}"]
+    if name in TERMINAL_COMMANDS:
+        lines.append(f"  {TERMINAL_COMMANDS[name]}")
+        return "\n".join(lines)
     if is_local:
-        # A local override's own docstring beats upstream's description, which
+        # A local override's own summary beats upstream's description, which
         # may describe behaviour this command deliberately does not have.
-        local = _local_docstring(name) or LOCAL_SUMMARIES.get(name)
+        local = _local_summary(name)
         if local:
             lines.append(f"  {local}")
             lines.append("")
@@ -149,6 +174,9 @@ def _describe(name, is_local=False):
 
 
 def run(viewer, args):
+    # -h and --help ask for help, which bare `help` already gives.
+    if args and args[0].lower() in ("-h", "--help"):
+        args = args[1:]
     if args:
         name = args[0].lower().lstrip("-")
         if name.startswith("vr_"):

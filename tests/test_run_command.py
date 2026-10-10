@@ -90,6 +90,28 @@ class RunFixture:
         return commands[1:], output
 
 
+class FailedLineTests(RunFixture, unittest.TestCase):
+    """Every line still runs, and the batch says how many failed."""
+
+    def test_a_failed_line_is_counted_and_comments_are_skipped(self):
+        self.script = self.script.with_suffix(".txt")
+        self.script.write_text(
+            "bogus_command_xyz\n# a comment line\nreset hide // trailing note\n",
+            encoding="utf-8",
+        )
+        commands, output = self.typed()
+        self.assertEqual(commands, ["bogus_command_xyz", "reset hide"], output)
+        self.assertIn("Batch execution finished: 1 of 2 commands failed.", output)
+        self.assertNotIn("Batch execution completed", output)
+
+    def test_a_clean_script_keeps_the_completed_message(self):
+        self.script = self.script.with_suffix(".txt")
+        self.script.write_text("reset hide\n", encoding="utf-8")
+        commands, output = self.typed()
+        self.assertEqual(commands, ["reset hide"], output)
+        self.assertIn("Batch execution completed: 1 commands run.", output)
+
+
 class ScriptOutputTests(RunFixture, unittest.TestCase):
     """A script's stdout is decoded as UTF-8, so the script must print UTF-8 whatever the viewer's environment says."""
 
@@ -170,6 +192,25 @@ class CommandFileEncodingTests(RunFixture, unittest.TestCase):
         # As readlines() on a text-mode file splits them.
         self.assert_commands(b'select "a"\rselect "b"\nselect "c"\r\n',
                              ['select "a"', 'select "b"', 'select "c"'])
+
+
+class NotAScriptFileTests(RunFixture, unittest.TestCase):
+    """A name that is not a script file is refused without being opened."""
+
+    def test_a_folder_is_named_as_a_folder(self):
+        folder = self.script.parent
+        output = run_command(self.viewer, f"run {folder}")
+        self.assertIn("is a folder", output)
+        self.assertNotIn("Permission denied", output)
+        self.assertNotIn("Batch execution", output)
+
+    def test_a_device_name_is_not_opened(self):
+        # 'con' would wait on the keyboard and block the viewer; 'NUL' is the
+        # same kind of name, and reading it succeeds with no lines, so a
+        # regression shows as "Batch execution" rather than as a hang.
+        output = run_command(self.viewer, "run NUL")
+        self.assertIn("does not exist", output)
+        self.assertNotIn("Batch execution", output)
 
 
 if __name__ == "__main__":

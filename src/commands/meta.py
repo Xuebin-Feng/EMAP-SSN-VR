@@ -38,8 +38,9 @@ What is not shared, and why:
 
 * **``show`` / ``display``.** Upstream attaches a HUD that prints the property
   beside the status indicators on node click. The headset has no HUD and no
-  click, so the verb is accepted and acknowledged rather than refused:
-  ``spectrum`` issues it automatically after every run.
+  click, so a property the session has is acknowledged rather than shown, and
+  one it does not have is refused with the names it does have: ``spectrum``
+  issues it automatically after every run, with a property it has just matched.
 
 One addition: ``download`` accepts a trailing selection expression.
 ``Metadata_Core.download_metadata`` has always taken an ``expr`` filter and
@@ -88,7 +89,8 @@ def print_help(meta_dir):
           {{Length>500}}, #cluster_1# or $sele$. The expression comes last.
       meta show/display <property_name>
           Accepted for compatibility with the desktop viewer. The VR viewer has
-          no on-canvas HUD, so nothing is displayed.
+          no on-canvas HUD, so nothing is displayed. The property must be one
+          the session has; otherwise the available property names are listed.
       meta delete/remove/clear <property_name> [property_name ...]
           Atomically deletes one or more metadata columns from the current
           session. Property matching is case-insensitive. Node ID/Sequence
@@ -218,6 +220,18 @@ def run(viewer, args):
         if target.lower() in ('clear', 'off'):
             msg = "Metadata display is not used in the VR viewer; nothing to clear."
         else:
+            # Matched case-insensitively, as the desktop viewer matches it.
+            available = list((getattr(viewer, 'metadata', None) or {}).keys())
+            if not any(name.lower() == target.lower() for name in available):
+                if available:
+                    msg = (f"Error: Property '{target}' not found in current metadata. "
+                           f"Available properties: {', '.join(available)}.")
+                else:
+                    msg = (f"Error: Property '{target}' not found. "
+                           "No metadata is loaded in this session.")
+                Command_Engine.print_help(viewer, msg)
+                Command_Engine.command_failed(viewer, msg)
+                return
             msg = (
                 f"Noted '{target}' for metadata display. The VR viewer has no "
                 "on-canvas HUD to show it on - the headset renders the network "

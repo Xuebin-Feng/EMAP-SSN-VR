@@ -19,3 +19,4 @@ def run(viewer, args):
            "  - hide / select   Narrow the network down to the nodes you care about.\n"
            "  - reset hide      Bring every hidden node back.")
     Command_Engine.print_help(viewer, msg)
+    Command_Engine.command_failed(viewer, "zoom is not available in the VR viewer.")

@@ -89,83 +89,14 @@ def print_help(viewer, msg, *, terminal_msg=None, report_message=True):
 show_status = _upstream.show_status
 
 
-def execute_reset(viewer, targets):
-    """Executes reset on the specified targets."""
-    lower_parts = [p.lower() for p in targets]
-    
-    if "help" in lower_parts or "-h" in lower_parts or "--help" in lower_parts:
-        msg = "Usage: reset <target_1> [target_2] ...\nDescription: Resets specific properties of the network to their default or backup states.\nValid Targets:\n  colors   - Resets all node colors to default\n  sizes    - Resets all node sizes to default\n  shapes   - Resets all node shapes to default\n  clusters - Clears all cluster labels\n  groups   - Clears all group labels\n  hide     - Unhides all hidden nodes\n  network  - Restores node layout positions to the original or last saved state\nExamples:\n  reset network hide\n  reset colors sizes"
-        print_help(viewer, msg)
-        return
-
-    targets_found = []
-    needs_update = False
-    
-    viewer._save_state()
-    
-    for p in lower_parts:
-        base_p = p[:-1] if p.endswith('s') else p
-        
-        if base_p == "color":
-            if hasattr(viewer, 'current_colors'):
-                neighbor_hex = getattr(cfg, 'NEIGHBOR_COLOR', '#4488ff')
-                def parse_hex_color(hex_str):
-                    h = hex_str.lstrip('#')
-                    if len(h) == 6:
-                        return [int(h[0:2], 16)/255.0, int(h[2:4], 16)/255.0, int(h[4:6], 16)/255.0, 1.0]
-                    elif len(h) == 8:
-                        return [int(h[0:2], 16)/255.0, int(h[2:4], 16)/255.0, int(h[4:6], 16)/255.0, int(h[6:8], 16)/255.0]
-                    return [0.8, 0.8, 0.8, 1.0]
-                n_rgba = parse_hex_color(neighbor_hex)
-                viewer.current_colors[:] = n_rgba
-            needs_update = True
-            targets_found.append("colors")
-            
-        elif base_p == "size":
-            if hasattr(viewer, 'current_sizes'):
-                viewer.current_sizes.fill(cfg.NODE_SIZE)
-            needs_update = True
-            targets_found.append("sizes")
-        
-        elif base_p == "shape":
-            if hasattr(viewer, 'current_shapes'):
-                viewer.current_shapes.fill('disc')
-            needs_update = True
-            targets_found.append("shapes")
-
-        elif base_p == "cluster":
-            viewer.cluster_labels = None
-            viewer.tooltip.text = "" 
-            targets_found.append("clusters")
-
-        elif base_p == "group":
-            viewer.group_labels = [set() for _ in range(viewer.n_nodes)]
-            viewer.tooltip.text = "" 
-            targets_found.append("groups")
-                
-        elif base_p in ["hide", "hidden"]:
-            viewer.visible_mask.fill(True)
-            needs_update = True
-            targets_found.append("hidden")
-            
-        elif base_p == "network":
-            if hasattr(viewer, 'original_pos'):
-                viewer.pos = viewer.original_pos.copy()
-            needs_update = True
-            targets_found.append("network")
-
-    if needs_update:
-        viewer.update_nodes()
-        if "hidden" in targets_found or "network" in targets_found:
-            viewer.update_edges()
-
-    if targets_found:
-        msg = f"Reset successful: {', '.join(targets_found)}."
-    else:
-        msg = "Usage: reset [colors | sizes | clusters | hide | network]"
-    
-    viewer.console_text.text = msg
-    print(f"{msg}")
+# `reset`, `hide reset`, `color reset`, `group reset` and `label reset` all
+# reset through this, and the main program's version runs here as it is: it
+# reads only the state arrays, cfg (Settings_VR) and update_nodes /
+# update_edges, which the VR viewer has, and guards the desktop's label
+# visuals and console background. The fork it replaces had drifted: it
+# accepted `reset order` without restoring the render order, parsed only
+# #rrggbb[aa] colours (a named colour reset to grey) and returned no message.
+execute_reset = _upstream.execute_reset
 
 
 # =====================================================================
@@ -240,15 +171,24 @@ def report(status=None, message=None, artifact=None, viewer=None):
     _report(status, message, artifact, viewer)
 
 
+# A run script counts the lines that failed through upstream's outcome
+# recorder, so every outcome reported here is recorded there too.
+recorded_outcome = _upstream.recorded_outcome
+script_command = _upstream.script_command
+
+
 def command_succeeded(viewer, message=None, artifact=None):
+    _upstream._record_outcome('succeeded')
     report('succeeded', message, artifact, viewer)
 
 
 def command_failed(viewer, message):
+    _upstream._record_outcome('failed')
     report('failed', str(message), viewer=viewer)
 
 
 def command_cancelled(viewer, message):
+    _upstream._record_outcome('cancelled')
     report('cancelled', str(message), viewer=viewer)
 
 

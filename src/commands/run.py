@@ -101,10 +101,18 @@ def run(viewer, args):
     # The command line is whitespace-split before it reaches us, so a Windows
     # path containing spaces arrives as several args. Rejoin them (and drop any
     # surrounding quotes) when that spelling names a real file.
+    # isfile, not exists: a folder or a Windows device name such as 'con' exists
+    # too, and opening 'con' would wait on the keyboard and block the viewer.
     joined_path = ' '.join(args).strip().strip('"')
-    file_path = joined_path if os.path.exists(joined_path) else args[0]
+    file_path = joined_path if os.path.isfile(joined_path) else args[0]
 
-    if not os.path.exists(file_path):
+    if os.path.isdir(file_path):
+        msg = f"Error: '{file_path}' is a folder. Name a script file inside it."
+        Command_Engine.command_failed(viewer, msg)
+        Command_Engine.print_help(viewer, msg)
+        return
+
+    if not os.path.isfile(file_path):
         msg = f"Error: File '{file_path}' does not exist."
         Command_Engine.command_failed(viewer, msg)
         Command_Engine.print_help(viewer, msg)
@@ -146,9 +154,10 @@ def run(viewer, args):
 
         # Execute the commands in sequence
         executed_count = 0
+        failed_count = 0
         for line in commands_lines:
-            # Split by // to remove any trailing comment
-            cmd_line = line.split('//')[0].strip()
+            # Drop blank lines, # lines and any trailing // comment, as upstream does
+            cmd_line = Command_Engine.script_command(line)
             if not cmd_line:
                 continue
 
@@ -171,8 +180,19 @@ def run(viewer, args):
             # is the desktop viewer's own inner dispatch. The VR viewer owns
             # dispatch instead, and going through it keeps the 'vr_' prefix and
             # the module-reload behaviour identical to a typed command.
-            viewer.process_command(cmd_line, record_history=False)
+            # Every line runs, as before; a line that failed is counted, whether
+            # the command reported it or the dispatch itself failed.
+            with Command_Engine.recorded_outcome() as outcome:
+                dispatched = viewer.process_command(cmd_line, record_history=False)
             executed_count += 1
+            if dispatched is False or outcome['status'] == 'failed':
+                failed_count += 1
+
+        if failed_count:
+            msg = f"Batch execution finished: {failed_count} of {executed_count} commands failed."
+            Command_Engine.command_failed(viewer, msg)
+            Command_Engine.print_help(viewer, msg, report_message=False)
+            return
 
         msg = f"Batch execution completed: {executed_count} commands run."
         Command_Engine.print_help(viewer, msg)

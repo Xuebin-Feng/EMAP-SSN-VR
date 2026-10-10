@@ -167,7 +167,12 @@ The Python side runs three threads:
 
 Commands hand work across by pushing a complete packet onto
 `viewer.update_queue`. The sender drains the queue, sleeping 0.05 s whenever
-it is empty.
+it is empty. While no client is connected only the newest packet is kept, and
+the queue is emptied just before a new client's initial packet, which carries
+the current state.
+
+`label` and `logo` write their files on one more daemon thread, started by the
+first such job; it never touches the socket.
 
 ## Known limitations
 

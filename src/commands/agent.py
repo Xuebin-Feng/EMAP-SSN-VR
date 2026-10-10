@@ -51,3 +51,4 @@ What to use instead:
 
 def run(viewer, args):
     Command_Engine.print_help(viewer, MESSAGE)
+    Command_Engine.command_failed(viewer, "agent is not available in the VR viewer.")

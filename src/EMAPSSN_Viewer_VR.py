@@ -1,4 +1,5 @@
 import collections
+import copy
 import socket
 import struct
 import math
@@ -37,6 +38,7 @@ _bootstrap_vr.install_settings_alias(cfg)
 
 import Viewer_Utils_VR as utils
 import Player_Build_VR
+import Background_Job_Scheduler_VR
 import Alignment_Manager
 from desktop.Viewer_State import resolve_selected_cache
 
@@ -60,6 +62,36 @@ def _initial_node_rgba():
     except (TypeError, ValueError):
         print(f"Warning: {value!r} is not a colour; nodes start #4488ff.")
         return mcolors.to_rgba('#4488ff')
+
+
+def _initial_edge_threshold():
+    """The edge threshold `hide single` applies, as the desktop slider starts.
+
+    The desktop slider starts at the cache's SIMILARITY_THRESHOLD; a cache
+    that has none (UMAP topology, a top-percentage filter) starts it at the
+    lowest edge score, so every edge counts. -inf means the same here.
+    """
+    threshold = getattr(cfg, 'SIMILARITY_THRESHOLD', None)
+    if threshold is None:
+        return float('-inf')
+    try:
+        return float(threshold)
+    except (TypeError, ValueError):
+        return float('-inf')
+
+
+def _console_message(text):
+    """Print from a background thread without landing on the prompt."""
+    CONSOLE.message(text)
+
+
+def _discard_queued_packets(update_queue):
+    """Drop every queued state packet; each one carries the whole state."""
+    while True:
+        try:
+            update_queue.get_nowait()
+        except queue.Empty:
+            return
 
 
 def _sequence_lookup(records):
@@ -193,7 +225,16 @@ class HeadlessViewer:
             
         self.history_index = len(self.command_history)
         self.update_queue = queue.Queue()
+        #: The visibility the newest state packet carried, or that a client
+        #: receives on connect; update_selection_visual compares against it.
+        self._packet_visible = self.visible_mask.copy()
         self.edges = None  # Full edge list retained for commands
+        #: The edge threshold `hide single` applies (the desktop's slider).
+        self.current_slider_threshold = _initial_edge_threshold()
+        #: Runs `label` and `logo` artifacts, as the desktop's scheduler does.
+        self.background_job_scheduler = Background_Job_Scheduler_VR.BackgroundJobScheduler(
+            say=_console_message
+        )
         
         self.transform_position = [0.0, 0.0, 0.0]
         self.transform_rotation = [0.0, 0.0, 0.0, 1.0]
@@ -213,79 +254,98 @@ class HeadlessViewer:
             self.alignment_offset = 0
         self.load_global_alignment()
 
-    def _save_state(self):
-        snapshot = {
+    def _get_current_state(self):
+        """Package the state undo restores: what the desktop's helper covers.
+
+        Besides the visuals, that is the positions, the render order, the
+        clustering parameters, the metadata (`meta delete` and `meta upload`
+        save their undo step here) and the cache's extra datasets; `save`
+        writes all of them, and `export` names its folder after the
+        clustering parameters.
+        """
+        return {
+            "pos": self.pos.copy() if hasattr(self, "pos") else None,
             "colors": self.current_colors.copy(),
             "sizes": self.current_sizes.copy(),
             "shapes": self.current_shapes.copy(),
             "visible": self.visible_mask.copy(),
+            "node_render_order": self.node_render_order.copy(),
             "cluster_labels": self.cluster_labels.copy() if self.cluster_labels is not None else None,
-            "group_labels": [s.copy() for s in self.group_labels]
+            "group_labels": [s.copy() for s in self.group_labels],
+            "last_cluster_params": self.last_cluster_params,
+            "metadata": {
+                name: {"type": entry["type"], "values": entry["values"].copy()}
+                for name, entry in self.metadata.items()
+            },
+            "custom": {
+                name: copy.deepcopy(getattr(self, name, None))
+                for name in self._cacheable_attrs
+            },
         }
-        self.undo_stack.append(snapshot)
+
+    def _apply_state(self, snapshot):
+        """Restore a _get_current_state snapshot, as the desktop's _apply_state does."""
+        if snapshot["pos"] is not None:
+            self.pos = snapshot["pos"]
+        self.current_colors = snapshot["colors"]
+        self.current_sizes = snapshot["sizes"]
+        self.current_shapes = snapshot["shapes"]
+        self.visible_mask = snapshot["visible"]
+        self.node_render_order = snapshot["node_render_order"]
+        self.cluster_labels = snapshot["cluster_labels"]
+        # The desktop drops the parameters along with the clusters.
+        self.last_cluster_params = (
+            snapshot["last_cluster_params"] if snapshot["cluster_labels"] is not None else None
+        )
+        self.group_labels = snapshot["group_labels"]
+        self.metadata = snapshot["metadata"]
+        for name, value in snapshot["custom"].items():
+            setattr(self, name, value)
+            self._cacheable_attrs.add(name)
+        # A node the restored state hides cannot stay selected.
+        self.selected_indices = [i for i in self.selected_indices if self.visible_mask[i]]
+
+    def _save_state(self):
+        self.undo_stack.append(self._get_current_state())
         if len(self.undo_stack) > self.max_history:
             self.undo_stack.pop(0)
         self.redo_stack.clear()
         
     def _do_undo(self):
+        """Restore the previous state; True when there was one, as on the desktop."""
         if not self.undo_stack:
             print("Nothing to undo.")
             self.console_text.text = "Nothing to undo."
-            return
-            
+            return False
+
         snapshot = self.undo_stack.pop()
-        current_state = {
-            "colors": self.current_colors.copy(),
-            "sizes": self.current_sizes.copy(),
-            "shapes": self.current_shapes.copy(),
-            "visible": self.visible_mask.copy(),
-            "cluster_labels": self.cluster_labels.copy() if self.cluster_labels is not None else None,
-            "group_labels": [s.copy() for s in self.group_labels]
-        }
-        self.redo_stack.append(current_state)
-        
-        self.current_colors = snapshot["colors"]
-        self.current_sizes = snapshot["sizes"]
-        self.current_shapes = snapshot["shapes"]
-        self.visible_mask = snapshot["visible"]
-        self.cluster_labels = snapshot["cluster_labels"]
-        self.group_labels = snapshot["group_labels"]
-        
+        self.redo_stack.append(self._get_current_state())
+        self._apply_state(snapshot)
+
         self.update_nodes()
         self.update_edges()
-        
+
         print("Undo successful.")
         self.console_text.text = "Undo successful."
-        
+        return True
+
     def _do_redo(self):
+        """Reapply an undone state; True when there was one, as on the desktop."""
         if not self.redo_stack:
             print("Nothing to redo.")
             self.console_text.text = "Nothing to redo."
-            return
-            
+            return False
+
         snapshot = self.redo_stack.pop()
-        current_state = {
-            "colors": self.current_colors.copy(),
-            "sizes": self.current_sizes.copy(),
-            "shapes": self.current_shapes.copy(),
-            "visible": self.visible_mask.copy(),
-            "cluster_labels": self.cluster_labels.copy() if self.cluster_labels is not None else None,
-            "group_labels": [s.copy() for s in self.group_labels]
-        }
-        self.undo_stack.append(current_state)
-        
-        self.current_colors = snapshot["colors"]
-        self.current_sizes = snapshot["sizes"]
-        self.current_shapes = snapshot["shapes"]
-        self.visible_mask = snapshot["visible"]
-        self.cluster_labels = snapshot["cluster_labels"]
-        self.group_labels = snapshot["group_labels"]
-        
+        self.undo_stack.append(self._get_current_state())
+        self._apply_state(snapshot)
+
         self.update_nodes()
         self.update_edges()
-        
+
         print("Redo successful.")
         self.console_text.text = "Redo successful."
+        return True
 
     def load_global_alignment(self):
         # `reference` reloads through here, so the offset must travel with it,
@@ -297,7 +357,10 @@ class HeadlessViewer:
                 active_reference=self.active_reference,
                 alignment_offset=self.alignment_offset,
             )
-            print("Alignment Manager successfully loaded.")
+            # With no MSA, or one that failed to load, the manager has already
+            # said why and holds no alignment.
+            if getattr(self.alignment, "aln", None) is not None:
+                print("Alignment Manager successfully loaded.")
         except Exception as e:
             print(f"Warning: Failed to load Alignment Manager: {e}")
             self.alignment = None
@@ -383,6 +446,8 @@ class HeadlessViewer:
         visible = state.get("visible_mask")
         if visible is not None and fits("visibility", visible):
             self.visible_mask = np.asarray(visible, dtype=bool)
+            # A client connecting later receives this in its initial packet.
+            self._packet_visible = self.visible_mask.copy()
         order = state.get("node_render_order")
         if order is not None:
             import Cache_Manifest as cache_manifest
@@ -463,13 +528,28 @@ class HeadlessViewer:
             "globalSettings": self.get_global_settings(),
             "transformState": self.get_transform_state()
         }
+        self._packet_visible = self.visible_mask.copy()
+        if not self.is_connected:
+            # Every packet carries the whole state, so with no client to send
+            # them to only the newest matters; ~2 MB each at 13k nodes, they
+            # would otherwise pile up until a client connects.
+            _discard_queued_packets(self.update_queue)
         self.update_queue.put(packet)
         
     def update_edges(self):
         pass # Handled implicitly by the VR client when nodes update
 
     def update_selection_visual(self):
-        pass # Selection highlighting is handled locally by the VR client
+        """Send the nodes when their visibility changed, as the desktop redraws them.
+
+        Selection highlighting is handled locally by the VR client, but `hide`
+        changes the visibility and then calls only this and update_edges; the
+        desktop's version redraws the nodes, and so this sends them. A command
+        that only selects, or one that already called update_nodes, leaves the
+        visibility as the last packet carried it, and sends nothing more.
+        """
+        if not np.array_equal(self.visible_mask, self._packet_visible):
+            self.update_nodes()
         
     def process_command(self, cmd_str, record_history=True):
         cmd_str = cmd_str.strip()
@@ -503,6 +583,13 @@ class HeadlessViewer:
             command_name = command_name[3:]
         args = parts[1:]
         
+        # A command is a public module of the commands package. Anything else
+        # would import something that is not one (`a.b`, `..`, `__init__`)
+        # and fail with a misleading error instead.
+        if not command_name.isidentifier() or command_name.startswith("_"):
+            print(f"Unknown command: {command_name}")
+            return False
+
         module_name = f"commands.{command_name}"
         try:
             module = importlib.import_module(module_name)
@@ -518,21 +605,22 @@ class HeadlessViewer:
                     f"Command '{command_name}' is unavailable: "
                     f"missing dependency {error.name!r}."
                 )
-            return
+            return False
         except Exception as error:
             print(f"Error loading command '{command_name}': {error}")
             traceback.print_exc()
-            return
+            return False
 
         if not hasattr(module, "run"):
             print(f"Error: no run() entry point in commands/{command_name}.py")
-            return
+            return False
 
         try:
             module.run(self, args)
         except Exception as error:
             print(f"Command Error: {error}")
             traceback.print_exc()
+            return False
 
 def _as_three_dimensional(positions):
     """The VR client expects three floats per node; lift a 2D cache onto z = 0."""
@@ -697,8 +785,19 @@ def verify_layout_cache(cache_path):
     )
 
 
+def _modified_at(path):
+    try:
+        return os.path.getmtime(path)
+    except OSError:
+        return float("-inf")
+
+
 def _newest_cache_in(folder):
-    """Latest .h5 in a cache folder, or None.
+    """The most recently written .h5 in a cache folder, or None.
+
+    Newest means last modified, the order both Config GUIs list a folder's
+    caches in: `save` writes version_NN.h5 or a name of the user's choosing,
+    so neither the name nor its sort order says which came last.
 
     The folder name is escaped before globbing: cache folders carry the model
     tag in square brackets (..._[E1_RA]_...), which glob reads as a character
@@ -706,8 +805,10 @@ def _newest_cache_in(folder):
     """
     if not folder or not os.path.isdir(folder):
         return None
-    candidates = sorted(glob.glob(os.path.join(glob.escape(folder), "*.h5")))
-    return candidates[-1] if candidates else None
+    candidates = glob.glob(os.path.join(glob.escape(folder), "*.h5"))
+    if not candidates:
+        return None
+    return max(candidates, key=lambda path: (_modified_at(path), path))
 
 
 def _available_caches():
@@ -1228,7 +1329,10 @@ def unity_server_loop(server_socket, viewer, pos, edges_to_send, n_nodes, n_edge
                     "Establishing persistent JSON connection..."
                 )
                 
-                # Send initial state (colors, sizes, visible, settings, transform)
+                # Send initial state (colors, sizes, visible, settings, transform).
+                # It is the current state, so a packet queued before it is
+                # older and, sent after it, would undo part of it.
+                _discard_queued_packets(viewer.update_queue)
                 initial_packet = {
                     "colors": viewer.current_colors.flatten().tolist(),
                     "sizes": viewer.current_sizes.tolist(),
@@ -1657,6 +1761,8 @@ def start_server(host=None, port=None):
     except KeyboardInterrupt:
         print("Server shutting down.")
     finally:
+        # Queued label/logo jobs are dropped, as the desktop drops them at exit.
+        viewer.background_job_scheduler.shutdown()
         # Terminate the VR app if we launched it
         vr_proc = getattr(viewer, "vr_proc", None)
         if vr_proc is not None:
