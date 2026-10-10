@@ -126,9 +126,13 @@ def run(viewer, args):
         viewer.load_global_alignment()
 
         # A parseable partial or zero-overlap MSA is valid. Only a genuine loader
-        # failure leaves aln as None and triggers rollback.
+        # failure leaves aln as None and triggers rollback. The loader says why
+        # on the manager it leaves behind.
         if viewer.alignment is None or viewer.alignment.aln is None:
-            raise ValueError("Alignment loader failed to return an alignment.")
+            reason = getattr(viewer.alignment, 'load_failure', None)
+            raise ValueError(
+                "Alignment loader failed to return an alignment." if reason is None else str(reason)
+            )
 
         aligned_count = len(getattr(viewer.alignment, 'matched_headers', []))
         total_count = len(getattr(viewer, 'full_headers', []))

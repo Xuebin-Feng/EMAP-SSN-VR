@@ -541,6 +541,44 @@ class AlignmentLoadMessageTests(unittest.TestCase):
         self.assertIsNone(viewer.alignment.aln)
         self.assertNotIn("successfully loaded", buffer.getvalue())
 
+    def test_a_failed_load_reports_the_loaders_reason(self):
+        root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, root, ignore_errors=True)
+        good = write_msa(root)
+        cases = (
+            ("unequal.fasta", ">{0}\nMKT-A\n>{1}\nMKT\n".format(*ALIGNED_HEADERS[:2]),
+             "MSA rejected: MSA sequences must have equal aligned lengths; expected 5, found "
+             f"'{ALIGNED_HEADERS[1]}' (3)."),
+            ("empty.fasta", "", "MSA rejected: MSA FASTA contains no records."),
+        )
+        for name, content, reason in cases:
+            with self.subTest(file=name):
+                path = os.path.join(root, name)
+                with open(path, "w", encoding="utf-8", newline="\n") as handle:
+                    handle.write(content)
+                patch_settings(self, MSA_FILE=good)
+                viewer = aligned_viewer()
+                with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+                    viewer.load_global_alignment()
+                previous = viewer.alignment
+                self.assertIsNotNone(previous.aln)
+
+                context = RecordingContext()
+                with Viewer_Command_Portal.bind(context), redirect_stdout(io.StringIO()) as output, \
+                        redirect_stderr(io.StringIO()):
+                    viewer.process_command(f"alignment {path}", record_history=False)
+
+                failures = [text for status, text in context.reports if status == "failed"]
+                self.assertTrue(
+                    failures[0].startswith(f"\nFailed to load alignment '{name}': {reason}"), failures
+                )
+                self.assertFalse(any("failed to return an alignment" in text for _, text in context.reports))
+                self.assertFalse(any(status == "succeeded" for status, _ in context.reports))
+                # The terminal shows it too, and the previous alignment is back.
+                self.assertIn(f"Failed to load alignment '{name}': {reason}", output.getvalue())
+                self.assertIs(viewer.alignment, previous)
+                self.assertEqual(cfg.MSA_FILE, good)
+
     def test_a_loaded_alignment_is_announced(self):
         root = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, root, ignore_errors=True)
