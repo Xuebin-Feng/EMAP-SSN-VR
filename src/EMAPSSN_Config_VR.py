@@ -781,6 +781,7 @@ if __name__ == "__main__":
         QFrame, QScrollArea,
     )
     from desktop.Desktop_App import (
+        ResponsiveColumnsLayout,
         ResponsiveFieldLayout,
         ResponsiveFlowLayout,
         ResponsiveSelectorLayout,
@@ -3914,22 +3915,35 @@ if __name__ == "__main__":
             row.addWidget(toggle)
             return content
 
+        def _align_bridge_labels(self, stacked):
+            """Give the endpoint half's first labels the label column while the halves stack."""
+            width = self._bridge_label_width
+            if stacked:
+                width = max(width, int(getattr(self, "label_column_width", 0) or 0))
+            for label in self._bridge_column_labels:
+                label.setFixedWidth(width)
+
         def _build_bridge_fields(self):
-            """Two equal halves with shared columns across the VR client rows."""
+            """Two equal halves with shared columns across the VR client rows.
+
+            The halves sit side by side while both fit, and stack once the tab is
+            too narrow, so the tab never scrolls sideways at the launch size.
+            """
             content = QWidget()
             content.setObjectName("vrBridgeFields")
-            layout = QHBoxLayout(content)
-            layout.setContentsMargins(0, 0, 0, 0)
-            layout.setSpacing(24)
+            layout = ResponsiveColumnsLayout(content, spacing=24, on_stack=self._align_bridge_labels)
             left = QGridLayout()
             right = QGridLayout()
-            for grid in (left, right):
+            for name, grid in (("vrBridgeClient", left), ("vrBridgeEndpoint", right)):
+                half = QWidget()
+                half.setObjectName(name)
+                half.setLayout(grid)
                 grid.setContentsMargins(0, 0, 0, 0)
                 grid.setHorizontalSpacing(CONFIG_FIELD_HORIZONTAL_SPACING)
                 grid.setVerticalSpacing(CONFIG_TAB_ROW_SPACING)
                 for row in (0, 1):
                     grid.setRowMinimumHeight(row, 28)
-                layout.addLayout(grid, 1)
+                layout.addWidget(half)
             left.setColumnStretch(3, 1)
             right.setColumnStretch(1, 1)
             right.setColumnStretch(3, 1)
@@ -4017,6 +4031,10 @@ if __name__ == "__main__":
             )
             for label in (host_label, port_label, scale_label):
                 label.setFixedWidth(right_label_width)
+            # Stacked under the client half, the endpoint half's first labels take
+            # the label column, so its fields line up with every field above.
+            self._bridge_column_labels = (host_label, scale_label)
+            self._bridge_label_width = right_label_width
             right.addWidget(scale_label, 1, 0)
             scale_and_quit = QHBoxLayout()
             scale_and_quit.setContentsMargins(0, 0, 0, 0)

@@ -362,6 +362,70 @@ class AlignmentOffsetTests(unittest.TestCase):
                     self.assertEqual(row["offset_width"], max(100, row["offset_minimum"]))
 
 
+class BridgeFieldsTests(unittest.TestCase):
+    """The VR client rows stack in a narrow tab, as the other rows do, and line up with them."""
+
+    def test_client_halves_stack_without_sideways_scroll_and_keep_the_label_column(self):
+        report = report_from(
+            """
+            from PySide6.QtCore import QPoint
+            from PySide6.QtWidgets import QWidget
+            window.show()
+
+            def flush():
+                for _ in range(6):
+                    app.processEvents()
+
+            def resize_panel(width):
+                window.resize(width + 360, 850)
+                window.main_split.setSizes([width + 4, 326])
+                flush()
+                delta = width - window.tabs.currentWidget().width()
+                left, right = window.main_split.sizes()
+                window.main_split.setSizes([left + delta, right - delta])
+                flush()
+
+            window.tabs.setCurrentIndex(1)
+            scroll = window.tabs.currentWidget()
+            page = scroll.widget()
+            fields = page.findChild(QWidget, "vrBridgeFields")
+            client = page.findChild(QWidget, "vrBridgeClient")
+            endpoint = page.findChild(QWidget, "vrBridgeEndpoint")
+
+            def left(widget):
+                return widget.mapTo(page, QPoint(0, 0)).x()
+
+            rows = []
+            for width in (1400, 700, 1400):
+                resize_panel(width)
+                rows.append({
+                    "width": width,
+                    "stacked": bool(fields.property("stacked")),
+                    "sideways": scroll.horizontalScrollBar().maximum(),
+                    "tops": [client.y(), endpoint.y()],
+                    "widths": [client.width(), endpoint.width()],
+                    "field_x": [left(window.inputs[key]) for key in
+                                ("VR_APP_DIR", "VR_HOST", "DISTANCE_SCALE")],
+                })
+            print("@@" + json.dumps(rows))
+            """
+        )
+        for row in report:
+            with self.subTest(width=row["width"]):
+                self.assertEqual(row["sideways"], 0)
+                if row["width"] == 1400:
+                    # Wide: two equal halves side by side, as before.
+                    self.assertFalse(row["stacked"])
+                    self.assertEqual(row["tops"][0], row["tops"][1])
+                    self.assertLessEqual(abs(row["widths"][0] - row["widths"][1]), 1)
+                else:
+                    # Narrow: the endpoint half goes under the client half, and
+                    # its fields start in the label column like the ones above.
+                    self.assertTrue(row["stacked"])
+                    self.assertGreater(row["tops"][1], row["tops"][0])
+                    self.assertEqual(len(set(row["field_x"])), 1, row["field_x"])
+
+
 class DropdownValueTests(unittest.TestCase):
     """Options are read and selected by stored value, as in the desktop Config.
 
