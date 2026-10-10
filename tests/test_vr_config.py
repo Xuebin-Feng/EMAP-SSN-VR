@@ -343,6 +343,7 @@ class AlignmentOffsetTests(unittest.TestCase):
                     "stacked": bool(offset.parentWidget().property("stacked")),
                     "label_fits": label.width() >= label.sizeHint().width(),
                     "offset_width": offset.width(),
+                    "offset_minimum": offset.minimumSizeHint().width(),
                     "rights": [right(offset), right(window.line_ref),
                                right(window.spin_min_occ)],
                 })
@@ -357,7 +358,8 @@ class AlignmentOffsetTests(unittest.TestCase):
                 if stacked:
                     self.assertEqual(len(set(row["rights"])), 1, row["rights"])
                 else:
-                    self.assertEqual(row["offset_width"], 100)
+                    # 100 px, unless the theme's padding makes the field need more.
+                    self.assertEqual(row["offset_width"], max(100, row["offset_minimum"]))
 
 
 class DropdownValueTests(unittest.TestCase):
