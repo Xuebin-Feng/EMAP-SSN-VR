@@ -15,7 +15,7 @@
 
 """Run a command script, matching the desktop viewer everywhere it can.
 
-Two deliberate differences from upstream, both forced by the environment:
+Three deliberate differences from upstream, all forced by the environment:
 
 * **The script is named on the command line.** Upstream takes no argument and
   opens a Qt file dialog on ``viewer.canvas.native``. There is no Qt and no
@@ -31,6 +31,17 @@ Two deliberate differences from upstream, both forced by the environment:
   desktop-only - so those branches would be unreachable code referencing a
   context type this process never constructs. They belong back here on the day
   an agent does drive the VR viewer, not before.
+
+* **A ``.py`` script runs in the foreground.** The desktop viewer runs it on a
+  background thread so its GUI stays responsive, and hands the output back on
+  the GUI thread. Here a command runs on the terminal loop's own thread, and the
+  VR client is served by other threads, so waiting for the script blocks
+  nothing but the prompt, as every other command does. Nothing needs handing
+  back, and the commands it printed run once it has ended.
+
+Everything else is shared with the desktop viewer, rule for rule: a script runs
+in its own folder, holds at most 1000 commands, and ends at the first command
+that fails.
 """
 
 import codecs
@@ -39,14 +50,19 @@ import locale
 import os
 
 import Command_Engine
+from Viewer_Command_Portal import MAX_SCRIPT_COMMANDS
 
 USAGE = (
     "Usage: run <script_path>\n"
     "Description: Executes a list of commands in sequence from a text file or a "
     "Python script.\n"
     "  - For .txt files: Executes each line as a command.\n"
-    "  - For .py files: Executes the Python script in a subprocess and runs the "
-    "commands outputted to stdout.\n"
+    "  - For .py files: Executes the Python script in a subprocess, in the "
+    "script's own folder, and runs the commands outputted to stdout.\n"
+    "  - The first command that fails stops the run; the commands after it are "
+    "not run.\n"
+    f"  - A script may hold at most {MAX_SCRIPT_COMMANDS} commands; a longer one "
+    "is refused before any command runs.\n"
     "Note: The desktop viewer opens a file dialog here. This viewer is headless, "
     "so name the script on the command line.\n"
     "Example:\n"
@@ -132,13 +148,21 @@ def run(viewer, args):
             # Execute python script in a subprocess using the current python executable.
             # Its output is decoded as UTF-8, so the child must print UTF-8; a piped
             # child otherwise uses the Windows ANSI code page. Bad bytes show as U+FFFD.
+            # It runs in its own folder, so a relative path in it names a file beside
+            # the script, wherever the viewer was started. The path is made absolute
+            # first, as the folder change would otherwise move a relative one.
+            script_path = os.path.abspath(file_path)
+            # No stdin: a script calling input() would otherwise wait on the
+            # VR terminal's own stdin, and the terminal with it.
             result = subprocess.run(
-                [sys.executable, file_path],
+                [sys.executable, script_path],
+                stdin=subprocess.DEVNULL,
                 capture_output=True,
                 text=True,
                 encoding='utf-8',
                 errors='replace',
-                env={**os.environ, 'PYTHONIOENCODING': 'utf-8'}
+                env={**os.environ, 'PYTHONIOENCODING': 'utf-8'},
+                cwd=os.path.dirname(script_path),
             )
 
             if result.returncode != 0:
@@ -152,11 +176,10 @@ def run(viewer, args):
         else:
             commands_lines = read_command_lines(file_path)
 
-        # Execute the commands in sequence
-        executed_count = 0
-        failed_count = 0
+        # The commands the script holds: blank lines, # lines, trailing // comments and
+        # nested run lines are left out, as upstream leaves them out.
+        commands = []
         for line in commands_lines:
-            # Drop blank lines, # lines and any trailing // comment, as upstream does
             cmd_line = Command_Engine.script_command(line)
             if not cmd_line:
                 continue
@@ -174,27 +197,42 @@ def run(viewer, args):
             if command_name == 'run':
                 print("Warning: Recursive 'run' command in script ignored to prevent infinite loop.")
                 continue
+            commands.append(cmd_line)
 
+        total = len(commands)
+        if total > MAX_SCRIPT_COMMANDS:
+            msg = (f"Error: The script holds {total} commands, more than the "
+                   f"{MAX_SCRIPT_COMMANDS} a script may run. None were run.")
+            Command_Engine.command_failed(viewer, msg)
+            Command_Engine.print_help(viewer, msg, report_message=False)
+            return
+
+        # Execute the commands in sequence, up to the first one that fails.
+        for index, cmd_line in enumerate(commands, 1):
             print(f"[Run] Executing: {cmd_line}")
             # Upstream calls Command_Engine._dispatch_user_command here, which
             # is the desktop viewer's own inner dispatch. The VR viewer owns
             # dispatch instead, and going through it keeps the 'vr_' prefix and
             # the module-reload behaviour identical to a typed command.
-            # Every line runs, as before; a line that failed is counted, whether
-            # the command reported it or the dispatch itself failed.
+            # A command failed whether it reported the failure or the dispatch
+            # itself failed; one cancelled ends the run too, as upstream's does.
             with Command_Engine.recorded_outcome() as outcome:
                 dispatched = viewer.process_command(cmd_line, record_history=False)
-            executed_count += 1
-            if dispatched is False or outcome['status'] == 'failed':
-                failed_count += 1
+            if dispatched is False or outcome['status'] in ('failed', 'cancelled'):
+                cancelled = outcome['status'] == 'cancelled'
+                remaining = total - index
+                msg = (f"Batch stopped at command {index} of {total}: '{cmd_line}' "
+                       f"{'was cancelled' if cancelled else 'failed'}.")
+                if remaining:
+                    msg += f" Not run: the remaining {remaining} command{'s' if remaining != 1 else ''}."
+                if cancelled:
+                    Command_Engine.command_cancelled(viewer, msg)
+                else:
+                    Command_Engine.command_failed(viewer, msg)
+                Command_Engine.print_help(viewer, msg, report_message=False)
+                return
 
-        if failed_count:
-            msg = f"Batch execution finished: {failed_count} of {executed_count} commands failed."
-            Command_Engine.command_failed(viewer, msg)
-            Command_Engine.print_help(viewer, msg, report_message=False)
-            return
-
-        msg = f"Batch execution completed: {executed_count} commands run."
+        msg = f"Batch execution completed: {total} commands run."
         Command_Engine.print_help(viewer, msg)
 
     except Exception as e:

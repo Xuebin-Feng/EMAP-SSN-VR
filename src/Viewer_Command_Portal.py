@@ -42,6 +42,9 @@ from datetime import datetime, timezone
 
 CURRENT = ContextVar("viewer_command_context", default=None)
 
+#: The most commands a run script may hold; the main program's portal enforces the same limit.
+MAX_SCRIPT_COMMANDS = 1000
+
 
 def now():
     return datetime.now(timezone.utc).isoformat()

@@ -22,11 +22,14 @@ the ANSI code page (cp1252) unless PYTHONIOENCODING or PYTHONUTF8 is set, and
 nothing in opt_vr sets them: _bootstrap_vr reconfigures only this process's
 own streams, not a child's. A .txt file is decoded as Notepad decodes it: by
 its byte-order mark, else as UTF-8, else in the ANSI code page. Upstream's
-tests/test_run_command.py pins the same rules for the desktop viewer.
+tests/test_run_command.py pins the same rules for the desktop viewer, and the
+two that every script obeys: it holds at most 1000 commands, and the first
+command that fails ends the run. A Python script runs in its own folder.
 """
 
 import codecs
 import os
+import subprocess
 import tempfile
 import unittest
 from contextlib import contextmanager
@@ -78,12 +81,19 @@ class RunFixture:
         self.script = Path(directory.name) / "commands.py"
         self.viewer = build_viewer()
 
-    def typed(self):
-        """Run `run` as typed into the VR viewer; return the commands run.py dispatched and what it printed."""
+    def typed(self, quick=False):
+        """Run `run` as typed into the VR viewer; return the commands run.py dispatched and what it printed.
+
+        With quick, the commands after `run` are only recorded, as if each succeeded: a long script is fast."""
         command = f"run {self.script}"
-        with mock.patch.object(
-            self.viewer, "process_command", wraps=self.viewer.process_command
-        ) as dispatch:
+        real = self.viewer.process_command
+
+        def process_command(text, *args, **options):
+            if quick and text != command:
+                return None
+            return real(text, *args, **options)
+
+        with mock.patch.object(self.viewer, "process_command", side_effect=process_command) as dispatch:
             output = run_command(self.viewer, command)
         commands = [call.args[0] for call in dispatch.call_args_list]
         self.assertEqual(commands[0], command)
@@ -91,18 +101,71 @@ class RunFixture:
 
 
 class FailedLineTests(RunFixture, unittest.TestCase):
-    """Every line still runs, and the batch says how many failed."""
+    """The first line that fails ends the run, and the batch says which it was."""
 
-    def test_a_failed_line_is_counted_and_comments_are_skipped(self):
+    def test_a_failed_line_stops_the_script_and_names_the_line(self):
+        for lines, dispatched, message in (
+                # No command is named bogus; reset rejects its target.
+                (("reset hide", "bogus_command_xyz", "reset colors", "reset sizes"),
+                 ["reset hide", "bogus_command_xyz"],
+                 "Batch stopped at command 2 of 4: 'bogus_command_xyz' failed. Not run: the remaining 2 commands."),
+                (("reset bogus", "reset hide", "bogus"), ["reset bogus"],
+                 "Batch stopped at command 1 of 3: 'reset bogus' failed. Not run: the remaining 2 commands."),
+                (("reset hide", "bogus_command_xyz", "reset colors"), ["reset hide", "bogus_command_xyz"],
+                 "Batch stopped at command 2 of 3: 'bogus_command_xyz' failed. Not run: the remaining 1 command."),
+                # The last line leaves nothing out.
+                (("reset hide", "bogus_command_xyz"), ["reset hide", "bogus_command_xyz"],
+                 "Batch stopped at command 2 of 2: 'bogus_command_xyz' failed."),
+                (("bogus_command_xyz",), ["bogus_command_xyz"],
+                 "Batch stopped at command 1 of 1: 'bogus_command_xyz' failed.")):
+            with self.subTest(lines=lines):
+                self.script = self.script.with_suffix(".txt")
+                self.script.write_text("\n".join(lines) + "\n", encoding="utf-8")
+                commands, output = self.typed()
+                # The lines after the failure are not dispatched.
+                self.assertEqual(commands, dispatched, output)
+                self.assertIn(message, output)
+                self.assertNotIn("Batch execution", output)
+
+    def test_comments_and_nested_run_lines_are_not_commands(self):
         self.script = self.script.with_suffix(".txt")
         self.script.write_text(
-            "bogus_command_xyz\n# a comment line\nreset hide // trailing note\n",
-            encoding="utf-8",
+            "bogus_command_xyz\n# a comment line\nreset hide // trailing note\n", encoding="utf-8"
         )
         commands, output = self.typed()
-        self.assertEqual(commands, ["bogus_command_xyz", "reset hide"], output)
-        self.assertIn("Batch execution finished: 1 of 2 commands failed.", output)
-        self.assertNotIn("Batch execution completed", output)
+        self.assertEqual(commands, ["bogus_command_xyz"], output)
+        self.assertIn("Batch stopped at command 1 of 2: 'bogus_command_xyz' failed. Not run: the remaining 1 command.", output)
+
+        self.script.write_text("run x.txt\nreset hide\nvr_run x.txt\nRUN x.txt\nbogus_command_xyz\n", encoding="utf-8")
+        commands, output = self.typed()
+        self.assertEqual(commands, ["reset hide", "bogus_command_xyz"], output)
+        self.assertEqual(output.count("Recursive 'run' command in script ignored"), 3, output)
+        self.assertIn("Batch stopped at command 2 of 2: 'bogus_command_xyz' failed.", output)
+
+    def test_the_commands_a_python_script_prints_stop_at_the_first_failure_too(self):
+        self.script.write_text(
+            "print('reset hide')\nprint('bogus_command_xyz')\nprint('reset colors')\n", encoding="utf-8"
+        )
+        commands, output = self.typed()
+        self.assertEqual(commands, ["reset hide", "bogus_command_xyz"], output)
+        self.assertIn("Batch stopped at command 2 of 3: 'bogus_command_xyz' failed. Not run: the remaining 1 command.", output)
+
+    def test_a_cancelled_line_stops_the_script_too(self):
+        # As a cancelled command ends a request sent through the main program's command portal.
+        import Command_Engine
+
+        def process_command(text, *args, **options):
+            if text.startswith("run "):
+                return real(text, *args, **options)
+            (Command_Engine.command_cancelled if text == "cancel" else Command_Engine.command_succeeded)(self.viewer, text)
+
+        real = self.viewer.process_command
+        self.script = self.script.with_suffix(".txt")
+        self.script.write_text("one\ncancel\nthree\n", encoding="utf-8")
+        with mock.patch.object(self.viewer, "process_command", side_effect=process_command) as dispatch:
+            output = run_command(self.viewer, f"run {self.script}")
+        self.assertEqual([call.args[0] for call in dispatch.call_args_list][1:], ["one", "cancel"])
+        self.assertIn("Batch stopped at command 2 of 3: 'cancel' was cancelled. Not run: the remaining 1 command.", output)
 
     def test_a_clean_script_keeps_the_completed_message(self):
         self.script = self.script.with_suffix(".txt")
@@ -110,6 +173,67 @@ class FailedLineTests(RunFixture, unittest.TestCase):
         commands, output = self.typed()
         self.assertEqual(commands, ["reset hide"], output)
         self.assertIn("Batch execution completed: 1 commands run.", output)
+        self.assertNotIn("Batch stopped", output)
+
+
+class CommandLimitTests(RunFixture, unittest.TestCase):
+    """A script holds at most 1000 commands; a longer one is refused before any command runs."""
+
+    def write(self, name, count):
+        self.script = self.script.with_name(name)
+        # Comment lines and nested run lines are not commands, so they do not count.
+        lines = ["# a comment", "run x.txt"] + ['select "one"'] * count
+        if name.endswith(".py"):
+            self.script.write_text("".join(f"print({line!r})\n" for line in lines), encoding="utf-8")
+        else:
+            self.script.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    def test_scripts_of_1000_commands_run_and_longer_ones_are_refused(self):
+        for name in ("commands.txt", "commands.py"):
+            for count, message in (
+                    (1000, "Batch execution completed: 1000 commands run."),
+                    (1001, "Error: The script holds 1001 commands, more than the 1000 a script may run. None were run."),
+                    (5000, "Error: The script holds 5000 commands, more than the 1000 a script may run. None were run.")):
+                with self.subTest(script=name, commands=count):
+                    self.write(name, count)
+                    commands, output = self.typed(quick=True)
+                    self.assertEqual(len(commands), count if count <= 1000 else 0)
+                    self.assertIn(message, output)
+                    self.assertEqual("Batch" in output, count <= 1000, output)
+
+
+class ScriptFolderTests(RunFixture, unittest.TestCase):
+    """A Python script runs in its own folder, so a relative path in it names a file beside the script."""
+
+    def test_a_script_runs_in_its_own_folder(self):
+        folder = self.script.parent / "scripts"
+        folder.mkdir()
+        self.script = folder / "commands.py"
+        self.assertNotEqual(os.path.realpath(os.getcwd()), os.path.realpath(folder))
+        self.script.write_text(
+            "import os\n"
+            "print('select \"' + os.path.realpath(os.getcwd()) + '\"')\n"
+            "open('written_beside_the_script.txt', 'w').close()\n",
+            encoding="utf-8",
+        )
+        with mock.patch("subprocess.run", wraps=subprocess.run) as run:
+            commands, output = self.typed()
+        self.assertEqual(commands, [f'select "{os.path.realpath(folder)}"'], output)
+        self.assertEqual(os.path.realpath(run.call_args.kwargs["cwd"]), os.path.realpath(folder))
+        self.assertTrue((folder / "written_beside_the_script.txt").exists())
+
+    def test_a_script_named_by_a_relative_path_still_runs(self):
+        # The folder change must not turn the relative path into one that names nothing.
+        folder = self.script.parent / "scripts"
+        folder.mkdir()
+        (folder / "commands.py").write_text(
+            "import os\nprint('select \"' + os.path.basename(os.getcwd()) + '\"')\n", encoding="utf-8")
+        previous = os.getcwd()
+        self.addCleanup(os.chdir, previous)  # Before the temporary folder is removed, so it is not the working folder then.
+        os.chdir(self.script.parent)
+        output = run_command(self.viewer, f"run {os.path.join('scripts', 'commands.py')}")
+        self.assertIn('[Run] Executing: select "scripts"', output)
+        self.assertNotIn("Python script failed", output)
 
 
 class ScriptOutputTests(RunFixture, unittest.TestCase):
