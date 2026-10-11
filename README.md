@@ -495,9 +495,9 @@ Unity client, so saved settings and profiles keep working.
 Apache License 2.0 — see [LICENSE](LICENSE). This covers everything in this
 repository and the VR client's own code. The client that `install_vr.bat`
 downloads also contains Godot Engine (MIT) and the components compiled into
-it, all under permissive terms: see
-[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md), which ships inside every
-client release as well.
+it, all under permissive licences apart from Mozilla's CA certificate bundle
+(MPL-2.0): see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md), which ships
+inside every client release as well.
 
 Revisions before the Godot client shipped a Unity-built player under
 different terms. Its notices are in those revisions.
