@@ -804,8 +804,10 @@ class ThemeColorTests(unittest.TestCase):
             def section_lines(shown):
                 lines = [frame for frame in shown.findChildren(QFrame)
                          if frame.property("role") == "separator" and frame.isVisible()]
-                return {"count": len(lines), "colours": sorted(
-                    {line.grab().toImage().pixelColor(line.width() // 2, 0).name() for line in lines})}
+                images = [line.grab().toImage() for line in lines]
+                return {"count": len(lines), "heights": sorted({line.height() for line in lines}),
+                        "colours": sorted({image.pixelColor(image.width() // 2, y).name()
+                                           for image in images for y in range(image.height())})}
 
             window.show()
             for _ in range(4):
@@ -832,6 +834,7 @@ class ThemeColorTests(unittest.TestCase):
                 "lines_after": section_lines(replacement),
                 "line_shades": {name: theme_tokens(name)["separator"] for name in ("teal", "orange")},
                 "border": theme_tokens("teal")["border"],
+                "thickness": theme_tokens("teal")["separator_thickness"],
             }, default=str))
             window = replacement
             """,
@@ -860,6 +863,9 @@ class ThemeColorTests(unittest.TestCase):
         self.assertEqual(report["lines_before"]["colours"], [shades["teal"]])
         self.assertGreater(report["lines_after"]["count"], 0)
         self.assertEqual(report["lines_after"]["colours"], [shades["orange"]])
+        # As thick as the theme's lines, the same in every window.
+        for lines in (report["lines_before"], report["lines_after"]):
+            self.assertEqual(lines["heights"], [report["thickness"]])
 
 
 class RunTimeTextTests(unittest.TestCase):
