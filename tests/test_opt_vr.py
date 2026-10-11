@@ -671,6 +671,57 @@ class ExportCacheNameTests(unittest.TestCase):
                     output,
                 )
 
+    def results_ignore_case(self):
+        """Whether the export folder's parent, <root>/results, ignores letter case:
+        write case-twin and CASE-TWIN in a new subfolder and count the files."""
+        twins = tempfile.mkdtemp(dir=os.path.join(self.root, "results"))
+        try:
+            for name in ("case-twin", "CASE-TWIN"):
+                with open(os.path.join(twins, name), "w", encoding="utf-8") as handle:
+                    handle.write(name)
+            return len(os.listdir(twins)) == 1
+        finally:
+            shutil.rmtree(twins)
+
+    def test_group_names_differing_only_in_case_are_refused_where_the_folder_ignores_case(self):
+        # Windows folders ignore letter case unless fsutil flags them otherwise.
+        os.makedirs(os.path.join(self.root, "results"))
+        if not self.results_ignore_case():
+            self.skipTest("This machine's temporary folder keeps letter case apart.")
+        viewer, _ = self.open_saved(
+            [{"Alpha"}, {"alpha"}, set(), set(), set()], ["LEIDEN_1.0", 2]
+        )
+        output = run_command(viewer, "export groups")
+        self.assertIn(
+            "Error: Export refused: Alpha.fasta and alpha.fasta differ only in letter case, "
+            "so this folder would write them to one file.",
+            output,
+        )
+        self.assertEqual(self.written(), [])
+        self.assertEqual(sorted(os.listdir(self.root)), ["outside", "results"])
+        self.assertEqual(os.listdir(os.path.join(self.root, "results")), [])
+
+    def test_group_names_differing_only_in_case_are_both_written_in_a_case_sensitive_folder(self):
+        results = os.path.join(self.root, "results")
+        os.makedirs(results)
+        try:
+            subprocess.run(
+                ["fsutil.exe", "file", "setCaseSensitiveInfo", results, "enable"],
+                capture_output=True, check=False, timeout=60,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+        if self.results_ignore_case():
+            self.skipTest("fsutil can't make a case-sensitive folder here (it needs the WSL feature).")
+        viewer, _ = self.open_saved(
+            [{"Alpha"}, {"alpha"}, set(), set(), set()], ["LEIDEN_1.0", 2]
+        )
+        self.assertIn("Exported 2 files", run_command(viewer, "export groups"))
+        self.assertEqual(
+            sorted(path.rsplit("/", 1)[1] for path in self.written()),
+            ["Alpha.fasta", "alpha.fasta"],
+        )
+
     def test_plain_names_are_exported_as_before(self):
         # The group command accepts '.' and '..'; their files are the plain
         # names '..fasta' and '...fasta'.

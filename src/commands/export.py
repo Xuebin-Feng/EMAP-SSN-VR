@@ -44,7 +44,11 @@ import os
 import re
 import EMAPSSN_Config as cfg
 import Cache_Manifest as cache_manifest
-from utilities.Output_Names import validate_output_basename
+from utilities.Output_Names import (
+    first_case_collision,
+    folder_ignores_case,
+    validate_output_basename,
+)
 from utilities.Sequence_Utils import write_fasta_atomic
 
 SEQUENCE_EXPORT_DIRECTORY = os.path.join(
@@ -359,6 +363,19 @@ def run(viewer, args):
         viewer.console_text.text = msg
         print(msg)
         Command_Engine.command_succeeded(viewer, msg)
+        return
+
+    # Names that differ only in letter case are one file where the folder ignores
+    # case, so one subset would overwrite the other. Refuse before any folder or
+    # file is created.
+    collision = first_case_collision(file_map)
+    if collision and folder_ignores_case(out_dir):
+        msg = (
+            f"Error: Export refused: {collision[0]} and {collision[1]} differ only in "
+            "letter case, so this folder would write them to one file."
+        )
+        Command_Engine.print_help(viewer, msg)
+        Command_Engine.command_failed(viewer, msg)
         return
 
     os.makedirs(out_dir, exist_ok=True)
