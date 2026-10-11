@@ -35,7 +35,7 @@ Save &amp; Run passes it to the client it starts.</source>
         <location line="+1"/>
         <source>Limit Rendered Edges: ON caps the edges sent to the VR client at Max Edges; OFF sends all retained edges.
 Reducing the rendered edges can improve VR performance.</source>
-        <translation type="unfinished">限制绘制的边：开启时，发送给 VR 客户端的边不超过“最大边数”；关闭时发送所有保留的边。
+        <translation type="unfinished">限制绘制的边：开启时，发送给 VR 客户端的边（edge）不超过“最大边数”；关闭时发送所有保留的边。
 减少绘制的边可以提高 VR 性能。</translation>
     </message>
     <message>
@@ -49,7 +49,7 @@ Above this limit, the viewer samples edges with a preference for weaker connecti
         <location line="+1"/>
         <source>Distance Scale: Spacing between the nodes in the headset; 1.0 keeps the layout&apos;s own spacing.
 The VR viewer starts at this value, and the two-hand gesture in the headset changes it during a session.</source>
-        <translation type="unfinished">距离缩放：头显中节点之间的间距；1.0 保持布局本身的间距。
+        <translation type="unfinished">距离缩放：头显中节点（node）之间的间距；1.0 保持布局本身的间距。
 VR 查看器从此值开始，在会话中可用头显里的双手手势调整。</translation>
     </message>
     <message>
@@ -78,7 +78,7 @@ Instantly restores previously computed node positions to bypass physics simulati
         <location line="+27"/>
         <source>Minimum gap kept between independent clusters as they are packed onto concentric spherical shells around the largest one.
 Larger values spread the packed clusters further apart in the final 3D layout.</source>
-        <translation type="unfinished">将独立的簇排布到围绕最大簇的同心球壳上时，簇之间保留的最小间隙。
+        <translation type="unfinished">将独立的簇（cluster）排布到围绕最大簇的同心球壳上时，簇之间保留的最小间隙。
 数值越大，最终三维布局中排布的簇相距越远。</translation>
     </message>
     <message>
