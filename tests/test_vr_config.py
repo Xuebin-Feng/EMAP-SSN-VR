@@ -100,6 +100,10 @@ def run_gui_script(body, project_root=None, pseudo_translation=False):
     GUI starts in English unless pseudo_translation asks for the test-only
     pseudo-language, whatever the shell running the tests has set.
     """
+    if sys.platform != "win32":
+        # The GUI refuses to start anywhere else (_bootstrap_vr), so every
+        # test that runs it is skipped, as the player and lock tests are.
+        raise unittest.SkipTest("the VR Configuration GUI runs on Windows only")
     if project_root is None:
         with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as throwaway:
             return run_gui_script(body, throwaway, pseudo_translation)
