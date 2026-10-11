@@ -796,14 +796,23 @@ class ThemeColorTests(unittest.TestCase):
         cls.report = report_from(
             """
             from PySide6.QtCore import QPoint
+            from PySide6.QtWidgets import QFrame
             from desktop import Desktop_App
-            from desktop.Studio_Theme import theme_color
+            from desktop.Studio_Theme import theme_color, theme_tokens
             from utilities.App_Settings import read_app_settings
+
+            def section_lines(shown):
+                lines = [frame for frame in shown.findChildren(QFrame)
+                         if frame.property("role") == "separator" and frame.isVisible()]
+                return {"count": len(lines), "colours": sorted(
+                    {line.grab().toImage().pixelColor(line.width() // 2, 0).name() for line in lines})}
+
             window.show()
             for _ in range(4):
                 app.processEvents()
             switch, language = window.theme_switch, window.language_selector
             started = {"window": theme_color(), "switch": switch.color(), "setting": switch.theme_setting}
+            lines_before = section_lines(window)
             after_language = (switch.mapTo(window, QPoint(0, 0)).x()
                               > language.mapTo(window, QPoint(language.width(), 0)).x())
             values = window.language_carry_over()["values"]
@@ -819,6 +828,10 @@ class ThemeColorTests(unittest.TestCase):
                 "replacement": replacement.theme_switch.color(),
                 "replaced": replacement is not window and not window.isVisible(),
                 "values_kept": replacement.language_carry_over()["values"] == values,
+                "lines_before": lines_before,
+                "lines_after": section_lines(replacement),
+                "line_shades": {name: theme_tokens(name)["separator"] for name in ("teal", "orange")},
+                "border": theme_tokens("teal")["border"],
             }, default=str))
             window = replacement
             """,
@@ -838,6 +851,15 @@ class ThemeColorTests(unittest.TestCase):
         self.assertEqual((report["color"], report["replacement"]), ("orange", "orange"))
         self.assertTrue(report["replaced"])
         self.assertTrue(report["values_kept"])
+
+    def test_the_section_lines_take_the_colour(self):
+        # A light shade of the window's colour, not the cards' grey hairline, after a redraw too.
+        report, shades = self.report, self.report["line_shades"]
+        self.assertNotEqual(shades["teal"], report["border"])
+        self.assertGreater(report["lines_before"]["count"], 0)
+        self.assertEqual(report["lines_before"]["colours"], [shades["teal"]])
+        self.assertGreater(report["lines_after"]["count"], 0)
+        self.assertEqual(report["lines_after"]["colours"], [shades["orange"]])
 
 
 class RunTimeTextTests(unittest.TestCase):
