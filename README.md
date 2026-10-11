@@ -203,7 +203,7 @@ desktop counterpart, because it holds local paths.
 submodule. That is deliberate: reimplementing it by hand produced a window that
 merely resembled the original and kept turning out to be missing things. A copy
 is identical by construction, so every feature — saved-config profiles, network
-statistics, the score histogram, colour pickers, live field gating, input
+statistics, colour pickers, live field gating, input
 consistency checks — behaves exactly as it does in the main program.
 
 Most of the differences are the VR client block on the Visual Effects tab, and

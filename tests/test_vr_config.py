@@ -179,7 +179,7 @@ class ConfigWindowTests(unittest.TestCase):
                 "settings_file": namespace["SETTINGS_FILE"],
                 "submodule": _bootstrap_vr.OPT_VR_DIR,
                 "has_statistics": hasattr(window, "run_statistics"),
-                "has_histogram": hasattr(window, "run_histogram"),
+                "has_histogram": hasattr(window, "btn_hist") or hasattr(window, "run_histogram"),
                 "has_stat_display": hasattr(window, "stat_display"),
                 "icon_path": namespace["application_icon_path"](),
                 "icon_loads": not window.windowIcon().pixmap(32, 32).isNull(),
@@ -227,9 +227,13 @@ class ConfigWindowTests(unittest.TestCase):
         self.assertNotIn("NEIGHBOR_COLOR", self.report["inputs"])
 
     def test_inherited_features_survived_the_copy(self):
-        """Statistics, histogram and the report panel come along for free."""
-        for flag in ("has_statistics", "has_histogram", "has_stat_display"):
+        """Statistics and the report panel come along for free."""
+        for flag in ("has_statistics", "has_stat_display"):
             self.assertTrue(self.report[flag], flag)
+
+    def test_the_histogram_button_is_gone_as_in_the_desktop_gui(self):
+        """The statistics report draws the score distribution behind its table."""
+        self.assertFalse(self.report["has_histogram"])
 
     def test_saved_config_profiles_cover_every_tab(self):
         for tab in ("inputs_outputs", "visual_effects", "simulation_physics",
@@ -307,12 +311,15 @@ class AutoStepSizeTests(unittest.TestCase):
 
 
 class AlignmentOffsetTests(unittest.TestCase):
-    """Alignment Offset spans the row once the fields stack, as in the desktop Config."""
+    """Alignment Offset spans the row once the fields stack, and the aligned rows
+    stay side by side down to the narrowest window, as in the desktop Config."""
 
-    def test_offset_spans_stacked_rows_and_keeps_its_wide_width(self):
-        report = report_from(
+    @classmethod
+    def setUpClass(cls):
+        cls.report = report_from(
             """
             from PySide6.QtCore import QPoint
+            from PySide6.QtWidgets import QWidget
             window.show()
 
             def flush():
@@ -347,10 +354,26 @@ class AlignmentOffsetTests(unittest.TestCase):
                     "rights": [right(offset), right(window.line_ref),
                                right(window.spin_min_occ)],
                 })
-            print("@@" + json.dumps(rows))
+
+            aligned = [window.findChild(QWidget, name) for name in
+                       ("alignmentModeRow", "alignmentReferenceRow", "filterRow")]
+            # The narrowest window, with the report collapsed.
+            window.resize(0, 850)
+            window.main_split.setSizes([sum(window.main_split.sizes()), 0])
+            flush()
+            print("@@" + json.dumps({
+                "rows": rows,
+                "full_layout_minimum": [row.layout()._wide_width() for row in aligned],
+                "narrowest": {
+                    "at_window_minimum": window.width() == window.minimumWidth(),
+                    "stacked": [bool(row.property("stacked")) for row in aligned],
+                },
+            }))
             """
         )
-        for row in report:
+
+    def test_offset_spans_stacked_rows_and_keeps_its_wide_width(self):
+        for row in self.report["rows"]:
             with self.subTest(width=row["width"]):
                 stacked = row["width"] < 1400
                 self.assertEqual(row["stacked"], stacked)
@@ -358,8 +381,15 @@ class AlignmentOffsetTests(unittest.TestCase):
                 if stacked:
                     self.assertEqual(len(set(row["rights"])), 1, row["rights"])
                 else:
-                    # 100 px, unless the theme's padding makes the field need more.
-                    self.assertEqual(row["offset_width"], max(100, row["offset_minimum"]))
+                    # Its minimum, which has room for a sign and a few digits.
+                    self.assertEqual(row["offset_width"], row["offset_minimum"])
+
+    def test_rows_stay_side_by_side_in_the_narrowest_window_without_the_report(self):
+        minima = self.report["full_layout_minimum"]
+        self.assertEqual(len(set(minima)), 1, minima)
+        self.assertLessEqual(minima[0], 771)
+        self.assertEqual(self.report["narrowest"],
+                         {"at_window_minimum": True, "stacked": [False, False, False]})
 
 
 class BridgeFieldsTests(unittest.TestCase):
@@ -754,11 +784,67 @@ class LanguageOptionTests(unittest.TestCase):
         self.assertTrue(report["title"].startswith("["), report["title"])
 
 
+class ThemeColorTests(unittest.TestCase):
+    """VR Config keeps a theme colour of its own, chosen as in the desktop Config."""
+
+    @classmethod
+    def setUpClass(cls):
+        folder = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
+        cls.addClassCleanup(folder.cleanup)
+        with open(os.path.join(folder.name, "app_settings.json"), "w", encoding="utf-8") as handle:
+            json.dump({"VR_CONFIG_THEME_COLOR": "teal", "CONFIG_THEME_COLOR": "red"}, handle)
+        cls.report = report_from(
+            """
+            from PySide6.QtCore import QPoint
+            from desktop import Desktop_App
+            from desktop.Studio_Theme import theme_color
+            from utilities.App_Settings import read_app_settings
+            window.show()
+            for _ in range(4):
+                app.processEvents()
+            switch, language = window.theme_switch, window.language_selector
+            started = {"window": theme_color(), "switch": switch.color(), "setting": switch.theme_setting}
+            after_language = (switch.mapTo(window, QPoint(0, 0)).x()
+                              > language.mapTo(window, QPoint(language.width(), 0)).x())
+            values = window.language_carry_over()["values"]
+            switch.color_chosen.emit("orange")
+            for _ in range(4):
+                app.processEvents()
+            replacement = Desktop_App._redrawn_windows[-1]
+            print("@@" + json.dumps({
+                "started": started,
+                "after_language": after_language,
+                "saved": read_app_settings(),
+                "color": theme_color(),
+                "replacement": replacement.theme_switch.color(),
+                "replaced": replacement is not window and not window.isVisible(),
+                "values_kept": replacement.language_carry_over()["values"] == values,
+            }, default=str))
+            window = replacement
+            """,
+            project_root=folder.name,
+        )
+
+    def test_the_window_starts_in_its_own_colour_not_configs(self):
+        self.assertEqual(self.report["started"],
+                         {"window": "teal", "switch": "teal", "setting": "VR_CONFIG_THEME_COLOR"})
+
+    def test_the_circle_sits_after_the_language_dropdown(self):
+        self.assertTrue(self.report["after_language"])
+
+    def test_choosing_a_colour_saves_it_and_redraws_keeping_the_values(self):
+        report = self.report
+        self.assertEqual(report["saved"], {"VR_CONFIG_THEME_COLOR": "orange", "CONFIG_THEME_COLOR": "red"})
+        self.assertEqual((report["color"], report["replacement"]), ("orange", "orange"))
+        self.assertTrue(report["replaced"])
+        self.assertTrue(report["values_kept"])
+
+
 class RunTimeTextTests(unittest.TestCase):
     """Text the window shows after it opens, under the pseudo-language, as for the desktop Config.
 
     Tips, VR's own tooltips and client notes, the save message, profile
-    errors, the two reports and the score histogram. outside_the_catalog
+    errors and the two reports. outside_the_catalog
     (the main repository's tests/translation_fixtures.py) gives what is left
     once every bracketed, translated piece is taken out: text from no catalog.
     """
@@ -864,13 +950,6 @@ class RunTimeTextTests(unittest.TestCase):
                 window.run_statistics()
             check("statistics report", window.stat_display.toPlainText())
             check("statistics tip", plain(window.tip_panel.text()))
-            figure = namespace["build_score_histogram_figure"](
-                [0.1, 0.2, 0.3], 0.2, is_evalue=False, norm_mode="alignment_length"
-            )
-            axes = figure.axes[0]
-            check("histogram title", axes.get_title())
-            for text in axes.get_legend().get_texts():
-                check("histogram legend", text.get_text())
             print("@@" + json.dumps({{"checked": checked, "left": left}}))
             """.format(foreign=foreign),
             pseudo_translation=True,
@@ -880,7 +959,7 @@ class RunTimeTextTests(unittest.TestCase):
         checked = self.report["checked"]
         self.assertGreater(sum(name.startswith("tip ") for name in checked), 50)
         for name in ("tooltip VR_APP_DIR", "note foreign", "save", "consistency report",
-                     "statistics report", "histogram title", "histogram legend"):
+                     "statistics report"):
             self.assertIn(name, checked)
         self.assertEqual(self.report["left"], {})
 
