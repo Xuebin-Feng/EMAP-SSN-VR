@@ -64,7 +64,7 @@ OFF keeps the viewer and its command console running for debugging.</source>
         <source>Saved Config: Selects the settings profile used for this tab.
 (custom) uses the current viewer_settings_vr.json values; (default) uses read-only built-in defaults; (new) creates a named profile; named entries load profiles from the Saved Config Directory.</source>
         <extracomment>Layout dimensionality is fixed: the VR viewer has no 2D mode, exactly as the desktop viewer has no 3D one. Settings that belong to the Python/VR client bridge. The desktop program has no equivalent, so they are declared here rather than in the shared schema. Settings the desktop viewer draws but the VR client does not. Keeping a control for them would invite tuning something with no effect: nothing in the VR runtime reads any of these, and no shared command does either. The bridge settings sit on the Visual Effects tab, so they share its profile group rather than forming one of their own.</extracomment>
-        <translation type="unfinished">已保存配置：选择此选项卡使用的设置配置方案。
+        <translation type="unfinished">已保存配置：选择此选项卡使用的配置方案。
 （自定义）使用当前 viewer_settings_vr.json 中的值；（默认）使用只读的内置默认值；（新建）创建一个命名的配置方案；其他命名条目从已保存配置目录加载配置方案。</translation>
     </message>
     <message>
