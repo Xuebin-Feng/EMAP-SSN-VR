@@ -368,6 +368,7 @@ class AlignmentOffsetTests(unittest.TestCase):
             print("@@" + json.dumps({
                 "rows": rows,
                 "full_layout_minimum": [row.layout()._wide_width() for row in aligned],
+                "narrowest_widths": [row.width() for row in aligned],
                 "narrowest": {
                     "at_window_minimum": window.width() == window.minimumWidth(),
                     "stacked": [bool(row.property("stacked")) for row in aligned],
@@ -389,9 +390,12 @@ class AlignmentOffsetTests(unittest.TestCase):
                     self.assertEqual(row["offset_width"], row["offset_minimum"])
 
     def test_rows_stay_side_by_side_in_the_narrowest_window_without_the_report(self):
+        # The fields stay side by side down to the width they need, which the
+        # narrowest window has room for: 772 px with Windows' unhinted text.
         minima = self.report["full_layout_minimum"]
         self.assertEqual(len(set(minima)), 1, minima)
-        self.assertLessEqual(minima[0], 771)
+        for width in self.report["narrowest_widths"]:
+            self.assertLessEqual(minima[0], width)
         self.assertEqual(self.report["narrowest"],
                          {"at_window_minimum": True, "stacked": [False, False, False]})
 
