@@ -311,6 +311,32 @@ class UndoTests(unittest.TestCase):
                 self.assertIn(("succeeded", expected), context.reports)
 
 
+class UndoStepTests(unittest.TestCase):
+    """`undo N` and `redo N` report once, and send the headset the result once."""
+
+    def setUp(self):
+        self.viewer = build_viewer()
+        for step in range(3):
+            self.viewer._save_state()
+            self.viewer.pos = self.viewer.pos + 1.0
+
+    def test_a_count_reports_once_and_updates_the_headset_once(self):
+        viewer = self.viewer
+        for command, text in (("undo 3", "Undid 3 steps."), ("redo 2", "Redid 2 steps.")):
+            with self.subTest(command=command), \
+                    mock.patch.object(viewer, "update_nodes") as nodes, \
+                    mock.patch.object(viewer, "update_edges") as edges:
+                output = run_command(viewer, command)
+
+                self.assertIn(text, output)
+                self.assertNotIn("successful", output)
+                self.assertEqual(viewer.console_text.text, text)
+                self.assertEqual((nodes.call_count, edges.call_count), (1, 1))
+
+    def test_a_single_undo_still_reports_itself(self):
+        self.assertIn("Undo successful.", run_command(self.viewer, "undo"))
+
+
 class HeadsetNoteTests(unittest.TestCase):
     """A command that succeeds but changes what the protocol cannot carry says so.
 

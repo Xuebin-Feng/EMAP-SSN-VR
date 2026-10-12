@@ -312,41 +312,51 @@ class HeadlessViewer:
             self.undo_stack.pop(0)
         self.redo_stack.clear()
         
-    def _do_undo(self):
-        """Restore the previous state; True when there was one, as on the desktop."""
+    def _do_undo(self, announce=True):
+        """Restore the previous state; True when there was one, as on the desktop.
+
+        With announce False, as for each step of `undo N`, it neither reports
+        the step nor sends the nodes and edges to the headset: the command
+        calls _refresh_after_history once the steps are done.
+        """
         if not self.undo_stack:
-            print("Nothing to undo.")
-            self.console_text.text = "Nothing to undo."
+            if announce:
+                print("Nothing to undo.")
+                self.console_text.text = "Nothing to undo."
             return False
 
         snapshot = self.undo_stack.pop()
         self.redo_stack.append(self._get_current_state())
         self._apply_state(snapshot)
 
-        self.update_nodes()
-        self.update_edges()
-
-        print("Undo successful.")
-        self.console_text.text = "Undo successful."
+        if announce:
+            self._refresh_after_history()
+            print("Undo successful.")
+            self.console_text.text = "Undo successful."
         return True
 
-    def _do_redo(self):
-        """Reapply an undone state; True when there was one, as on the desktop."""
+    def _do_redo(self, announce=True):
+        """Reapply an undone state; True when there was one. announce is as for _do_undo."""
         if not self.redo_stack:
-            print("Nothing to redo.")
-            self.console_text.text = "Nothing to redo."
+            if announce:
+                print("Nothing to redo.")
+                self.console_text.text = "Nothing to redo."
             return False
 
         snapshot = self.redo_stack.pop()
         self.undo_stack.append(self._get_current_state())
         self._apply_state(snapshot)
 
+        if announce:
+            self._refresh_after_history()
+            print("Redo successful.")
+            self.console_text.text = "Redo successful."
+        return True
+
+    def _refresh_after_history(self):
+        """What follows undo or redo steps: the nodes and edges sent to the headset."""
         self.update_nodes()
         self.update_edges()
-
-        print("Redo successful.")
-        self.console_text.text = "Redo successful."
-        return True
 
     def load_global_alignment(self, reuse_loaded=False):
         # `reference` reloads through here, so the offset must travel with it,
