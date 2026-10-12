@@ -264,6 +264,134 @@ class ConfigWindowTests(unittest.TestCase):
         )
 
 
+class TipPanelStatusLockTests(unittest.TestCase):
+    """Hovering never replaces a status message in the tip panel, as in the desktop Config.
+
+    Hovering shows tips only while the panel holds a tip. A left click, or
+    focus by Tab, on an element with a tip always shows it and makes hovering
+    work again; right clicks and focus Qt moves by itself don't. Tips never
+    open Qt's own tooltip popup.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.report = report_from(
+            """
+            import tempfile
+            import h5py
+            from PySide6.QtCore import QEvent, QPoint, QPointF, Qt
+            from PySide6.QtGui import QFocusEvent, QHelpEvent, QMouseEvent, QTextDocumentFragment
+            from PySide6.QtWidgets import QToolTip
+
+            def panel():
+                return QTextDocumentFragment.fromHtml(window.tip_panel.text()).toPlainText()
+
+            def hover(widget):
+                app.sendEvent(widget, QHelpEvent(
+                    QEvent.Type.ToolTip, QPoint(1, 1), widget.mapToGlobal(QPoint(1, 1))
+                ))
+                shown = QToolTip.isVisible()
+                QToolTip.hideText()
+                return shown
+
+            def press(widget, button):
+                for event_type, buttons in ((QEvent.Type.MouseButtonPress, button),
+                                            (QEvent.Type.MouseButtonRelease, Qt.MouseButton.NoButton)):
+                    app.sendEvent(widget, QMouseEvent(
+                        event_type, QPointF(1, 1), QPointF(1, 1), button, buttons,
+                        Qt.KeyboardModifier.NoModifier,
+                    ))
+
+            def focus(widget, reason):
+                app.sendEvent(widget, QFocusEvent(QEvent.Type.FocusIn, reason))
+
+            window.show()
+            app.processEvents()
+            reference = window.labels["ALIGNMENT_REFERENCE"]
+            offset = window.labels["ALIGNMENT_OFFSET"]
+            steps = {"tips": {key: window.tip_db_keys[key]
+                              for key in ("ALIGNMENT_REFERENCE", "ALIGNMENT_OFFSET")}}
+            # The Clear button has a tooltip of its own, so Qt would pop it up.
+            steps["popup before a check"] = hover(window.btn_clear_top_edge)
+            hover(reference)
+            steps["hover before a check"] = panel()
+
+            folder = tempfile.mkdtemp()
+            with open(os.path.join(folder, "nodes.fasta"), "w", encoding="utf-8") as handle:
+                handle.write(">a\\nMKTA\\n>b\\nMSEQ\\n")
+            with h5py.File(os.path.join(folder, "network.h5"), "w") as hf:
+                hf.create_dataset("headers", data=[b"a", b"b"])
+            for key in ("FASTA_DIR", "HDF5_DIR"):
+                window.inputs[key].blockSignals(True)
+                window.inputs[key].setText(folder)
+                window.inputs[key].blockSignals(False)
+            for combo, name in ((window.cb_fasta, "nodes.fasta"), (window.cb_hdf5, "network.h5"),
+                                (window.cb_msa, None)):
+                combo.blockSignals(True)
+                combo.clear()
+                if name:
+                    combo.addItem(name)
+                combo.blockSignals(False)
+            window.run_consistency_check()
+            steps["check result"] = panel()
+            steps["popup after a check"] = hover(window.btn_clear_top_edge)
+            hover(offset)
+            press(reference, Qt.MouseButton.RightButton)
+            focus(window.line_ref, Qt.FocusReason.ActiveWindowFocusReason)
+            steps["after hover, right click and window focus"] = panel()
+            press(reference, Qt.MouseButton.LeftButton)
+            steps["after a left click"] = panel()
+            hover(offset)
+            steps["hover after the left click"] = panel()
+
+            with mock.patch.object(window, "_prepare_profile_writes",
+                                   return_value=([], dict(window._custom_settings), [], [])):
+                window.save_only()
+            steps["save message"] = panel()
+            hover(offset)
+            steps["hover after the save"] = panel()
+            focus(window.line_ref, Qt.FocusReason.TabFocusReason)
+            steps["after Tab"] = panel()
+            hover(offset)
+            steps["hover after Tab"] = panel()
+
+            with mock.patch("h5py.File", side_effect=OSError("unreadable network")):
+                window.run_statistics()
+            steps["statistics message"] = panel()
+            hover(offset)
+            steps["hover after statistics"] = panel()
+            print("@@" + json.dumps(steps))
+            """
+        )
+        cls.tips = cls.report["tips"]
+
+    def test_hovering_shows_tips_until_a_status_message_arrives(self):
+        self.assertEqual(self.report["hover before a check"], self.tips["ALIGNMENT_REFERENCE"])
+        result = self.report["check result"]
+        self.assertTrue(result.startswith("SUCCESS: FASTA is a strict subset of HDF5."), result)
+        self.assertEqual(self.report["after hover, right click and window focus"], result)
+
+    def test_a_left_click_or_tab_shows_its_tip_and_reenables_hovering(self):
+        for picked, hovered in (("after a left click", "hover after the left click"),
+                                ("after Tab", "hover after Tab")):
+            with self.subTest(picked):
+                self.assertEqual(self.report[picked], self.tips["ALIGNMENT_REFERENCE"])
+                self.assertEqual(self.report[hovered], self.tips["ALIGNMENT_OFFSET"])
+
+    def test_save_and_statistics_messages_also_stay_while_hovering(self):
+        self.assertTrue(self.report["save message"].startswith("Settings saved successfully."))
+        self.assertEqual(self.report["hover after the save"], self.report["save message"])
+        self.assertEqual(
+            self.report["statistics message"],
+            "Error during network statistics calculation: unreadable network",
+        )
+        self.assertEqual(self.report["hover after statistics"], self.report["statistics message"])
+
+    def test_tips_never_open_qt_tooltip_popups(self):
+        self.assertFalse(self.report["popup before a check"])
+        self.assertFalse(self.report["popup after a check"])
+
+
 class AutoStepSizeTests(unittest.TestCase):
     """The Auto button beside Step Size behaves as in the desktop Config."""
 
