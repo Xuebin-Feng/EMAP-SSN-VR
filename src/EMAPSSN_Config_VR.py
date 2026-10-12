@@ -315,7 +315,6 @@ UNUSED_IN_VR = frozenset({
     "TEXT_SIZE",          # no HUD text is rendered in the headset
     "TEXT_COLOR",         # ditto
     "LOW_RESOURCE_MODE",  # a VisPy canvas optimisation; the VR client draws
-    "PACKING_GEOMETRY",   # 3D packs onto spherical shells, ignoring Square/Circle
 })
 
 #: The bridge settings sit on the Visual Effects tab, so they share its profile
@@ -2045,8 +2044,8 @@ if __name__ == "__main__":
                 "PERCENTAGE_DROP_THRESHOLD": translate("Config", "Early termination threshold based on the rate of RMSD change over the moving window.\nTerminates simulation when layout change plateaus (set to 0 to disable)."),
                 "RMSD_WINDOW": translate("Config", "Number of simulation steps over which moving-average RMSD is calculated for plateau detection.\nSmoothes transient velocity spikes to ensure early termination triggers only on true convergence."),
                 "ENABLE_PROGRESSIVE_SIMULATION": translate("Config", "Progressively lowers the similarity threshold in stages for massive connected components.\nHelps resolve fine-grained sub-clusters and prevents gridlock in large, dense components."),
-                "PACKING_GEOMETRY": translate("Config", "Macro-level boundary packing geometry (Square or Circle) used to arrange disconnected components.\nControls how independent clusters are organized in the overall visualization window."),
-                "PACKING_GRID_SIZE": translate("Config", "Minimum gap kept between independent clusters as they are packed onto concentric spherical shells around the largest one.\nLarger values spread the packed clusters further apart in the final 3D layout."),
+                "PACKING_GEOMETRY": translate("Config", "Shape of the volume that disconnected components are packed into around the largest one: a cube for Square, a ball for Circle.\nComponents never land inside another one's enclosed space or in its narrow gaps."),
+                "PACKING_GRID_SIZE": translate("Config", "Cell size of the grid on which disconnected components are packed around the largest one.\nSmaller cells pack components more tightly but take longer; the clearance kept between components does not change."),
                 "UMAP_MODE": translate("Config", "Uses UMAP manifold learning to compute 3D coordinates directly from sequence distances.\nProvides fast non-linear dimensionality reduction as an alternative to iterative physics simulations."),
                 "UMAP_NEIGHBORS": translate("Config", "Maximum number of other nodes in each UMAP neighborhood (K excludes self).\nK=15 supplies up to 15 neighbors plus self to UMAP.\nSmaller values emphasize local sub-clusters; larger values preserve broad global relationships."),
                 "UMAP_MIN_DIST": translate("Config", "Minimum distance between points in low-dimensional UMAP space (0.0 to 1.0).\nLower values produce tight, dense point clusters; larger values distribute nodes more evenly."),
@@ -3670,10 +3669,25 @@ if __name__ == "__main__":
             initial_state = bool(globals().get("ENABLE_PROGRESSIVE_SIMULATION", False))
             cb_prog.setChecked(initial_state)
             
-            # Packing Geometry is deliberately absent. Square/Circle tiles a
-            # flat poster; in three dimensions calculate_layout branches to
-            # pack_components_to_shells, which arranges components on
-            # concentric spherical shells and takes no geometry argument.
+            # Packing Geometry Dropdown: in 3D, Square packs into a cube and
+            # Circle into a ball (pack_components_to_voxels).
+            lbl_geom = QLabel(translate("Config", "Packing Geometry:"))
+            cb_geom = NoScrollComboBox()
+            add_combo_options(cb_geom, ["Square", "Circle"], [
+                translate("Config", "Square", "packing geometry"),
+                translate("Config", "Circle", "packing geometry"),
+            ])
+
+            cb_geom.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+            cb_geom.setMinimumWidth(120)
+
+            initial_geom = globals().get("PACKING_GEOMETRY", "Square")
+            if initial_geom not in ["Square", "Circle"]:
+                initial_geom = "Square"
+            select_combo_value(cb_geom, initial_geom)
+            self.inputs["PACKING_GEOMETRY"] = cb_geom
+            self.labels["PACKING_GEOMETRY"] = lbl_geom
+
             # Packing Grid Size Slider (Logarithmic Scale)
             pgs_widget = QWidget()
             pgs_widget.setObjectName("wrapper")
@@ -3736,6 +3750,8 @@ if __name__ == "__main__":
             packing_controls_grid.setColumnStretch(10, 1)
             packing_controls_grid.addWidget(lbl_prog, 0, 0)
             packing_controls_grid.addWidget(prog_field, 0, 2)
+            packing_controls_grid.addWidget(lbl_geom, 0, 4)
+            packing_controls_grid.addWidget(cb_geom, 0, 6)
             packing_controls_grid.addWidget(lbl_pgs, 0, 8)
             packing_controls_grid.addWidget(pgs_widget, 0, 10)
             packing_controls_grid.setRowMinimumHeight(0, cb_prog.height())

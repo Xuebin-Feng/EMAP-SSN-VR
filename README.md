@@ -218,20 +218,19 @@ every difference is deliberate:
 | a new cache goes through `src/Layout_Launcher_VR.py` | it generates the 3D cache, then opens the VR viewer; the shared generator's `--launch-viewer` would open the desktop one |
 | flat settings snapshot | `Settings_VR` reads flat keys, and the desktop document encoder would drop every VR-only one |
 | `layout_dimensions=3` forced | into cache identity and layout generation |
-| 3D wording in four tooltips | `TARGET_CACHE_FILE`, `UMAP_MODE`, `SAVED_LAYOUT_DIR` and `PACKING_GRID_SIZE` describe the 3D caches and spherical-shell packing VR uses, where the source's describe 2D layouts and grid packing |
+| 3D wording in four tooltips | `TARGET_CACHE_FILE`, `UMAP_MODE`, `SAVED_LAYOUT_DIR` and `PACKING_GEOMETRY` describe the 3D caches and the cube or ball VR packs components into, where the source's describe 2D layouts and a flat outline |
 | VR client block on **Visual Effects** | host, port, distance scale, edge budget, client folder, **Quit with VR Client**; a client folder saved for the Unity client is migrated |
 | removed controls | see below |
 | window, terminal and error titles; icon | name the VR window, and give it the VR logo from `src/bin/logos`, falling back to the parent's Config logo |
 | distinct single-instance key | both windows can be open at once |
 
-Four settings the desktop GUI offers are deliberately absent, because nothing
+Three settings the desktop GUI offers are deliberately absent, because nothing
 in the VR runtime reads them and no shared command does either:
 
 | Removed | Why |
 |---|---|
 | `TEXT_SIZE`, `TEXT_COLOR` | no HUD text is drawn in the headset |
 | `LOW_RESOURCE_MODE` | a VisPy canvas optimisation; the VR client does the drawing |
-| `PACKING_GEOMETRY` | in 3D `calculate_layout` branches to `pack_components_to_shells`, which arranges components on concentric spherical shells and takes no geometry argument — Square/Circle never reaches it |
 
 `NEIGHBOR_COLOR` has no control of its own either: `Settings` republishes
 `INITIAL_NODE_COLOR` under that name and it wins, so a second control would

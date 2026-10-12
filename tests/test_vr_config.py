@@ -220,9 +220,9 @@ class ConfigWindowTests(unittest.TestCase):
         for key in ("TEXT_SIZE", "TEXT_COLOR", "LOW_RESOURCE_MODE"):
             self.assertNotIn(key, self.report["inputs"], key)
 
-    def test_packing_geometry_is_gone(self):
-        """3D packs onto concentric shells; Square/Circle never reaches it."""
-        self.assertNotIn("PACKING_GEOMETRY", self.report["inputs"])
+    def test_packing_geometry_has_a_control(self):
+        """In 3D, Square packs components into a cube and Circle into a ball."""
+        self.assertIn("PACKING_GEOMETRY", self.report["inputs"])
 
     def test_node_colour_has_exactly_one_control(self):
         """Settings_VR republishes INITIAL_NODE_COLOR as NEIGHBOR_COLOR and wins,
@@ -489,6 +489,8 @@ class DropdownValueTests(unittest.TestCase):
                 for index in range(window.cb_norm_mode.count())
             ]
             select(window.cb_norm_mode, "average_sequence")
+            relabel(window.inputs["PACKING_GEOMETRY"])
+            select(window.inputs["PACKING_GEOMETRY"], "Circle")
             data = window.collect_data()
 
             cache = window.cb_cache_file
@@ -509,6 +511,7 @@ class DropdownValueTests(unittest.TestCase):
                 "score": data["ALIGNMENT_SCORE"],
                 "norm": data["NORM_MODE"],
                 "norm_values": norm_values,
+                "geometry": data["PACKING_GEOMETRY"],
                 "new_cache": new_cache,
                 "profile_selection": window._profile_previous_selection["visual_effects"],
                 "profile_error": critical.called,
@@ -520,6 +523,7 @@ class DropdownValueTests(unittest.TestCase):
         self.assertEqual(self.report["score"], "local")
         self.assertEqual(self.report["norm"], "average_sequence")
         self.assertNotIn("alignment_length", self.report["norm_values"])
+        self.assertEqual(self.report["geometry"], "Circle")
 
     def test_new_layout_cache_entry_is_found_without_its_label(self):
         self.assertTrue(self.report["new_cache"])

@@ -56,8 +56,8 @@ Instantly restores previously computed node positions to bypass physics simulati
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <source>Minimum gap kept between independent clusters as they are packed onto concentric spherical shells around the largest one.
-Larger values spread the packed clusters further apart in the final 3D layout.</source>
+        <source>Shape of the volume that disconnected components are packed into around the largest one: a cube for Square, a ball for Circle.
+Components never land inside another one&apos;s enclosed space or in its narrow gaps.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>

@@ -60,7 +60,7 @@ OFF keeps the viewer and its command console running for debugging.</source>
 关闭时，查看器及其命令控制台会继续运行，便于调试。</translation>
     </message>
     <message>
-        <location line="+1876"/>
+        <location line="+1875"/>
         <source>Saved Config: Selects the settings profile used for this tab.
 (custom) uses the current viewer_settings_vr.json values; (default) uses read-only built-in defaults; (new) creates a named profile; named entries load profiles from the Saved Config Directory.</source>
         <extracomment>Layout dimensionality is fixed: the VR viewer has no 2D mode, exactly as the desktop viewer has no 3D one. Settings that belong to the Python/VR client bridge. The desktop program has no equivalent, so they are declared here rather than in the shared schema. Settings the desktop viewer draws but the VR client does not. Keeping a control for them would invite tuning something with no effect: nothing in the VR runtime reads any of these, and no shared command does either. The bridge settings sit on the Visual Effects tab, so they share its profile group rather than forming one of their own.</extracomment>
@@ -75,14 +75,20 @@ Instantly restores previously computed node positions to bypass physics simulati
 可立即恢复先前计算的节点位置，从而跳过物理模拟。</translation>
     </message>
     <message>
-        <location line="+27"/>
         <source>Minimum gap kept between independent clusters as they are packed onto concentric spherical shells around the largest one.
 Larger values spread the packed clusters further apart in the final 3D layout.</source>
-        <translation type="unfinished">将独立的簇（cluster）排布到围绕最大簇的同心球壳上时，簇之间保留的最小间隙。
+        <translation type="obsolete">将独立的簇（cluster）排布到围绕最大簇的同心球壳上时，簇之间保留的最小间隙。
 数值越大，最终三维布局中排布的簇相距越远。</translation>
     </message>
     <message>
-        <location line="+1"/>
+        <location line="+26"/>
+        <source>Shape of the volume that disconnected components are packed into around the largest one: a cube for Square, a ball for Circle.
+Components never land inside another one&apos;s enclosed space or in its narrow gaps.</source>
+        <translation type="unfinished">围绕最大分量排布其他互不相连的分量时所用空间的形状：“正方形”为立方体，“圆形”为球体。
+任何分量都不会被放入另一分量围成的空间或其狭窄缝隙中。</translation>
+    </message>
+    <message>
+        <location line="+2"/>
         <source>Uses UMAP manifold learning to compute 3D coordinates directly from sequence distances.
 Provides fast non-linear dimensionality reduction as an alternative to iterative physics simulations.</source>
         <translation type="unfinished">使用 UMAP 流形学习直接根据序列距离计算三维坐标。
@@ -96,7 +102,7 @@ Serves as the layout cache to avoid recalculating layouts when reopening network
 作为布局缓存，重新打开网络时无需重新计算布局。</translation>
     </message>
     <message>
-        <location line="+1709"/>
+        <location line="+1731"/>
         <source>Quit with VR Client:</source>
         <translation type="unfinished">随 VR 客户端退出：</translation>
     </message>
@@ -144,7 +150,7 @@ Serves as the layout cache to avoid recalculating layouts when reopening network
 <context>
     <name>Message</name>
     <message>
-        <location line="-3793"/>
+        <location line="-3814"/>
         <source>No VR client is installed in this folder (vr_client.json is missing or unreadable). Save &amp; Run downloads the pinned release into player/, as install_vr.bat does; or choose the folder that holds EMAP-SSN-VR.exe.</source>
         <extracomment>VR Config&apos;s own texts are in opt_vr&apos;s catalog, emapssn_vr; the texts it shares with the desktop Config come from the main catalog. The window and taskbar icon is opt_vr&apos;s own logo, the parent&apos;s Config logo with a VR headset. The parent&apos;s Config logo stands in if it is missing. The VR client connection tooltip. The viewer passes VR Client Host and Port to the client it launches, so the two ends always agree; the endpoint recorded in the build is only where a client started by hand dials. The notes are Messages: str() is English, and the window shows display_text().</extracomment>
         <translation type="unfinished">此文件夹中没有安装 VR 客户端（vr_client.json 不存在或无法读取）。“保存并运行”会像 install_vr.bat 一样把指定版本下载到 player/ 中；也可以选择存放 EMAP-SSN-VR.exe 的文件夹。</translation>
