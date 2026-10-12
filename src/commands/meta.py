@@ -60,6 +60,7 @@ from Metadata_Core import (
     delete_metadata_columns,
     download_metadata,
     metadata_download_path,
+    show_property_name,
     upload_metadata,
 )
 
@@ -93,9 +94,11 @@ def print_help(meta_dir):
           runs to the end of the line, so it may hold spaces:
           {{Length > 500}} & #cluster_1#
       meta show/display <property_name>
+      meta show/display {{property_name}}
           Accepted for compatibility with the desktop viewer. The VR viewer has
           no on-canvas HUD, so nothing is displayed. The property must be one
           the session has; otherwise the available property names are listed.
+          In braces, as in spectrum {{Length}}, it is always a property name.
       meta delete/remove/clear <property_name> [property_name ...]
           Atomically deletes one or more metadata columns from the current
           session. Property matching is case-insensitive. Node ID/Sequence
@@ -231,14 +234,16 @@ def run(viewer, args):
 
     # --- Display / show: accepted, but there is no HUD to show it on ---
     if first_arg in ['display', 'show']:
-        target = " ".join(args[1:]).strip()
+        # The desktop viewer's rule: {off} in braces names a property.
+        target, braced = show_property_name(args[1:])
         if not target:
             Command_Engine.command_failed(viewer, "Missing metadata command arguments")
             Command_Engine.print_help(
-                viewer, "Usage: meta show <property_name> OR meta show clear/off"
+                viewer,
+                "Usage: meta show <property_name>|{property_name} OR meta show clear/off",
             )
             return
-        if target.lower() in ('clear', 'off'):
+        if not braced and target.lower() in ('clear', 'off'):
             msg = "Metadata display is not used in the VR viewer; nothing to clear."
         else:
             # Matched case-insensitively, as the desktop viewer matches it.

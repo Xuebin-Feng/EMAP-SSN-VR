@@ -936,6 +936,16 @@ class MetadataCommandTests(unittest.TestCase):
         output = run_command(self.viewer, "meta show Length")
         self.assertIn("No metadata is loaded in this session", output)
 
+    def test_display_takes_the_property_in_braces_as_the_desktop_does(self):
+        output = run_command(self.viewer, "meta show {length}")
+        self.assertIn("Noted 'length'", output)
+
+    def test_off_in_braces_names_a_property_rather_than_clearing(self):
+        output = run_command(self.viewer, "meta show {off}")
+        self.assertIn("Property 'off' not found", output)
+        self.assertNotIn("nothing to clear", output)
+        self.assertIn("nothing to clear", run_command(self.viewer, "meta show off"))
+
 
 class SelectSaveNameTests(unittest.TestCase):
     """`select save` keeps its file in HEADER_LIST_DIR, by the desktop's rule.
