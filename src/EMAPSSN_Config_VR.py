@@ -760,6 +760,7 @@ if __name__ == "__main__":
         choose_theme_color,
         install_translations,
         installed_language,
+        instance_handover_message,
         language_selector_row,
         LanguageSelector,
         mark_name_item,
@@ -4574,6 +4575,7 @@ if __name__ == "__main__":
             )
             raise SystemExit(1)
         if not is_primary_instance:
+            print(instance_handover_message(VR_CONFIG_DISPLAY_NAME))
             raise SystemExit(0)
         app.aboutToQuit.connect(single_instance.close)
 

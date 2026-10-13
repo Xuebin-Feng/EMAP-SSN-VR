@@ -32,9 +32,11 @@ window and a real desktop session, so it is not asserted here.
 """
 
 import io
+import os
 import subprocess
 import sys
 import tempfile
+import textwrap
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -374,6 +376,55 @@ class SingleInstanceTests(unittest.TestCase):
                 source = read(script)
                 self.assertIn(":ACTIVATE_EXISTING_INSTANCE", source)
                 self.assertIn("Single_Instance_Probe_VR.py", source)
+
+    @unittest.skipUnless(sys.platform == "win32", "the VR Configuration GUI runs on Windows only")
+    def test_gui_announces_the_handover_to_an_open_window(self):
+        # The desktop Config used to exit silently with code 0 when another
+        # window already held its channel. The VR GUI runs its real __main__
+        # here, with a stand-in controller that reports the channel as owned,
+        # so no real channel is touched and no window is built.
+        probe = textwrap.dedent(
+            """
+            import os
+            import runpy
+            import sys
+
+            script = sys.argv[1]
+            sys.path.insert(0, os.path.dirname(script))
+            import _bootstrap_vr  # the parent's src, as for a real launch
+            from desktop import Desktop_App
+
+            class OpenAlready:
+                def __init__(self, application_id, parent=None):
+                    print(f"channel: {application_id}", flush=True)
+
+                def acquire_or_notify(self):
+                    return False
+
+            Desktop_App.SingleInstanceController = OpenAlready
+            sys.argv = [script]
+            runpy.run_path(script, run_name="__main__")
+            print("the app went on after handing over")
+            """
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            environment = dict(
+                os.environ,
+                QT_QPA_PLATFORM="offscreen",
+                PYTHONDONTWRITEBYTECODE="1",
+                SSN_APP_SETTINGS_PATH=str(Path(directory) / "missing.json"),
+            )
+            completed = subprocess.run(
+                [sys.executable, "-c", probe, str(VR_SRC / "EMAPSSN_Config_VR.py")],
+                cwd=str(OPT_VR), env=environment, capture_output=True, timeout=180,
+            )
+        stdout = completed.stdout.decode("utf-8", "replace").splitlines()
+        self.assertEqual(completed.returncode, 0, completed.stderr.decode("utf-8", "replace"))
+        self.assertIn("channel: SSN_VR_Config", stdout)
+        from desktop.Desktop_App import instance_handover_message
+
+        self.assertIn(instance_handover_message("EMAP-SSN VR Configuration"), stdout)
+        self.assertNotIn("the app went on after handing over", stdout)
 
 
 if __name__ == "__main__":
