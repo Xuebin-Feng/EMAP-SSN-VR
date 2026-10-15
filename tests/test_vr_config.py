@@ -1867,7 +1867,7 @@ class CacheDiscoveryRaceTests(unittest.TestCase):
     (tests/test_emapssn_config_cache_dropdown.py), run against this copy's
     code. Each CacheHashWorker hashes only when the script finishes it, on the
     script's thread, so every interleaving is deterministic; each case gets a
-    fresh window.
+    fresh window. So are its Save & Run pause tests.
     """
 
     @classmethod
@@ -2053,6 +2053,62 @@ class CacheDiscoveryRaceTests(unittest.TestCase):
                     "stopped": stopped, "tracker": gui.lbl_cache_tracker.text(),
                 }
             close(gui)
+
+            # Save & Run's pause after a click: a double click launches once.
+            import time
+            from types import SimpleNamespace
+            from PySide6.QtCore import Qt
+            from PySide6.QtTest import QTest
+
+            gui, work, shown = open_window()
+            select(gui, "a.fasta")
+            finish(workers[-1])
+            gui.show()
+            button = gui.btn_save_run
+            launches = []
+            gui.save_and_run = lambda: launches.append(1)
+            pause = window_globals["CONFIG_RUN_BUTTON_PAUSE_MS"]
+            window_globals["CONFIG_RUN_BUTTON_PAUSE_MS"] = 150
+            started = time.monotonic()
+            QTest.mouseClick(button, Qt.MouseButton.LeftButton)
+            QTest.mouseClick(button, Qt.MouseButton.LeftButton)
+            double_click = {"launches": len(launches), "enabled": button.isEnabled()}
+            while not button.isEnabled() and time.monotonic() < started + 5.0:
+                QTest.qWait(10)
+            double_click["back"] = button.isEnabled()
+            double_click["seconds"] = time.monotonic() - started
+            QTest.mouseClick(button, Qt.MouseButton.LeftButton)
+            double_click["launches_after"] = len(launches)
+            window_globals["CONFIG_RUN_BUTTON_PAUSE_MS"] = pause
+            close(gui)
+
+            # A check that ends in the pause neither ends it nor outlasts it.
+            # The pause ends when the script says, not on a clock.
+            gui, work, shown = open_window()
+            select(gui, "a.fasta")
+            finish(workers[-1])
+            button = gui.btn_save_run
+            gui.save_and_run = lambda: None
+            timers = []
+            real_timer = window_globals["QTimer"]
+            window_globals["QTimer"] = SimpleNamespace(singleShot=lambda *args: timers.append(args))
+            button.click()
+            check = {"timer": [timers[0][0], timers[0][1] is button],
+                     "in_pause": button.isEnabled()}
+            select(gui, "b.fasta")
+            finish(workers[-1])
+            check["found"] = gui.lbl_cache_tracker.text() == shown["b.fasta"]
+            check["found_in_pause"] = button.isEnabled()
+            timers[-1][2]()
+            check["after_pause"] = button.isEnabled()
+            button.click()
+            select(gui, "")
+            check["cleared"] = gui.lbl_cache_tracker.text()
+            timers[-1][2]()
+            check["cleared_after_pause"] = button.isEnabled()
+            window_globals["QTimer"] = real_timer
+            close(gui)
+            report["save_run_pause"] = {"pause": pause, "double_click": double_click, "check": check}
             print("@@" + json.dumps(report))
             """
         )
@@ -2090,6 +2146,26 @@ class CacheDiscoveryRaceTests(unittest.TestCase):
                 self.assertEqual(
                     self.report["give_up"][way], {"stopped": True, "tracker": message}
                 )
+
+    def test_a_double_click_on_save_and_run_launches_once_and_the_button_comes_back(self):
+        case = self.report["save_run_pause"]
+        self.assertEqual(case["pause"], 1000)
+        click = case["double_click"]
+        self.assertEqual((click["launches"], click["enabled"]), (1, False))
+        self.assertTrue(click["back"])
+        self.assertGreaterEqual(click["seconds"], 0.14)
+        self.assertEqual(click["launches_after"], 2)
+
+    def test_a_cache_check_ending_in_the_pause_neither_ends_it_nor_outlasts_it(self):
+        self.assertEqual(self.report["save_run_pause"]["check"], {
+            "timer": [1000, True],
+            "in_pause": False,
+            "found": True,
+            "found_in_pause": False,
+            "after_pause": True,
+            "cleared": "Target Cache: Missing FASTA or HDF5",
+            "cleared_after_pause": False,
+        })
 
 
 if __name__ == "__main__":
