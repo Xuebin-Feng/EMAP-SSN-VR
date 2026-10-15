@@ -1867,7 +1867,8 @@ class CacheDiscoveryRaceTests(unittest.TestCase):
     (tests/test_emapssn_config_cache_dropdown.py), run against this copy's
     code. Each CacheHashWorker hashes only when the script finishes it, on the
     script's thread, so every interleaving is deterministic; each case gets a
-    fresh window. So are its Save & Run pause tests.
+    fresh window. So are its Save & Run pause tests, and its tests of the
+    next look for caches published after the check.
     """
 
     @classmethod
@@ -2109,6 +2110,209 @@ class CacheDiscoveryRaceTests(unittest.TestCase):
             window_globals["QTimer"] = real_timer
             close(gui)
             report["save_run_pause"] = {"pause": pause, "double_click": double_click, "check": check}
+
+            # A cache published after the check shows at the next look.
+            import shutil
+
+            def generate(gui, work, fasta_name, folder, cache_name="version_00.h5"):
+                # As the Layout Generator publishes one: the manifest, then the
+                # .h5 file (none for cache_name=None).
+                if not (folder / cache_manifest.MANIFEST_FILENAME).exists():
+                    sequence = cache_manifest.fingerprint_file(work / fasta_name)
+                    network = cache_manifest.fingerprint_file(work / "network.h5")
+                    compatibility = cache_manifest.build_compatibility(
+                        sequence["sha256"], network["sha256"], "blast",
+                        **gui._cache_setting_values(),
+                    )
+                    cache_manifest.write_manifest_atomic(
+                        folder, cache_manifest.build_manifest(sequence, network, compatibility)
+                    )
+                if cache_name:
+                    (folder / cache_name).write_bytes(b"")
+
+            def items(gui):
+                combo = gui.cb_cache_file
+                return [combo.itemText(index) for index in range(combo.count())]
+
+            def needs_computing(gui, work, fasta_name):
+                # The FASTA's layout folder is gone; returns the folder the window targets.
+                shutil.rmtree(work / "layouts" / (Path(fasta_name).stem + "_layout"))
+                select(gui, fasta_name)
+                finish(workers[-1])
+                return Path(gui.current_cache_folder)
+
+            recheck = {}
+            gui, work, shown = open_window()
+            target = needs_computing(gui, work, "a.fasta")
+            case = {"folder": target.name, "before": gui.lbl_cache_tracker.text(), "items_before": items(gui)}
+            gui._recheck_saved_caches()
+            case["nothing_yet"] = gui.lbl_cache_tracker.text()
+            generate(gui, work, "a.fasta", target)
+            gui._recheck_saved_caches()
+            case.update(after=gui.lbl_cache_tracker.text(), items=items(gui),
+                        selected=gui.cb_cache_file.currentText(), hashed=len(workers))
+            recheck["generated"] = case
+            close(gui)
+
+            # The manifest is published before the cache; a .partial file is no cache yet.
+            gui, work, shown = open_window()
+            target = needs_computing(gui, work, "a.fasta")
+            generate(gui, work, "a.fasta", target, None)
+            gui._recheck_saved_caches()
+            case = {"folder": target.name, "manifest_only": [gui.lbl_cache_tracker.text(), items(gui)]}
+            (target / ".version_00.h5.x1y2.partial").write_bytes(b"")
+            with mock.patch.object(gui, "_request_cache_discovery") as search:
+                gui._recheck_saved_caches()
+            case["partial_searched"] = search.called
+            generate(gui, work, "a.fasta", target)
+            gui._recheck_saved_caches()
+            case["selected"] = gui.cb_cache_file.currentText()
+            recheck["manifest_first"] = case
+            close(gui)
+
+            # Generated into the compatible folder while a new cache was being named.
+            gui, work, shown = open_window()
+            select(gui, "b.fasta")
+            finish(workers[-1])
+            case = {"items_before": items(gui)}
+            gui.line_new_cache.setText("mine.h5")
+            generate(gui, work, "b.fasta", work / "layouts" / "b_layout", "mine.h5")
+            gui._recheck_saved_caches()
+            case.update(items=items(gui), selected=gui.cb_cache_file.currentText(),
+                        name=gui.line_new_cache.text())
+            recheck["into_compatible"] = case
+            close(gui)
+
+            # A look that finds no new cache keeps the choice.
+            gui, work, shown = open_window()
+            folder = work / "layouts" / "b_layout"
+            for age, name in enumerate(("newer.h5", "older.h5")):
+                (folder / name).write_bytes(b"")
+                os.utime(folder / name, (1_700_000_000 - age, 1_700_000_000 - age))
+            select(gui, "b.fasta")
+            finish(workers[-1])
+            combo = gui.cb_cache_file
+            case = {"items_before": items(gui)}
+            combo.setCurrentIndex(combo.findText("older.h5"))
+            generate(gui, work, "a.fasta", work / "layouts" / "other_inputs_layout", None)
+            with mock.patch.object(combo, "clear", wraps=combo.clear) as clear:
+                gui._recheck_saved_caches()
+            case["unrelated"] = {"rebuilt": clear.called, "selected": combo.currentText()}
+            (folder / "newer.h5").unlink()
+            gui._recheck_saved_caches()
+            case["removed"] = {"items": items(gui), "selected": combo.currentText()}
+            combo.setCurrentIndex(combo.count() - 1)
+            gui._toggle_new_cache_input()
+            gui.line_new_cache.setText("draft.h5")
+            (folder / "older.h5").unlink()
+            gui._recheck_saved_caches()
+            case["naming"] = {"items": items(gui), "name": gui.line_new_cache.text()}
+            recheck["no_new_cache"] = case
+            close(gui)
+
+            # A second compatible folder appears, then goes.
+            gui, work, shown = open_window()
+            select(gui, "b.fasta")
+            finish(workers[-1])
+            folder = work / "layouts" / "b_layout"
+            shutil.copytree(folder, folder.with_name("b_layout_copy"))
+            gui._recheck_saved_caches()
+            case = {"copied": [gui.lbl_cache_tracker.text(), gui._cache_launch_allowed]}
+            shutil.rmtree(folder.with_name("b_layout_copy"))
+            gui._recheck_saved_caches()
+            case.update(expected=shown["b.fasta"], removed=gui.lbl_cache_tracker.text())
+            recheck["second_folder"] = case
+            close(gui)
+
+            # Published during the search: what it looked at was read before it ran.
+            gui, work, shown = open_window()
+            target = needs_computing(gui, work, "a.fasta")
+            find_matching = cache_manifest.find_matching_manifest_folders
+
+            def search_then_generate(saved_layout_dir, compatibility):
+                matches = find_matching(saved_layout_dir, compatibility)
+                generate(gui, work, "a.fasta", target)
+                return matches
+
+            (target.parent / "unrelated").mkdir()
+            with mock.patch.object(
+                cache_manifest, "find_matching_manifest_folders", side_effect=search_then_generate
+            ):
+                gui._recheck_saved_caches()
+            case = {"missed": gui.lbl_cache_tracker.text().endswith("[Needs Computing]")}
+            gui._recheck_saved_caches()
+            case["next_look"] = gui.cb_cache_file.currentText()
+            recheck["during_search"] = case
+            close(gui)
+
+            # Opening the cache list looks again.
+            gui, work, shown = open_window()
+            target = needs_computing(gui, work, "a.fasta")
+            generate(gui, work, "a.fasta", target)
+            gui.show()
+            gui.cb_cache_file.showPopup()
+            gui.cb_cache_file.hidePopup()
+            recheck["opened_list"] = {"folder": target.name, "tracker": gui.lbl_cache_tracker.text(),
+                                      "selected": gui.cb_cache_file.currentText()}
+            close(gui)
+
+            # A shown window looks again by itself; a hidden one does not.
+            gui, work, shown = open_window()
+            timer = gui._cache_recheck_timer
+            case = {"constant": window_globals["CONFIG_CACHE_RECHECK_MS"],
+                    "timer": [timer.isActive(), timer.interval()]}
+            target = needs_computing(gui, work, "a.fasta")
+            generate(gui, work, "a.fasta", target)
+            gui._recheck_saved_caches_while_shown()
+            case["hidden"] = gui.lbl_cache_tracker.text().endswith("[Needs Computing]")
+            window_globals["CONFIG_CACHE_RECHECK_MS"] = 20
+            timer.setInterval(20)
+            gui.show()
+            deadline = time.monotonic() + 5.0
+            while gui.lbl_cache_tracker.text().endswith("[Needs Computing]") and time.monotonic() < deadline:
+                QTest.qWait(10)
+            window_globals["CONFIG_CACHE_RECHECK_MS"] = case["constant"]
+            case.update(folder=target.name, shown=gui.lbl_cache_tracker.text())
+            recheck["by_itself"] = case
+            close(gui)
+
+            # A slow layout folder is looked at less often: a 200 ms look, then a 1 ms one.
+            gui, work, shown = open_window()
+            gui.show()
+            clock = iter([10.0, 10.2, 20.0, 20.001])
+            real_time = window_globals["time"]
+            window_globals["time"] = SimpleNamespace(perf_counter=lambda: next(clock))
+            intervals = []
+            with mock.patch.object(gui, "_recheck_saved_caches"):
+                for _ in range(2):
+                    gui._recheck_saved_caches_while_shown()
+                    intervals.append(gui._cache_recheck_timer.interval())
+            window_globals["time"] = real_time
+            recheck["slow_folder"] = intervals
+            close(gui)
+
+            # A folder removed between the search and listing its caches.
+            gui, work, shown = open_window()
+            select(gui, "b.fasta")
+            finish(workers[-1])
+            looked = gui._saved_cache_look is not None
+            with mock.patch.object(
+                cache_manifest, "find_matching_manifest_folders",
+                return_value=[{"folder": str(work / "layouts" / "removed_layout"), "manifest": {}}],
+            ):
+                gui.update_live_validators()  # b.fasta's hashes are cached
+                case = {
+                    "looked": looked,
+                    "error": gui.lbl_cache_tracker.text().startswith("Cache compatibility error: "),
+                    "look": gui._saved_cache_look,
+                }
+                # Nor does it escape the result of hashing, which nothing else guards.
+                select(gui, "a.fasta")
+                finish(workers[-1])
+                case["after_hashing"] = gui.lbl_cache_tracker.text().startswith("Cache compatibility error: ")
+            recheck["folder_removed"] = case
+            close(gui)
+            report["recheck"] = recheck
             print("@@" + json.dumps(report))
             """
         )
@@ -2166,6 +2370,72 @@ class CacheDiscoveryRaceTests(unittest.TestCase):
             "cleared": "Target Cache: Missing FASTA or HDF5",
             "cleared_after_pause": False,
         })
+
+    def test_a_cache_generated_after_the_check_shows_at_the_next_look(self):
+        case = self.report["recheck"]["generated"]
+        needs_computing = f"Target Folder: {case['folder']} [Needs Computing]"
+        self.assertEqual(case["before"], needs_computing)
+        self.assertEqual(case["items_before"], ["(New Layout Cache)"])
+        self.assertEqual(case["nothing_yet"], needs_computing)
+        self.assertEqual(case["after"], f"Compatible Folder: {case['folder']}")
+        self.assertEqual(case["items"], ["version_00.h5", "(New Layout Cache)"])
+        self.assertEqual(case["selected"], "version_00.h5")
+        self.assertEqual(case["hashed"], 1, "the inputs were not hashed again")
+
+    def test_a_manifest_published_before_its_cache_shows_the_folder_then_the_cache(self):
+        case = self.report["recheck"]["manifest_first"]
+        self.assertEqual(
+            case["manifest_only"], [f"Compatible Folder: {case['folder']}", ["(New Layout Cache)"]]
+        )
+        self.assertFalse(case["partial_searched"])
+        self.assertEqual(case["selected"], "version_00.h5")
+
+    def test_a_cache_generated_into_the_compatible_folder_is_selected(self):
+        self.assertEqual(self.report["recheck"]["into_compatible"], {
+            "items_before": ["(New Layout Cache)"],
+            "items": ["mine.h5", "(New Layout Cache)"],
+            "selected": "mine.h5",
+            "name": "",
+        })
+
+    def test_a_look_that_finds_no_new_cache_keeps_the_choice(self):
+        self.assertEqual(self.report["recheck"]["no_new_cache"], {
+            "items_before": ["newer.h5", "older.h5", "(New Layout Cache)"],
+            "unrelated": {"rebuilt": False, "selected": "older.h5"},
+            "removed": {"items": ["older.h5", "(New Layout Cache)"], "selected": "older.h5"},
+            "naming": {"items": ["(New Layout Cache)"], "name": "draft.h5"},
+        })
+
+    def test_a_second_compatible_folder_shows_the_duplicate_error_at_the_next_look(self):
+        case = self.report["recheck"]["second_folder"]
+        self.assertEqual(case["copied"], ["Error: 2 compatible cache folders found", False])
+        self.assertEqual(case["removed"], case["expected"])
+
+    def test_a_cache_published_during_the_search_shows_at_the_next_look(self):
+        self.assertEqual(
+            self.report["recheck"]["during_search"], {"missed": True, "next_look": "version_00.h5"}
+        )
+
+    def test_opening_the_cache_list_looks_again(self):
+        case = self.report["recheck"]["opened_list"]
+        self.assertEqual(case["tracker"], f"Compatible Folder: {case['folder']}")
+        self.assertEqual(case["selected"], "version_00.h5")
+
+    def test_a_shown_window_looks_again_by_itself(self):
+        case = self.report["recheck"]["by_itself"]
+        self.assertEqual(case["constant"], 1000)
+        self.assertEqual(case["timer"], [True, 1000])
+        self.assertTrue(case["hidden"])
+        self.assertEqual(case["shown"], f"Compatible Folder: {case['folder']}")
+
+    def test_a_slow_layout_folder_is_looked_at_less_often(self):
+        self.assertEqual(self.report["recheck"]["slow_folder"], [4000, 1000])
+
+    def test_a_folder_removed_before_its_caches_are_listed_shows_an_error(self):
+        self.assertEqual(
+            self.report["recheck"]["folder_removed"],
+            {"looked": True, "error": True, "look": None, "after_hashing": True},
+        )
 
 
 if __name__ == "__main__":
