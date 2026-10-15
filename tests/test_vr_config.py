@@ -592,6 +592,45 @@ class BridgeFieldsTests(unittest.TestCase):
                     self.assertEqual(len(set(row["field_x"])), 1, row["field_x"])
 
 
+class LongFileNameTests(unittest.TestCase):
+    """The file lists keep twelve characters at their narrowest, as in the desktop Config."""
+
+    def test_long_file_names_listed_at_launch_do_not_widen_the_window(self):
+        # Long, but short enough for Windows' 260-character paths in a temp folder.
+        name = "A_long_network_filename_" * 5 + "network.h5"
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as project:
+            folder = os.path.join(project, "opt_vr", "Input_Files", "Networks_EValues")
+            os.makedirs(folder)
+            open(os.path.join(folder, name), "w").close()
+            report = report_from(
+                """
+                # The Inputs tab lists its folders as it is built, before its
+                # scroll area first measures it, and a combo box keeps that
+                # first minimum. The event loop has not run yet.
+                listed = [window.cb_hdf5.itemText(i) for i in range(window.cb_hdf5.count())]
+                window.show()
+                window.tabs.setCurrentIndex(0)
+                # The narrowest window, with the report collapsed.
+                window.resize(0, 850)
+                window.main_split.setSizes([sum(window.main_split.sizes()), 0])
+                for _ in range(6):
+                    app.processEvents()
+                print("@@" + json.dumps({
+                    "listed": listed,
+                    "widths": [window.cb_hdf5.minimumSizeHint().width(),
+                               window.cb_fasta.minimumSizeHint().width()],
+                    "sideways": window.tabs.currentWidget().horizontalScrollBar().maximum(),
+                }))
+                """,
+                project_root=project,
+            )
+        # The test's own folder, not the checkout's (run_gui_script).
+        self.assertEqual(report["listed"], ["", name])
+        # As narrow as the (empty) sequence set list.
+        self.assertEqual(report["widths"][0], report["widths"][1])
+        self.assertEqual(report["sideways"], 0)
+
+
 class DropdownValueTests(unittest.TestCase):
     """Options are read and selected by stored value, as in the desktop Config.
 
