@@ -768,6 +768,7 @@ if __name__ == "__main__":
         installed_language,
         instance_handover_message,
         language_selector_row,
+        LanguageFollower,
         LanguageSelector,
         mark_name_item,
         open_color_picker,
@@ -1177,6 +1178,8 @@ if __name__ == "__main__":
             self.right_layout.addWidget(self.stat_display)
             self.language_selector = LanguageSelector()
             self.language_selector.language_chosen.connect(lambda setting: choose_language(self, setting))
+            # A language chosen in another window comes here when this one is next activated.
+            self.language_follower = LanguageFollower(self)
             self.theme_switch = ThemeColorButton(VR_CONFIG_THEME_SETTING, color=theme_color())
             self.theme_switch.color_chosen.connect(lambda color: choose_theme_color(self, color))
             self.right_layout.addLayout(language_selector_row(self.language_selector, self.theme_switch))

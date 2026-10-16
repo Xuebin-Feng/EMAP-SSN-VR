@@ -963,6 +963,63 @@ class LanguageOptionTests(unittest.TestCase):
         self.assertTrue(report["title"].startswith("["), report["title"])
 
 
+class LanguageFollowTests(unittest.TestCase):
+    """An open VR Config takes a language another window saved when it is next activated."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.report = report_from(
+            """
+            from PySide6.QtWidgets import QWidget
+            from desktop import Desktop_App
+            from desktop.Desktop_App import installed_language
+            from utilities.App_Settings import save_app_setting
+
+            def flush():
+                for _ in range(6):
+                    app.processEvents()
+
+            window.show()
+            flush()
+            window.inputs["NODE_SIZE"].setValue(window.inputs["NODE_SIZE"].value() + 1)  # unsaved
+            values = window.language_carry_over()["values"]
+            elsewhere = QWidget()
+            elsewhere.show()
+            flush()
+            save_app_setting("LANGUAGE", "zh_CN")  # as Config or Tools saves it
+            flush()
+            waited = window.isVisible() and installed_language() is None
+            window.activateWindow()
+            flush()
+            replacement = Desktop_App._redrawn_windows[-1] if Desktop_App._redrawn_windows else window
+            installed = Desktop_App._installed_translations
+            print("@@" + json.dumps({
+                "waited": waited,
+                "replaced": replacement is not window,
+                "language": installed_language(),
+                "extra_catalogs": [name for _, name in installed.extra_catalogs] if installed else [],
+                "title": replacement.windowTitle(),
+                "setting": replacement.language_selector.setting(),
+                "values_kept": replacement.language_carry_over()["values"] == values,
+            }, default=str))
+            elsewhere.close()
+            window = replacement
+            """
+        )
+
+    def test_it_waits_for_its_activation_and_then_redraws_in_the_saved_language(self):
+        report = self.report
+        self.assertTrue(report["waited"], "saving alone changes nothing")
+        self.assertTrue(report["replaced"])
+        self.assertEqual(report["language"], "zh_CN")
+        self.assertEqual(report["setting"], "zh_CN")
+        self.assertTrue(report["values_kept"])
+
+    def test_the_redraw_brings_opt_vr_s_own_catalog(self):
+        self.assertEqual(self.report["extra_catalogs"], ["emapssn_vr"])
+        self.assertEqual(self.report["title"], "EMAP-SSN VR 配置")
+
+
 class ThemeColorTests(unittest.TestCase):
     """VR Config keeps a theme colour of its own, chosen as in the desktop Config."""
 
