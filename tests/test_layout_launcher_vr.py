@@ -1,3 +1,7 @@
+# Copyright 2026 Xuebin Feng
+# Author affiliation: University of Toronto
+# SPDX-License-Identifier: Apache-2.0
+
 """The shared generator must hand back to VR without losing its settings."""
 
 import io

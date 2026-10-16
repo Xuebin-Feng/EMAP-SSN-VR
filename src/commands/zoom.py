@@ -1,3 +1,7 @@
+# Copyright 2026 Xuebin Feng
+# Author affiliation: University of Toronto
+# SPDX-License-Identifier: Apache-2.0
+
 """Not available in the VR viewer: zoom and move the network in the headset.
 
 Running it explains why, rather than crashing.

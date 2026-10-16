@@ -223,6 +223,8 @@ every difference is deliberate:
 | removed controls | see below |
 | window, terminal and error titles; icon | name the VR window, and give it the VR logo from `src/bin/logos`, falling back to the parent's Config logo |
 | distinct single-instance key | both windows can be open at once |
+| `VR_CONFIG_THEME_SETTING` for the theme colour | VR Config keeps its own colour (`VR_CONFIG_THEME_COLOR`), so choosing one there leaves the desktop Config's and Tools' as they were |
+| `extra_catalogs=VR_TRANSLATION_CATALOGS` | `install_translations` and `redraw_in_language` also load opt_vr's catalog, `emapssn_vr`, which holds the texts VR Config does not share with the desktop Config |
 
 Three settings the desktop GUI offers are deliberately absent, because nothing
 in the VR runtime reads them and no shared command does either:
