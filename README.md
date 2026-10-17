@@ -346,7 +346,7 @@ override needs a reason that survives being said out loud:
 | `agent`, `esmfold` | Driven end-to-end through the Viewer web server, which is out of scope for this port. Stubs that explain, instead of an AttributeError inside a web backend. |
 | `zoom` | Drives a VisPy camera on a canvas this process has no equivalent of; the headset owns the viewpoint. |
 | `print` | Upstream screen-grabs the canvas. A VR figure has to be rebuilt from the state arrays and projected onto a chosen plane, which is a different command. Disabled until that is designed. |
-| `alignment`, `run` | Upstream opens a Qt file dialog. Identical once the file is chosen, except that a Python script `run` names runs in the foreground here, where the desktop viewer runs it in the background to keep its window responsive; the path is an argument here. |
+| `alignment`, `embedding`, `run` | Upstream opens a Qt file dialog. Identical once the file is chosen, except that a Python script `run` names runs in the foreground here, where the desktop viewer runs it in the background to keep its window responsive; the path is an argument here. |
 | `export` | Upstream pops the system file manager through `desktop.Desktop_App`, which reaches PySide6. Otherwise a verbatim copy — keep it diffable. |
 | `meta` | The web spreadsheet UI. Upload, download and column deletion are the main program's `Metadata_Core` functions, called directly. One addition: `meta download <file> <expression>` takes a trailing selection expression, which `Metadata_Core.download_metadata` has always accepted and the desktop command does not expose. The expression runs to the end of the line, so it may contain spaces (`meta download long.csv {Length > 500} & #cluster_1#`). |
 

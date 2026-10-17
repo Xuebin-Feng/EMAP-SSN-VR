@@ -766,21 +766,23 @@ class AlignmentLoadMessageTests(unittest.TestCase):
         self.assertIn("Alignment Manager successfully loaded.", buffer.getvalue())
 
 
-def write_embeddings(folder, headers, sequence="MKTA"):
+def write_embeddings(folder, headers, sequence="MKTA", *, name="set_[test_model]_embeddings.h5",
+                     model_name="test_model", complete=True):
     """An embedding file in the Tools' format holding HEADERS, all of SEQUENCE."""
     import h5py
     from utilities import HDF5_Storage
 
-    path = os.path.join(folder, "set_[test_model]_embeddings.h5")
+    path = os.path.join(folder, name)
     with h5py.File(path, "w") as handle:
         group = HDF5_Storage.create_metadata_first_file(
-            handle, list(headers), [sequence] * len(headers), "test_model", "float16"
+            handle, list(headers), [sequence] * len(headers), model_name, "float16"
         )
         for index, header in enumerate(headers):
             group.create_dataset(
                 header, data=np.full((len(sequence), 2), index + 1, dtype=np.float16)
             )
-        HDF5_Storage.mark_generation_complete(handle)
+        if complete:
+            HDF5_Storage.mark_generation_complete(handle)
     return path
 
 
@@ -813,6 +815,182 @@ class EmbeddingLoadTests(unittest.TestCase):
             viewer.load_embedding(reuse_loaded=True)
         self.assertIn("Reusing the loaded embedding manifest", output.getvalue())
         self.assertIs(viewer.embedding._manifest, first._manifest)
+
+
+class EmbeddingCommandTests(unittest.TestCase):
+    """`embedding` switches the active embedding as the desktop viewer's command does."""
+
+    def setUp(self):
+        self.root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.root, ignore_errors=True)
+        patch_settings(self, EMBED_FILE="", EMBED_DIR=self.root, INPUT_HDF5="")
+        self.viewer = aligned_viewer()
+        self.previous = self.viewer.embedding
+
+    def embedding_command(self, line):
+        """Run LINE through the terminal's dispatcher: (printed text, the reports as (status, text))."""
+        context = RecordingContext()
+        buffer = io.StringIO()
+        with Viewer_Command_Portal.bind(context), redirect_stdout(buffer), redirect_stderr(buffer):
+            self.viewer.process_command(line, record_history=False)
+        return buffer.getvalue(), context.reports
+
+    def statuses(self, reports):
+        return [status for status, _ in reports if status is not None]
+
+    def test_a_file_is_required_and_a_missing_one_changes_nothing(self):
+        output, reports = self.embedding_command("embedding")
+        self.assertIn("Please name the embedding file", output)
+        self.assertEqual(self.statuses(reports), ["failed"])
+        output, reports = self.embedding_command("embedding no_such_file.h5")
+        self.assertIn("Error: Embedding file 'no_such_file.h5' not found (checked absolute, relative, and", output)
+        self.assertEqual(self.statuses(reports), ["failed"])
+        self.assertIs(self.viewer.embedding, self.previous)
+        self.assertEqual(cfg.EMBED_FILE, "")
+
+    def test_help_is_printed_and_listed(self):
+        for word in ("help", "-h", "--help", "HELP"):
+            with self.subTest(word=word):
+                output, reports = self.embedding_command(f"embedding {word}")
+                self.assertIn("Embedding Switcher Tool", output)
+                self.assertIn(self.root, output)
+                self.assertEqual(self.statuses(reports), ["succeeded"])
+                self.assertEqual(reports[-1][1], "Help information printed to the terminal.")
+        self.assertRegex(self.embedding_command("help")[0], r"(?m)^\s*embedding\s")
+        self.assertIn("Switch the active embedding", self.embedding_command("help embedding")[0])
+
+    def test_the_file_is_found_as_given_in_the_folder_and_without_its_extension(self):
+        absolute = write_embeddings(self.root, ALIGNED_HEADERS[:2])
+        write_embeddings(self.root, ALIGNED_HEADERS[:3], name="other.h5")
+        folder = os.path.join(self.root, "My Files")
+        os.mkdir(folder)
+        spaced = write_embeddings(folder, ALIGNED_HEADERS[:4], name="x.h5")
+        cases = (
+            (f"embedding {absolute}", absolute, 2),
+            ("embedding other.h5", os.path.join(self.root, "other.h5"), 3),
+            ("embedding other", os.path.join(self.root, "other.h5"), 3),
+            (f"embedding {absolute[:-3]}", absolute, 2),
+            (f'embedding "{spaced}"', spaced, 4),
+            (f"embedding '{spaced}'", spaced, 4),
+        )
+        for line, expected, covered in cases:
+            with self.subTest(line=line):
+                output, reports = self.embedding_command(line)
+                self.assertEqual(self.statuses(reports), ["succeeded"], reports)
+                self.assertEqual(cfg.EMBED_FILE, os.path.abspath(expected).replace("\\", "/"))
+                self.assertEqual(self.viewer.embedding.embed_file, cfg.EMBED_FILE)
+                self.assertIn(f"({covered}/{len(ALIGNED_HEADERS)} network nodes embedded)", output)
+        # As given wins over the folder, then the relative path of the working directory.
+        previous_directory = os.getcwd()
+        os.chdir(folder)
+        self.addCleanup(os.chdir, previous_directory)
+        output, reports = self.embedding_command("embedding x")
+        self.assertEqual(cfg.EMBED_FILE, os.path.abspath(spaced).replace("\\", "/"))
+
+    def test_the_new_embedding_is_reported_and_replaces_the_old_one(self):
+        first = write_embeddings(self.root, ALIGNED_HEADERS[:2], name="first.h5")
+        second = write_embeddings(self.root, ALIGNED_HEADERS[:5], name="second.h5", model_name="other_model")
+        output, reports = self.embedding_command("embedding first")
+        self.assertIn(
+            f"Success: Loaded embedding 'first.h5' (2/{len(ALIGNED_HEADERS)} network nodes embedded).", output
+        )
+        self.assertIn("Embedding model: test_model (width 2, float16).", output)
+        self.assertEqual(self.statuses(reports), ["succeeded"])
+        self.assertEqual(
+            reports[-1][1],
+            f"Success: Loaded embedding 'first.h5' (2/{len(ALIGNED_HEADERS)} network nodes embedded). "
+            "Embedding model: test_model (width 2, float16).",
+        )
+        self.assertEqual(
+            self.viewer.console_text.text,
+            f"Loaded first.h5: 2/{len(ALIGNED_HEADERS)} embedded. Embedding model: test_model (width 2, float16).",
+        )
+        before = self.viewer.embedding
+        self.embedding_command("embedding second")
+        self.assertIsNot(self.viewer.embedding, before)
+        self.assertEqual(self.viewer.embedding.model_name, "other_model")
+        mapping, valid = Command_Engine.get_embedding_mapping(self.viewer)
+        self.assertEqual(mapping.tolist(), [0, 1, 2, 3, 4, -1])
+        self.assertEqual(valid.tolist(), [0, 1, 2, 3, 4])
+        self.assertIs(Command_Engine.require_embedding(self.viewer), self.viewer.embedding)
+        self.assertEqual(cfg.EMBED_FILE, os.path.abspath(second).replace("\\", "/"))
+        self.assertNotEqual(cfg.EMBED_FILE, first.replace("\\", "/"))
+
+    def test_nodes_whose_sequence_differs_are_counted(self):
+        path = write_embeddings(self.root, ALIGNED_HEADERS[:3], name="mixed.h5")
+        self.viewer.sequences_map = {header: "MKTA" for header in ALIGNED_HEADERS}
+        self.viewer.sequences_map[ALIGNED_HEADERS[1]] = "MKTW"
+        output, reports = self.embedding_command(f"embedding {path}")
+        self.assertIn(f"(2/{len(ALIGNED_HEADERS)} network nodes embedded)", output)
+        self.assertIn("1 node not embedded: the file holds a different sequence.", output)
+        self.assertEqual(self.viewer.embedding.mismatched_headers, [ALIGNED_HEADERS[1]])
+        self.assertIn("1 node not embedded", reports[-1][1])
+
+    def test_a_network_built_with_another_model_is_noted_and_accepted(self):
+        import h5py
+
+        network = os.path.join(self.root, "network.h5")
+        with h5py.File(network, "w") as handle:
+            handle.attrs["model_name"] = "esm2_t12_35M_UR50D"
+        patch_settings(self, INPUT_HDF5=network)
+        path = write_embeddings(self.root, ALIGNED_HEADERS[:2], name="same.h5", model_name="test_model")
+        note = ("NOTE: The network was built with esm2_t12_35M_UR50D, not test_model. The Viewer "
+                "accepts this; embedding commands use the embedding's model.")
+        output, reports = self.embedding_command(f"embedding {path}")
+        self.assertIn(note, output)
+        self.assertTrue(reports[-1][1].endswith(note), reports)
+        self.assertEqual(self.statuses(reports), ["succeeded"])
+        # The same model, and a BLAST network, which has no model, get no note.
+        matching = write_embeddings(self.root, ALIGNED_HEADERS[:2], name="match.h5", model_name="esm2_t12_35M_UR50D")
+        self.assertNotIn("NOTE:", self.embedding_command(f"embedding {matching}")[0])
+        with h5py.File(network, "w") as handle:
+            handle.attrs["model_name"] = "BLAST"
+        self.assertNotIn("NOTE:", self.embedding_command(f"embedding {path}")[0])
+
+    def test_a_file_the_loader_refuses_restores_the_previous_embedding(self):
+        good = write_embeddings(self.root, ALIGNED_HEADERS[:2], name="good.h5")
+        self.embedding_command("embedding good")
+        previous = self.viewer.embedding
+        incomplete = write_embeddings(self.root, ALIGNED_HEADERS[:2], name="incomplete.h5", complete=False)
+        broken = os.path.join(self.root, "broken.h5")
+        with open(broken, "wb") as handle:
+            handle.write(b"not an HDF5 file")
+        notes = os.path.join(self.root, "notes.txt")
+        with open(notes, "w", encoding="utf-8") as handle:
+            handle.write("not an embedding")
+        for name in ("incomplete.h5", "broken.h5", "notes.txt"):
+            with self.subTest(file=name):
+                output, reports = self.embedding_command(f"embedding {os.path.join(self.root, name)}")
+                self.assertEqual(self.statuses(reports), ["failed"], reports)
+                self.assertTrue(reports[-1][1].startswith(f"Failed to load embedding '{name}': Embedding file rejected:"))
+                self.assertTrue(reports[-1][1].endswith("Reverted to previous embedding."))
+                self.assertIn("Reverting to previous embedding state...", output)
+                self.assertIs(self.viewer.embedding, previous)
+                self.assertEqual(cfg.EMBED_FILE, os.path.abspath(good).replace("\\", "/"))
+                self.assertEqual(self.viewer.console_text.text, "Load failed. Reverted to previous embedding.")
+
+    def test_a_refused_file_leaves_no_embedding_when_there_was_none(self):
+        broken = os.path.join(self.root, "broken.h5")
+        with open(broken, "wb") as handle:
+            handle.write(b"not an HDF5 file")
+        output, reports = self.embedding_command(f"embedding {broken}")
+        self.assertEqual(self.statuses(reports), ["failed"])
+        self.assertIs(self.viewer.embedding, self.previous)
+        self.assertIsNone(self.viewer.embedding.source)
+        self.assertEqual(cfg.EMBED_FILE, "")
+
+    def test_a_viewer_that_could_not_build_a_manager_is_rolled_back_too(self):
+        path = write_embeddings(self.root, ALIGNED_HEADERS[:2], name="ok.h5")
+
+        def fails():
+            self.viewer.embedding = None  # What load_embedding leaves when the manager raised.
+
+        self.viewer.load_embedding = fails
+        output, reports = self.embedding_command(f"embedding {path}")
+        self.assertEqual(self.statuses(reports), ["failed"])
+        self.assertIn("Embedding loader failed to return an embedding.", reports[-1][1])
+        self.assertIs(self.viewer.embedding, self.previous)
+        self.assertEqual(cfg.EMBED_FILE, "")
 
 
 if __name__ == "__main__":
