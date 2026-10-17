@@ -700,6 +700,94 @@ class DropdownValueTests(unittest.TestCase):
         self.assertFalse(self.report["profile_error"])
 
 
+class ComboPopupTests(unittest.TestCase):
+    """An open dropdown list scrolls by the wheel, scroll bar and keys, not by the mouse.
+
+    The desktop Config's tests (tests/test_combo_popup.py) cover the behaviour;
+    this copy only has to keep every combo box on the shared base class, and
+    its own classes steady.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.report = report_from(
+            """
+            import json
+            from PySide6.QtCore import QEvent, QPoint, QPointF, Qt
+            from PySide6.QtGui import QMouseEvent
+            from PySide6.QtWidgets import QApplication, QComboBox, QVBoxLayout, QWidget
+            from desktop.Desktop_App import SteadyPopupComboBox
+
+            def flush():
+                for _ in range(4):
+                    app.processEvents()
+
+            def rest_on_the_partly_visible_row(combo):
+                # A list cut off by 12 px, as a screen edge cuts a popup.
+                combo.addItems(["Entry %d" % number for number in range(60)])
+                host = QWidget()
+                QVBoxLayout(host).addWidget(combo)
+                host.resize(300, 120)
+                host.show()
+                flush()
+                combo.showPopup()
+                flush()
+                view = combo.view()
+                container = view.window()
+                container.resize(container.width(), container.height() - 12)
+                flush()
+                viewport = view.viewport()
+                y = viewport.height() - 3
+                row = view.indexAt(QPoint(20, y)).row()
+                cut_off = not viewport.rect().contains(
+                    view.visualRect(view.model().index(row, 0))
+                )
+                for step in range(6):
+                    local = QPoint(20 + step, y - step % 3)
+                    QApplication.sendEvent(viewport, QMouseEvent(
+                        QEvent.Type.MouseMove, QPointF(local),
+                        QPointF(viewport.mapToGlobal(local)), Qt.MouseButton.NoButton,
+                        Qt.MouseButton.NoButton, Qt.KeyboardModifier.NoModifier,
+                    ))
+                    flush()
+                report = {
+                    "cut_off": cut_off,
+                    "scrolled": view.verticalScrollBar().value(),
+                    "current": view.currentIndex().row(),
+                    "row": row,
+                }
+                combo.hidePopup()
+                host.close()
+                return report
+
+            combos = window.findChildren(QComboBox)
+            print("@@" + json.dumps({
+                "combos": len(combos),
+                "plain": [
+                    type(combo).__name__ for combo in combos
+                    if not isinstance(combo, SteadyPopupComboBox)
+                ],
+                "no_scroll": rest_on_the_partly_visible_row(namespace["NoScrollComboBox"]()),
+                "dynamic": rest_on_the_partly_visible_row(
+                    namespace["DynamicComboBox"](lambda: None)
+                ),
+            }))
+            """
+        )
+
+    def test_every_combo_box_of_the_window_has_a_steady_list(self):
+        self.assertGreater(self.report["combos"], 5)
+        self.assertEqual(self.report["plain"], [])
+
+    def test_resting_the_pointer_on_the_partly_visible_row_does_not_scroll_the_list(self):
+        for name in ("no_scroll", "dynamic"):
+            with self.subTest(name):
+                report = self.report[name]
+                self.assertTrue(report["cut_off"])
+                self.assertEqual(report["scrolled"], 0)
+                self.assertEqual(report["current"], report["row"])
+
+
 class TextSizedControlsTests(unittest.TestCase):
     """Labels share one column sized by the longest, and switches fit their text,
     as in the desktop Config. The VR client block joins both. The statistics
