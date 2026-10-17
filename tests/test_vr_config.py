@@ -269,6 +269,89 @@ class ConfigWindowTests(unittest.TestCase):
         )
 
 
+class EmbeddingRootTests(unittest.TestCase):
+    """The Directories tab lists the embedding directory as its fourth root.
+
+    Like the main program's Config, which this window is a copy of: after the
+    Input File, Cache File and Analysis Results Directories and before the
+    separator, standing for ``$embedding$`` and refreshing the Embedding Input
+    dropdown once when it changes.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.report = report_from(
+            """
+            import tempfile
+            layout = window.labels["INPUT_FILE_DIR"].parentWidget().layout()
+            row = lambda widget: layout.getWidgetPosition(widget)[0]
+            keys = ["INPUT_FILE_DIR", "CACHE_FILE_DIR", "ANALYSIS_RESULT_DIR", "EMBED_DIR",
+                    "FASTA_DIR", "MSA_DIR", "HDF5_DIR", "METADATA_DIR", "HEADER_LIST_DIR",
+                    "SAVED_LAYOUT_DIR", "SETTING_EXPORT_DIR"]
+            rows = {key: row(window.labels[key]) for key in keys}
+            separator_row = row(window.directory_base_separator.parentWidget())
+            initial = window.inputs["EMBED_DIR"].text()
+            refreshed = []
+            real_refresh = window.refresh_combo
+
+            def counting_refresh(combo, key, extensions):
+                if combo is window.cb_embed:
+                    refreshed.append(key)
+                return real_refresh(combo, key, extensions)
+
+            with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as folder:
+                open(os.path.join(folder, "listed_[model]_embeddings.h5"), "wb").close()
+                window.refresh_combo = counting_refresh
+                window.inputs["EMBED_DIR"].setText(folder)
+                del window.refresh_combo
+                items = [window.cb_embed.itemText(i) for i in range(window.cb_embed.count())]
+                resolved = window._resolved_directory_value("$embedding$/sub")
+                print("@@" + json.dumps({
+                    "rows": rows,
+                    "separator_row": separator_row,
+                    "initial": initial,
+                    "folder": folder,
+                    "refreshed": refreshed,
+                    "items": items,
+                    "resolved": resolved,
+                    "aliases": namespace["DIRECTORY_PATH_ALIASES"],
+                    "open_button": "EMBED_DIR" in window.directory_open_buttons,
+                    "tip": window.tip_db[window.inputs["EMBED_DIR"]],
+                    "label_tip": window.tip_db[window.labels["EMBED_DIR"]],
+                }))
+            """
+        )
+
+    def test_it_is_the_fourth_root_and_the_separator_follows_it(self):
+        rows = self.report["rows"]
+        roots = ["INPUT_FILE_DIR", "CACHE_FILE_DIR", "ANALYSIS_RESULT_DIR", "EMBED_DIR"]
+        self.assertEqual([rows[key] for key in roots],
+                         list(range(rows[roots[0]], rows[roots[0]] + 4)))
+        self.assertEqual(self.report["separator_row"], rows["EMBED_DIR"] + 1)
+        for key in ("FASTA_DIR", "MSA_DIR", "HDF5_DIR", "METADATA_DIR",
+                    "HEADER_LIST_DIR", "SAVED_LAYOUT_DIR", "SETTING_EXPORT_DIR"):
+            self.assertGreater(rows[key], self.report["separator_row"], key)
+        self.assertTrue(self.report["open_button"])
+
+    def test_the_root_has_the_alias_and_a_root_style_tip(self):
+        self.assertEqual(self.report["aliases"]["$embedding$"], "EMBED_DIR")
+        self.assertEqual(len(self.report["aliases"]), 4)
+        for tip in (self.report["tip"], self.report["label_tip"]):
+            self.assertIn("$embedding$", tip)
+        resolved = os.path.normcase(os.path.normpath(self.report["resolved"]))
+        self.assertEqual(
+            resolved,
+            os.path.normcase(os.path.normpath(os.path.join(self.report["folder"], "sub"))),
+        )
+
+    def test_changing_it_refreshes_the_embedding_dropdown_once(self):
+        self.assertEqual(self.report["refreshed"], ["EMBED_DIR"])
+        self.assertEqual(self.report["items"], ["", "listed_[model]_embeddings.h5"])
+
+    def test_old_settings_holding_the_default_folder_still_show_it(self):
+        self.assertEqual(self.report["initial"], "Embeddings")
+
+
 class TipPanelStatusLockTests(unittest.TestCase):
     """Hovering never replaces a status message in the tip panel, as in the desktop Config.
 
@@ -1728,6 +1811,62 @@ class VRSettingsSourceTests(unittest.TestCase):
         values = self._settings_from({"INPUT_FILE_DIR": external})
         self.assertEqual(os.path.normpath(values["INPUT_FILE_DIR"]),
                          os.path.normpath(external))
+
+    def test_the_embedding_alias_resolves_to_the_embedding_directory(self):
+        """$embedding$ is the fourth reusable root: a folder or a file written
+        under it resolves under EMBED_DIR, with no list of aliases of VR's own."""
+        import Settings_VR
+        from desktop.Viewer_State import ALIASES
+
+        self.assertEqual(Settings_VR.ALIASES["$embedding$"], "EMBED_DIR")
+        self.assertIs(Settings_VR.ALIASES, ALIASES)
+        root = _bootstrap_vr.PROJECT_ROOT
+        norm = lambda path: os.path.normcase(os.path.normpath(path))  # noqa: E731
+        values = self._settings_from({
+            "EMBED_DIR": "my_embeddings",
+            "EMBED_FILE": "$embedding$\\set_[model]_embeddings.h5",
+            "HDF5_DIR": "$embedding$/sub",
+        })
+        folder = os.path.join(root, "my_embeddings")
+        self.assertEqual(norm(values["EMBED_DIR"]), norm(folder))
+        self.assertEqual(norm(values["EMBED_FILE"]),
+                         norm(os.path.join(folder, "set_[model]_embeddings.h5")))
+        self.assertEqual(norm(values["HDF5_DIR"]), norm(os.path.join(folder, "sub")))
+        # The command-side resolver reads the same table.
+        self.assertEqual(
+            norm(Settings_VR.resolve_directory_path(
+                "$embedding$\\sub", {"EMBED_DIR": folder})),
+            norm(os.path.join(folder, "sub")),
+        )
+        self.assertEqual(
+            norm(Settings_VR.resolve_directory_path("$embedding$/sub")),
+            norm(os.path.join(Settings_VR.EMBED_DIR, "sub")),
+        )
+        self.assertEqual(Settings_VR.resolve_directory_path("$embedding$suffix/sub"),
+                         "$embedding$suffix/sub")
+
+    def test_old_settings_holding_the_default_embedding_directory_still_load(self):
+        root = _bootstrap_vr.PROJECT_ROOT
+        norm = lambda path: os.path.normcase(os.path.normpath(path))  # noqa: E731
+        values = self._settings_from({"EMBED_DIR": "Embeddings"})
+        self.assertEqual(norm(values["EMBED_DIR"]), norm(os.path.join(root, "Embeddings")))
+        # A folder an old file placed under the input root resolves under it.
+        values = self._settings_from({
+            "INPUT_FILE_DIR": "inputs", "EMBED_DIR": "$input_file$/Embeddings",
+        })
+        self.assertEqual(norm(values["EMBED_DIR"]),
+                         norm(os.path.join(root, "inputs", "Embeddings")))
+        # Without the key, the default is the same folder.
+        values = self._settings_from({})
+        self.assertEqual(norm(values["EMBED_DIR"]), norm(os.path.join(root, "Embeddings")))
+
+    def test_a_root_that_names_itself_is_refused_for_every_alias(self):
+        from desktop.Viewer_State import ALIASES
+
+        for alias, key in ALIASES.items():
+            with self.subTest(alias=alias):
+                with self.assertRaisesRegex(ValueError, "Circular directory alias"):
+                    self._settings_from({key: alias + "/folder"})
 
     def _settings_from(self, document):
         """Load settings from a throwaway file holding exactly `document`."""
