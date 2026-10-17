@@ -167,6 +167,43 @@ def get_alignment_mapping(viewer):
     return viewer_to_aln, np.flatnonzero(viewer_to_aln >= 0)
 
 
+def get_embedding_mapping(viewer):
+    """Return the network-to-embedding map and the embedded node indices.
+
+    Mirrors the main program's helper, as get_alignment_mapping does: entry i
+    is node i's row in the embedding file, or -1 when the embedding does not
+    cover it.
+    """
+    n_nodes = len(getattr(viewer, 'full_headers', []))
+    embedding = getattr(viewer, 'embedding', None)
+    if getattr(embedding, 'source', None) is not None:
+        mapping = np.asarray(getattr(embedding, 'viewer_to_emb', ()), dtype=int)
+        if mapping.shape == (n_nodes,):
+            return mapping, np.flatnonzero(mapping >= 0)
+    viewer_to_emb = np.full(n_nodes, -1, dtype=int)
+    return viewer_to_emb, np.flatnonzero(viewer_to_emb >= 0)
+
+
+# Why a command cannot use the embedding is the main program's to decide, so
+# both viewers refuse with the same messages.
+embedding_unavailable_message = _upstream.embedding_unavailable_message
+
+
+def require_embedding(viewer):
+    """The viewer's Embedding_Manager when a command can use it, else None.
+
+    The main program's helper, reporting here: the outcome goes through this
+    module's command_failed, which this dispatcher records, and the reason to
+    the terminal, the only place the VR viewer shows it.
+    """
+    message = embedding_unavailable_message(viewer)
+    if message is not None:
+        command_failed(viewer, message)
+        print_help(viewer, message, report_message=False)
+        return None
+    return viewer.embedding
+
+
 # --- Explicit outcome reporting -------------------------------------
 # Upstream commands call these unconditionally. Here they forward to the
 # Qt-free Viewer_Command_Portal shim, whose report() is a no-op unless an

@@ -38,6 +38,7 @@ import tempfile
 import textwrap
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
+from types import SimpleNamespace
 
 #: The submodule root; VR_SRC is its module tree, mirroring the main
 #: program's project-root/src split.
@@ -379,6 +380,40 @@ class CommandEngineAPITests(unittest.TestCase):
         mapping, valid = Command_Engine.get_alignment_mapping(viewer)
         self.assertEqual(mapping.shape, (viewer.n_nodes,))
         self.assertEqual(valid.ndim, 1)
+
+    def test_get_embedding_mapping_matches_the_main_programs(self):
+        upstream = Command_Engine._upstream
+        viewer = build_viewer(n_nodes=4)
+        embedded = SimpleNamespace(source=object(), viewer_to_emb=np.array([2, -1, 0, -1]))
+        for embedding in (viewer.embedding, None, embedded,
+                          SimpleNamespace(source=None, viewer_to_emb=np.array([0, 1, 2, 3])),
+                          SimpleNamespace(source=object(), viewer_to_emb=np.array([0, 1]))):
+            with self.subTest(embedding=embedding):
+                viewer.embedding = embedding
+                ours = Command_Engine.get_embedding_mapping(viewer)
+                theirs = upstream.get_embedding_mapping(viewer)
+                self.assertEqual(ours[0].tolist(), theirs[0].tolist())
+                self.assertEqual(ours[1].tolist(), theirs[1].tolist())
+        viewer.embedding = embedded
+        self.assertEqual(Command_Engine.get_embedding_mapping(viewer)[1].tolist(), [0, 2])
+
+    def test_require_embedding_refuses_through_this_dispatcher_and_terminal(self):
+        viewer = build_viewer(n_nodes=4)  # no embedding file is configured
+        record = {"status": None}
+        token = Command_Engine._DISPATCH.set(record)
+        try:
+            with redirect_stdout(io.StringIO()) as output:
+                self.assertIsNone(Command_Engine.require_embedding(viewer))
+        finally:
+            Command_Engine._DISPATCH.reset(token)
+        self.assertEqual(record["status"], "failed")
+        self.assertIn("Error: No embedding loaded in the viewer.", output.getvalue())
+        self.assertIs(
+            Command_Engine.embedding_unavailable_message,
+            Command_Engine._upstream.embedding_unavailable_message,
+        )
+        viewer.embedding = SimpleNamespace(source=object(), viewer_to_emb=np.array([0, -1, -1, -1]))
+        self.assertIs(Command_Engine.require_embedding(viewer), viewer.embedding)
 
     def test_selection_token_in_expressions(self):
         viewer = build_viewer()
