@@ -431,6 +431,8 @@ class TipPanelStatusLockTests(unittest.TestCase):
             window.run_consistency_check()
             steps["check result"] = panel()
             steps["check is a table"] = "<table" in window.tip_panel.text()
+            corner = window.tip_panel._corner_icon()
+            steps["corner after a check"] = corner.icon_name
             steps["popup after a check"] = hover(window.btn_clear_top_edge)
             hover(offset)
             press(reference, Qt.MouseButton.RightButton)
@@ -438,6 +440,7 @@ class TipPanelStatusLockTests(unittest.TestCase):
             steps["after hover, right click and window focus"] = panel()
             press(reference, Qt.MouseButton.LeftButton)
             steps["after a left click"] = panel()
+            steps["corner after a left click"] = corner.icon_name
             hover(offset)
             steps["hover after the left click"] = panel()
 
@@ -483,6 +486,11 @@ class TipPanelStatusLockTests(unittest.TestCase):
         self.assertIn("strict subset", result)
         self.assertTrue(self.report["check is a table"])
         self.assertEqual(self.report["after hover, right click and window focus"], result)
+
+    def test_the_corner_icon_shows_the_checks_verdict_until_a_tip_replaces_it(self):
+        # Every check passed: the corner shows the success icon, and a tip gives back the info icon.
+        self.assertEqual(self.report["corner after a check"], "check")
+        self.assertEqual(self.report["corner after a left click"], "info")
 
     def test_a_left_click_or_tab_shows_its_tip_and_reenables_hovering(self):
         for picked, hovered in (("after a left click", "hover after the left click"),
