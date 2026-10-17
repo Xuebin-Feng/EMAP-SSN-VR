@@ -173,7 +173,7 @@ Serves as the layout cache to avoid recalculating layouts when reopening network
         <translation type="unfinished">查看器及其命令控制台会继续运行，便于调试。</translation>
     </message>
     <message>
-        <location line="+256"/>
+        <location line="+259"/>
         <source>Shape of the volume that disconnected components are packed into around the largest one: a cube for Square, a ball for Circle.</source>
         <translation type="unfinished">围绕最大分量排布其他互不相连的分量时所用空间的形状：“正方形”为立方体，“圆形”为球体。</translation>
     </message>
@@ -236,7 +236,7 @@ Serves as the layout cache to avoid recalculating layouts when reopening network
 <context>
     <name>Message</name>
     <message>
-        <location line="-4588"/>
+        <location line="-4591"/>
         <source>No VR client is installed in this folder (vr_client.json is missing or unreadable). Save &amp; Run downloads the pinned release into player/, as install_vr.bat does; or choose the folder that holds EMAP-SSN-VR.exe.</source>
         <extracomment>VR Config&apos;s own texts are in opt_vr&apos;s catalog, emapssn_vr; the texts it shares with the desktop Config come from the main catalog. The window and taskbar icon is opt_vr&apos;s own logo, the parent&apos;s Config logo with a VR headset. The parent&apos;s Config logo stands in if it is missing. The VR client connection tooltip. The viewer passes VR Client Host and Port to the client it launches, so the two ends always agree; the endpoint recorded in the build is only where a client started by hand dials. The notes are Messages: str() is English, and the window shows display_text().</extracomment>
         <translation type="unfinished">此文件夹中没有安装 VR 客户端（vr_client.json 不存在或无法读取）。“保存并运行”会像 install_vr.bat 一样把指定版本下载到 player/ 中；也可以选择存放 EMAP-SSN-VR.exe 的文件夹。</translation>
