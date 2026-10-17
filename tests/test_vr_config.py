@@ -543,7 +543,39 @@ class ConsistencyReportTests(unittest.TestCase):
                 return cursor.selectedText().replace("\\xa0", " ")
 
             panel = window.tip_panel
+            wide_minimum = panel.minimumHeight()
+
+            from PySide6.QtCore import QEvent, QObject
+
+            class Resizes(QObject):
+                count = 0
+
+                def eventFilter(self, watched, event):
+                    if event.type() == QEvent.Type.Resize:
+                        self.count += 1
+                    return False
+
+            resizes = Resizes(panel)
+            panel.installEventFilter(resizes)
+            cycles = []
+            for _ in range(3):
+                resizes.count = 0
+                window.resize(width_before, 650)
+                app.processEvents()
+                app.processEvents()
+                narrow_minimum, narrow_height = panel.minimumHeight(), panel.height()
+                window.resize(1000, 650)
+                app.processEvents()
+                app.processEvents()
+                cycles.append({
+                    "resizes": resizes.count, "narrow_minimum": narrow_minimum,
+                    "narrow_height": narrow_height, "minimum": panel.minimumHeight(),
+                    "height": panel.height(), "needs": panel.heightForWidth(panel.width()),
+                })
+
             print("@@" + json.dumps({
+                "wide_minimum": wide_minimum,
+                "cycles": cycles,
                 "rows": [[cell(row, column) for column in (1, 2, 3)] for row in range(table.rows())],
                 "text": document.toPlainText().replace("\\u200b", ""),
                 "width_before": width_before,
@@ -572,6 +604,22 @@ class ConsistencyReportTests(unittest.TestCase):
     def test_the_report_is_shown_whole_and_does_not_widen_the_window(self):
         self.assertGreaterEqual(self.report["panel_height"], self.report["panel_needs"])
         self.assertEqual(self.report["width_after"], self.report["width_before"])
+
+    def test_the_panel_gives_its_height_back_when_the_window_widens_again(self):
+        wide, cycles = self.report["wide_minimum"], self.report["cycles"]
+        for cycle in cycles:
+            # Narrower, the report wraps more and the panel grows...
+            self.assertGreater(cycle["narrow_minimum"], wide)
+            self.assertGreaterEqual(cycle["narrow_height"], cycle["narrow_minimum"])
+            # ...and widening gives the height back, with nothing cut off.
+            self.assertEqual(cycle["minimum"], wide)
+            self.assertLess(cycle["height"], cycle["narrow_height"])
+            self.assertGreaterEqual(cycle["height"], cycle["needs"])
+        # Fitting the panel does not feed back into more resizing: every cycle takes
+        # the same few resize events.
+        counts = {cycle["resizes"] for cycle in cycles}
+        self.assertEqual(len(counts), 1, cycles)
+        self.assertLessEqual(counts.pop(), 6)
 
 
 class AutoStepSizeTests(unittest.TestCase):
