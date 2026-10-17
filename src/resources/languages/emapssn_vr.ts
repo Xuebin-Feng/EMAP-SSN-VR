@@ -45,14 +45,9 @@ OFF keeps the viewer and its command console running for debugging.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <source>Saved Config: Selects the settings profile used for this tab.
-(custom) uses the current viewer_settings_vr.json values; (default) uses read-only built-in defaults; (new) creates a named profile; named entries load profiles from the Saved Config Directory.</source>
-        <extracomment>Layout dimensionality is fixed: the VR viewer has no 2D mode, exactly as the desktop viewer has no 3D one. Settings that belong to the Python/VR client bridge. The desktop program has no equivalent, so they are declared here rather than in the shared schema. Settings the desktop viewer draws but the VR client does not. Keeping a control for them would invite tuning something with no effect: nothing in the VR runtime reads any of these, and no shared command does either. The bridge settings sit on the Visual Effects tab, so they share its profile group rather than forming one of their own.</extracomment>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
         <source>Selects a pre-computed 3D layout coordinate cache file (.h5) from the cache directory.
 Instantly restores previously computed node positions to bypass physics simulation.</source>
+        <extracomment>Layout dimensionality is fixed: the VR viewer has no 2D mode, exactly as the desktop viewer has no 3D one. Settings that belong to the Python/VR client bridge. The desktop program has no equivalent, so they are declared here rather than in the shared schema. Settings the desktop viewer draws but the VR client does not. Keeping a control for them would invite tuning something with no effect: nothing in the VR runtime reads any of these, and no shared command does either. The bridge settings sit on the Visual Effects tab, so they share its profile group rather than forming one of their own.</extracomment>
         <translation type="unfinished"></translation>
     </message>
     <message>

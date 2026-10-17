@@ -4,7 +4,7 @@
 <context>
     <name>Config</name>
     <message>
-        <location filename="../../../EMAPSSN_Config_VR.py" line="+65"/>
+        <location filename="../../../EMAPSSN_Config_VR.py" line="+70"/>
         <source>EMAP-SSN VR Configuration</source>
         <extracomment>This window configures the VR front end, so it names itself accordingly rather than borrowing the desktop program&apos;s display names.</extracomment>
         <translation type="unfinished">EMAP-SSN VR 配置</translation>
@@ -60,17 +60,17 @@ OFF keeps the viewer and its command console running for debugging.</source>
 关闭时，查看器及其命令控制台会继续运行，便于调试。</translation>
     </message>
     <message>
-        <location line="+1930"/>
         <source>Saved Config: Selects the settings profile used for this tab.
 (custom) uses the current viewer_settings_vr.json values; (default) uses read-only built-in defaults; (new) creates a named profile; named entries load profiles from the Saved Config Directory.</source>
         <extracomment>Layout dimensionality is fixed: the VR viewer has no 2D mode, exactly as the desktop viewer has no 3D one. Settings that belong to the Python/VR client bridge. The desktop program has no equivalent, so they are declared here rather than in the shared schema. Settings the desktop viewer draws but the VR client does not. Keeping a control for them would invite tuning something with no effect: nothing in the VR runtime reads any of these, and no shared command does either. The bridge settings sit on the Visual Effects tab, so they share its profile group rather than forming one of their own.</extracomment>
-        <translation type="unfinished">已保存配置：选择此选项卡使用的配置方案。
+        <translation type="obsolete">已保存配置：选择此选项卡使用的配置方案。
 （自定义）使用当前 viewer_settings_vr.json 中的值；（默认）使用只读的内置默认值；（新建）创建一个命名的配置方案；其他命名条目从已保存配置目录加载配置方案。</translation>
     </message>
     <message>
-        <location line="+12"/>
+        <location line="+2244"/>
         <source>Selects a pre-computed 3D layout coordinate cache file (.h5) from the cache directory.
 Instantly restores previously computed node positions to bypass physics simulation.</source>
+        <extracomment>Layout dimensionality is fixed: the VR viewer has no 2D mode, exactly as the desktop viewer has no 3D one. Settings that belong to the Python/VR client bridge. The desktop program has no equivalent, so they are declared here rather than in the shared schema. Settings the desktop viewer draws but the VR client does not. Keeping a control for them would invite tuning something with no effect: nothing in the VR runtime reads any of these, and no shared command does either. The bridge settings sit on the Visual Effects tab, so they share its profile group rather than forming one of their own.</extracomment>
         <translation type="unfinished">从缓存目录中选择预先计算的三维布局坐标缓存文件（.h5）。
 可立即恢复先前计算的节点位置，从而跳过物理模拟。</translation>
     </message>
@@ -81,7 +81,7 @@ Larger values spread the packed clusters further apart in the final 3D layout.</
 数值越大，最终三维布局中排布的簇相距越远。</translation>
     </message>
     <message>
-        <location line="+26"/>
+        <location line="+33"/>
         <source>Shape of the volume that disconnected components are packed into around the largest one: a cube for Square, a ball for Circle.
 Components never land inside another one&apos;s enclosed space or in its narrow gaps.</source>
         <translation type="unfinished">围绕最大分量排布其他互不相连的分量时所用空间的形状：“正方形”为立方体，“圆形”为球体。
@@ -102,7 +102,7 @@ Serves as the layout cache to avoid recalculating layouts when reopening network
 作为布局缓存，重新打开网络时无需重新计算布局。</translation>
     </message>
     <message>
-        <location line="+1838"/>
+        <location line="+1859"/>
         <source>Quit with VR Client:</source>
         <translation type="unfinished">随 VR 客户端退出：</translation>
     </message>
@@ -150,7 +150,7 @@ Serves as the layout cache to avoid recalculating layouts when reopening network
 <context>
     <name>Message</name>
     <message>
-        <location line="-3976"/>
+        <location line="-4306"/>
         <source>No VR client is installed in this folder (vr_client.json is missing or unreadable). Save &amp; Run downloads the pinned release into player/, as install_vr.bat does; or choose the folder that holds EMAP-SSN-VR.exe.</source>
         <extracomment>VR Config&apos;s own texts are in opt_vr&apos;s catalog, emapssn_vr; the texts it shares with the desktop Config come from the main catalog. The window and taskbar icon is opt_vr&apos;s own logo, the parent&apos;s Config logo with a VR headset. The parent&apos;s Config logo stands in if it is missing. The VR client connection tooltip. The viewer passes VR Client Host and Port to the client it launches, so the two ends always agree; the endpoint recorded in the build is only where a client started by hand dials. The notes are Messages: str() is English, and the window shows display_text().</extracomment>
         <translation type="unfinished">此文件夹中没有安装 VR 客户端（vr_client.json 不存在或无法读取）。“保存并运行”会像 install_vr.bat 一样把指定版本下载到 player/ 中；也可以选择存放 EMAP-SSN-VR.exe 的文件夹。</translation>

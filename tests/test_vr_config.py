@@ -371,8 +371,17 @@ class TipPanelStatusLockTests(unittest.TestCase):
             from PySide6.QtGui import QFocusEvent, QHelpEvent, QMouseEvent, QTextDocumentFragment
             from PySide6.QtWidgets import QToolTip
 
+            from desktop.Tip_Panel import Tip, plain
+
             def panel():
-                return QTextDocumentFragment.fromHtml(window.tip_panel.text()).toPlainText()
+                shown = QTextDocumentFragment.fromHtml(window.tip_panel.text()).toPlainText()
+                # A status message's icon is an image: one object-replacement character.
+                return shown.replace("\\ufffc", "").strip()
+
+            def tip_texts(key):
+                # The texts a tip shows: a rich tip's, each by itself, or a plain tip as it is.
+                tip = window.tip_db_keys[key]
+                return [plain(text) for text in tip.texts()] if isinstance(tip, Tip) else [tip]
 
             def hover(widget):
                 app.sendEvent(widget, QHelpEvent(
@@ -397,8 +406,7 @@ class TipPanelStatusLockTests(unittest.TestCase):
             app.processEvents()
             reference = window.labels["ALIGNMENT_REFERENCE"]
             offset = window.labels["ALIGNMENT_OFFSET"]
-            steps = {"tips": {key: window.tip_db_keys[key]
-                              for key in ("ALIGNMENT_REFERENCE", "ALIGNMENT_OFFSET")}}
+            steps = {"tips": {key: tip_texts(key) for key in ("ALIGNMENT_REFERENCE", "ALIGNMENT_OFFSET")}}
             # The Clear button has a tooltip of its own, so Qt would pop it up.
             steps["popup before a check"] = hover(window.btn_clear_top_edge)
             hover(reference)
@@ -454,8 +462,21 @@ class TipPanelStatusLockTests(unittest.TestCase):
         )
         cls.tips = cls.report["tips"]
 
+    def assert_shows_tip(self, shown, key):
+        """shown is the tip of key: a plain tip as it is, a rich tip holding each of its texts."""
+        texts = self.tips[key]
+
+        def squashed(text):
+            # A chip pads its text with spaces, which are not in the tip's own text.
+            return "".join(text.split())
+
+        if len(texts) == 1:
+            self.assertEqual(shown, texts[0])
+        for text in texts:
+            self.assertIn(squashed(text), squashed(shown))
+
     def test_hovering_shows_tips_until_a_status_message_arrives(self):
-        self.assertEqual(self.report["hover before a check"], self.tips["ALIGNMENT_REFERENCE"])
+        self.assert_shows_tip(self.report["hover before a check"], "ALIGNMENT_REFERENCE")
         result = self.report["check result"]
         # The result is a table of rich text, with a row per check.
         self.assertIn("FASTA vs HDF5", result)
@@ -467,8 +488,8 @@ class TipPanelStatusLockTests(unittest.TestCase):
         for picked, hovered in (("after a left click", "hover after the left click"),
                                 ("after Tab", "hover after Tab")):
             with self.subTest(picked):
-                self.assertEqual(self.report[picked], self.tips["ALIGNMENT_REFERENCE"])
-                self.assertEqual(self.report[hovered], self.tips["ALIGNMENT_OFFSET"])
+                self.assert_shows_tip(self.report[picked], "ALIGNMENT_REFERENCE")
+                self.assert_shows_tip(self.report[hovered], "ALIGNMENT_OFFSET")
 
     def test_save_and_statistics_messages_also_stay_while_hovering(self):
         self.assertTrue(self.report["save message"].startswith("Settings saved successfully."))
@@ -1461,10 +1482,14 @@ class RunTimeTextTests(unittest.TestCase):
             def plain(html):
                 return QTextDocumentFragment.fromHtml(html).toPlainText()
 
+            from desktop.Tip_Panel import Tip
+
             for key, tip in window.tip_db_keys.items():
-                checked.append("tip " + key)
-                if not is_pseudo_translated(tip):
-                    left["tip " + key] = tip
+                # A tip the panel lays out holds several texts, each translated by itself.
+                for text in (tip.texts() if isinstance(tip, Tip) else [tip]):
+                    checked.append("tip " + key)
+                    if not is_pseudo_translated(text):
+                        left["tip " + key] = text
             for key in ("VR_APP_DIR", "VR_HOST", "VR_PORT", "ENABLE_EDGE_FILTERING",
                         "MAX_RENDER_EDGES", "DISTANCE_SCALE", "EXIT_WITH_UNITY"):
                 check("tooltip " + key, window.inputs[key].toolTip())
