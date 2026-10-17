@@ -9,60 +9,80 @@
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <source>VR Client Build: Folder containing the VR client (EMAP-SSN-VR.exe). Relative paths start in opt_vr.
-install_vr.bat installs the client in player/.</source>
-        <extracomment>VR&apos;s own tips; the window translates them (translate(&quot;Config&quot;, tip)).</extracomment>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>VR Client Host: Local address where the Python viewer listens for the VR client.
-Save &amp; Run passes it to the client it starts.</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>VR Client Port: TCP port where the Python viewer listens for the VR client (1–65535).
-Save &amp; Run passes it to the client it starts.</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>Limit Rendered Edges: ON caps the edges sent to the VR client at Max Edges; OFF sends all retained edges.
-Reducing the rendered edges can improve VR performance.</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>Max Edges: Maximum number of edges sent to the VR client when Limit Rendered Edges is ON.
-Above this limit, the viewer samples edges with a preference for weaker connections. Zero sends no edges.</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>Distance Scale: Spacing between the nodes in the headset; 1.0 keeps the layout&apos;s own spacing.
-The VR viewer starts at this value, and the two-hand gesture in the headset changes it during a session.</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>Quit with VR Client: ON closes the Python viewer when the VR client closes.
-OFF keeps the viewer and its command console running for debugging.</source>
-        <translation type="unfinished"></translation>
-    </message>
-    <message>
-        <source>Selects a pre-computed 3D layout coordinate cache file (.h5) from the cache directory.
-Instantly restores previously computed node positions to bypass physics simulation.</source>
+        <source>Folder containing the VR client (`EMAP-SSN-VR.exe`). Relative paths start in opt_vr.</source>
         <extracomment>Layout dimensionality is fixed: the VR viewer has no 2D mode, exactly as the desktop viewer has no 3D one. Settings that belong to the Python/VR client bridge. The desktop program has no equivalent, so they are declared here rather than in the shared schema. Settings the desktop viewer draws but the VR client does not. Keeping a control for them would invite tuning something with no effect: nothing in the VR runtime reads any of these, and no shared command does either. The bridge settings sit on the Visual Effects tab, so they share its profile group rather than forming one of their own.</extracomment>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <source>Shape of the volume that disconnected components are packed into around the largest one: a cube for Square, a ball for Circle.
-Components never land inside another one&apos;s enclosed space or in its narrow gaps.</source>
+        <source>`install_vr.bat` installs the client in `player/`.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <source>Uses UMAP manifold learning to compute 3D coordinates directly from sequence distances.
-Provides fast non-linear dimensionality reduction as an alternative to iterative physics simulations.</source>
+        <source>Local address where the Python viewer listens for the VR client.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <source>Directory where calculated 3D layout coordinate files and network metadata (.h5) are saved and loaded.
-Serves as the layout cache to avoid recalculating layouts when reopening networks.</source>
+        <source>Save &amp; Run passes it to the client it starts.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>TCP port where the Python viewer listens for the VR client (`1–65535`).</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Limits how many edges are sent to the VR client.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Reducing the rendered edges can improve VR performance.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Caps the edges sent to the VR client at Max Edges.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Sends all retained edges.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Maximum number of edges sent to the VR client when Limit Rendered Edges is ON.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Above this limit, the viewer samples edges with a preference for weaker connections. Zero sends no edges.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Spacing between the nodes in the headset; `1.0` keeps the layout&apos;s own spacing.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>The VR viewer starts at this value, and the two-hand gesture in the headset changes it during a session.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Whether the Python viewer quits with the VR client.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Closes the Python viewer when the VR client closes.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Keeps the viewer and its command console running for debugging.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Shape of the volume that disconnected components are packed into around the largest one: a cube for Square, a ball for Circle.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Components never land inside another one&apos;s enclosed space or in its narrow gaps.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Uses UMAP manifold learning to compute 3D coordinates directly from sequence distances.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
@@ -116,6 +136,7 @@ Serves as the layout cache to avoid recalculating layouts when reopening network
     </message>
     <message>
         <source>Save &amp; Run starts this VR client dialling {host}:{port}.</source>
+        <extracomment>The settings of VR&apos;s own tips (ConfigGUI._vr_control_tips).</extracomment>
         <translation type="unfinished"></translation>
     </message>
     <message>

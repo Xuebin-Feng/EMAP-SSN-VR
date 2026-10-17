@@ -283,6 +283,7 @@ class EmbeddingRootTests(unittest.TestCase):
         cls.report = report_from(
             """
             import tempfile
+            from desktop.Tip_Panel import tip_plain
             layout = window.labels["INPUT_FILE_DIR"].parentWidget().layout()
             row = lambda widget: layout.getWidgetPosition(widget)[0]
             keys = ["INPUT_FILE_DIR", "CACHE_FILE_DIR", "ANALYSIS_RESULT_DIR", "EMBED_DIR",
@@ -316,8 +317,8 @@ class EmbeddingRootTests(unittest.TestCase):
                     "resolved": resolved,
                     "aliases": namespace["DIRECTORY_PATH_ALIASES"],
                     "open_button": "EMBED_DIR" in window.directory_open_buttons,
-                    "tip": window.tip_db[window.inputs["EMBED_DIR"]],
-                    "label_tip": window.tip_db[window.labels["EMBED_DIR"]],
+                    "tip": tip_plain(window.tip_db[window.inputs["EMBED_DIR"]]),
+                    "label_tip": tip_plain(window.tip_db[window.labels["EMBED_DIR"]]),
                 }))
             """
         )
@@ -511,6 +512,178 @@ class TipPanelStatusLockTests(unittest.TestCase):
     def test_tips_never_open_qt_tooltip_popups(self):
         self.assertFalse(self.report["popup before a check"])
         self.assertFalse(self.report["popup after a check"])
+
+
+class RichTipTests(unittest.TestCase):
+    """Every tip of the window is a Tip the shared panel lays out, as in the desktop Config.
+
+    The live notes (a colour's swatch, the folder a directory resolves to, the
+    devices found) and the range and default facts are the shared code's,
+    checked here only where this window wires them. What is VR's own: the
+    tips of the bridge fields, and the client note that joins three of them.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.report = report_from(
+            """
+            import os, re, tempfile
+            from PySide6.QtCore import QEvent, QPoint, QPointF, Qt
+            from PySide6.QtGui import QMouseEvent, QTextDocumentFragment
+            from desktop.Desktop_App import NAME_ITEM_ROLE
+            from desktop.Tip_Panel import FieldTip, Tip, resolve, tip_plain
+
+            def click(widget):
+                app.sendEvent(widget, QMouseEvent(
+                    QEvent.Type.MouseButtonPress, QPointF(1, 1), QPointF(1, 1), Qt.MouseButton.LeftButton,
+                    Qt.MouseButton.LeftButton, Qt.KeyboardModifier.NoModifier,
+                ))
+                return QTextDocumentFragment.fromHtml(window.tip_panel.text()).toPlainText().replace(chr(0xfffc), "")
+
+            def squash(text):
+                return re.sub(r"[ \\t\\r\\n]+", " ", text).strip()
+
+            keys = list(namespace["VR_CONTROL_KEYS"])
+            report = {"keys": keys}
+            report["all are tips"] = all(isinstance(tip, Tip) for tip in window.tip_db_keys.values())
+            report["own"] = {}
+            for key in keys:
+                widget = window.inputs[key]
+                entry = window.tip_db[widget]
+                report["own"][key] = {
+                    "field": isinstance(entry, FieldTip) and entry.field.key,
+                    "title": isinstance(entry, FieldTip) and entry.field.title(),
+                    "label shares it": window.tip_db[window.labels[key]] is entry,
+                    "tooltip is plain": widget.toolTip() == tip_plain(entry),
+                    "facts": dict(resolve(entry).facts),
+                    "summary": resolve(entry).summary,
+                }
+
+            # The client note, over several refreshes: once on each endpoint field and nowhere else.
+            tab = "visual_effects"
+            profile = dict(namespace["VR_VISUAL_PROFILE_DEFAULTS"])
+            profile.update(VR_APP_DIR="test_build", VR_HOST="10.0.0.5", VR_PORT=6000)
+            with mock.patch.object(namespace["Player_Build_VR"], "read_endpoint", return_value=("localhost", 7777)):
+                for _ in range(3):
+                    window._apply_profile_data(tab, profile)
+                window.inputs["VR_PORT"].setValue(6001)
+                window.inputs["VR_PORT"].setValue(6000)
+                note = squash(window._bridge_note)
+                report["note"] = note
+                report["noted"] = {
+                    key: squash(window.inputs[key].toolTip()).count(note) for key in keys
+                }
+                report["noted label"] = squash(window.labels["VR_PORT"].toolTip()).count(note)
+                report["noted browse"] = squash(window._client_browse_button.toolTip()).count(note)
+                report["browse is the field's"] = (
+                    window._client_browse_button.toolTip() == window.inputs["VR_APP_DIR"].toolTip()
+                )
+                report["panel shows it"] = note in squash(click(window.labels["VR_HOST"]))
+                report["panel title"] = squash(click(window.labels["VR_HOST"])).startswith(
+                    window.tip_db[window.inputs["VR_HOST"]].field.title()
+                )
+            with mock.patch.object(namespace["Player_Build_VR"], "read_endpoint", return_value=None):
+                window._apply_profile_data(tab, profile)
+                report["note after"] = squash(window._bridge_note)
+                report["noted after"] = squash(window.inputs["VR_APP_DIR"].toolTip()).count(report["note after"])
+                report["old note gone"] = note not in squash(window.inputs["VR_APP_DIR"].toolTip())
+
+            # VR's defaults are facts too.
+            report["port default"] = dict(resolve(window.tip_db[window.inputs["VR_PORT"]]).facts).get("Default")
+            report["default port"] = str(namespace["VR_PROFILE_DEFAULTS"]["VR_PORT"])
+
+            # The live notes this window wires.
+            colours = {}
+            for key in ("INITIAL_NODE_COLOR", "HOVER_COLOR", "CONNECTED_NODE_COLOR", "EDGE_COLOR", "NODE_BOUNDARY_COLOR"):
+                window.inputs[key].setText("#123456")
+                colours[key] = "Current color: #123456" in squash(click(window.labels[key]))
+                window.inputs[key].setText("")
+                colours[key + " blank"] = "Current color" not in squash(
+                    QTextDocumentFragment.fromHtml(window.tip_panel.text()).toPlainText()
+                )
+            report["colours"] = colours
+
+            combo = window.inputs["LAYOUT_DEVICE_SELECTION"]
+            for index in reversed(range(combo.count())):
+                combo.removeItem(index)
+            combo.addItem("Automatic", "auto")
+            report["no device"] = "Detected devices" in squash(click(window.labels["LAYOUT_DEVICE_SELECTION"]))
+            combo.addItem("NVIDIA A100-SXM4-40GB", "cuda:0")
+            combo.setItemData(combo.count() - 1, True, NAME_ITEM_ROLE)
+            report["device"] = squash(click(window.labels["LAYOUT_DEVICE_SELECTION"]))
+
+            with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as folder:
+                window.inputs["SETTING_EXPORT_DIR"].setText(os.path.join(folder, "exports"))
+                window.inputs["FASTA_DIR"].setText(os.path.join(folder, "fasta"))
+                scope = type(window)._folder_note.__globals__
+                with mock.patch.dict(scope, {"free_bytes": lambda path: 7.5 * 1024 ** 3}):
+                    report["export"] = squash(click(window.labels["SETTING_EXPORT_DIR"]))
+                    report["fasta"] = squash(click(window.labels["FASTA_DIR"]))
+                report["folder"] = folder
+            print("@@" + json.dumps(report))
+            """
+        )
+
+    def test_every_tip_is_a_tip_and_each_of_the_bridge_fields_has_its_own(self):
+        self.assertTrue(self.report["all are tips"])
+        self.assertEqual(
+            self.report["keys"],
+            ["VR_APP_DIR", "VR_HOST", "VR_PORT", "ENABLE_EDGE_FILTERING", "MAX_RENDER_EDGES",
+             "DISTANCE_SCALE", "EXIT_WITH_UNITY"],
+        )
+        titles = {
+            "VR_APP_DIR": "VR Client Build", "VR_HOST": "VR Client Host", "VR_PORT": "VR Client Port",
+            "MAX_RENDER_EDGES": "Max Edges", "DISTANCE_SCALE": "Distance Scale",
+        }
+        for key in self.report["keys"]:
+            with self.subTest(key=key):
+                own = self.report["own"][key]
+                self.assertEqual(own["field"], key)
+                self.assertTrue(own["title"])
+                self.assertTrue(own["label shares it"])
+                # The endpoint fields' tooltips add the client note to the tip.
+                self.assertTrue(own["tooltip is plain"] or key in ("VR_APP_DIR", "VR_HOST", "VR_PORT"))
+                self.assertEqual(own["facts"]["Setting"], key)
+                self.assertTrue(own["summary"])
+        for key, title in titles.items():
+            self.assertEqual(self.report["own"][key]["title"], title)
+
+    def test_the_client_note_joins_the_three_endpoint_fields_once_however_often_it_is_refreshed(self):
+        report = self.report
+        self.assertTrue(report["note"])
+        self.assertEqual(
+            {key: count for key, count in report["noted"].items() if count},
+            {"VR_APP_DIR": 1, "VR_HOST": 1, "VR_PORT": 1},
+        )
+        self.assertEqual((report["noted label"], report["noted browse"]), (1, 1))
+        self.assertTrue(report["browse is the field's"])
+        self.assertTrue(report["panel shows it"])
+        self.assertTrue(report["panel title"])
+
+    def test_a_new_client_state_replaces_the_note_and_does_not_add_to_it(self):
+        report = self.report
+        self.assertNotEqual(report["note after"], report["note"])
+        self.assertEqual(report["noted after"], 1)
+        self.assertTrue(report["old note gone"])
+
+    def test_vrs_own_defaults_are_facts(self):
+        self.assertEqual(self.report["port default"], self.report["default port"])
+
+    def test_the_colour_fields_show_a_swatch_note_and_a_blank_one_none(self):
+        for key, ok in self.report["colours"].items():
+            with self.subTest(key=key):
+                self.assertTrue(ok)
+
+    def test_the_layout_device_tip_lists_the_devices_found_by_name(self):
+        self.assertFalse(self.report["no device"])
+        self.assertIn("Detected devices: NVIDIA A100-SXM4-40GB", self.report["device"])
+
+    def test_a_directory_tip_names_its_folder_and_the_export_folder_the_room_free(self):
+        folder = self.report["folder"]
+        self.assertIn(os.path.join(folder, "exports"), self.report["export"].replace("​", ""))
+        self.assertIn("7.5 GiB free on its drive.", self.report["export"])
+        self.assertIn("Resolves to", self.report["fasta"])
+        self.assertNotIn("free on its drive", self.report["fasta"])
 
 
 class ConsistencyReportTests(unittest.TestCase):
