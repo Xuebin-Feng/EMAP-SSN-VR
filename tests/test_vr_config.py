@@ -220,6 +220,11 @@ class ConfigWindowTests(unittest.TestCase):
         for key in ("TEXT_SIZE", "TEXT_COLOR", "LOW_RESOURCE_MODE"):
             self.assertNotIn(key, self.report["inputs"], key)
 
+    def test_the_optional_embedding_input_came_with_the_copy(self):
+        """Shared commands that need an embedding run in VR too."""
+        for key in ("EMBED_FILE", "EMBED_DIR", "MSA_FILE", "MSA_DIR"):
+            self.assertIn(key, self.report["inputs"], key)
+
     def test_packing_geometry_has_a_control(self):
         """In 3D, Square packs components into a cube and Circle into a ball."""
         self.assertIn("PACKING_GEOMETRY", self.report["inputs"])

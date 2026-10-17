@@ -45,6 +45,7 @@ import Viewer_Utils_VR as utils
 import Player_Build_VR
 import Background_Job_Scheduler_VR
 import Alignment_Manager
+import Embedding_Manager
 from desktop.Viewer_State import resolve_selected_cache
 
 
@@ -259,6 +260,11 @@ class HeadlessViewer:
             self.alignment_offset = 0
         self.load_global_alignment()
 
+        # The optional embedding, matched to the nodes as the desktop viewer
+        # does: only its manifest is read; commands read rows when they run.
+        self.embedding = None
+        self.load_embedding()
+
     def _get_current_state(self):
         """Package the state undo restores: what the desktop's helper covers.
 
@@ -382,6 +388,21 @@ class HeadlessViewer:
             print(f"Warning: Failed to load Alignment Manager: {e}")
             self.alignment = None
         
+    def load_embedding(self, reuse_loaded=False):
+        # The main program's Embedding_Manager, as the desktop viewer uses it.
+        # With no file, or one it refuses, it has already said why and holds
+        # no source.
+        try:
+            self.embedding = Embedding_Manager.Embedding_Manager(
+                getattr(cfg, 'EMBED_FILE', ''),
+                full_headers=self.full_headers,
+                sequences=getattr(self, 'sequences_map', None),
+                reuse=getattr(self, 'embedding', None) if reuse_loaded else None,
+            )
+        except Exception as e:
+            print(f"Warning: Failed to load the embedding: {e}")
+            self.embedding = None
+
     def get_global_settings(self):
         return {
              "nodeScale": float(getattr(cfg, 'NODE_SIZE', 10.0)),

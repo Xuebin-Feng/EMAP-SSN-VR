@@ -103,6 +103,7 @@ opt_vr/
 ├── player_release.json                  # the client release to install, with its SHA-256
 ├── player/                              # the installed VR client (ignored)
 ├── Input_Files/                         # sequence sets, networks, MSAs, metadata, header lists (ignored)
+├── Embeddings/                          # protein language model embeddings, the optional input (ignored)
 ├── Analysis_Results/                    # command outputs: label workbooks, logos, exports (ignored)
 ├── Cache_Files/                         # runtime working directory (ignored)
 ├── viewer_settings_vr.json              # per-user settings (ignored)
@@ -140,6 +141,9 @@ generation are all the main program's responsibility. This package:
   viewer does,
 - rebuilds the edge list with the main program's own `prepare_network`, so VR
   edge filtering is identical to the desktop viewer's,
+- loads the optional MSA and embedding with the main program's own
+  `Alignment_Manager` and `Embedding_Manager`, so shared commands find them as
+  they do on the desktop,
 - streams that state to the VR client over a local socket, and
 - exposes a terminal command console for analysis.
 

@@ -99,7 +99,7 @@ VR_DEFAULTS = {
 _DIRECTORY_SUFFIX = "_DIR"
 
 #: File-valued settings that are stored with an alias and/or relative.
-_PATH_KEYS = ("NODE_FASTA_FILE", "INPUT_HDF5", "MSA_FILE", "TARGET_CACHE_PATH")
+_PATH_KEYS = ("NODE_FASTA_FILE", "INPUT_HDF5", "MSA_FILE", "EMBED_FILE", "TARGET_CACHE_PATH")
 
 
 def _settings_path() -> str:

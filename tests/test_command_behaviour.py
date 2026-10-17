@@ -761,5 +761,54 @@ class AlignmentLoadMessageTests(unittest.TestCase):
         self.assertIn("Alignment Manager successfully loaded.", buffer.getvalue())
 
 
+def write_embeddings(folder, headers, sequence="MKTA"):
+    """An embedding file in the Tools' format holding HEADERS, all of SEQUENCE."""
+    import h5py
+    from utilities import HDF5_Storage
+
+    path = os.path.join(folder, "set_[test_model]_embeddings.h5")
+    with h5py.File(path, "w") as handle:
+        group = HDF5_Storage.create_metadata_first_file(
+            handle, list(headers), [sequence] * len(headers), "test_model", "float16"
+        )
+        for index, header in enumerate(headers):
+            group.create_dataset(
+                header, data=np.full((len(sequence), 2), index + 1, dtype=np.float16)
+            )
+        HDF5_Storage.mark_generation_complete(handle)
+    return path
+
+
+class EmbeddingLoadTests(unittest.TestCase):
+    """The VR viewer loads the optional embedding through the main program's manager."""
+
+    def test_no_embedding_leaves_a_manager_without_a_source(self):
+        patch_settings(self, EMBED_FILE="")
+        buffer = io.StringIO()
+        with redirect_stdout(buffer), redirect_stderr(buffer):
+            viewer = vr_viewer.HeadlessViewer(
+                len(ALIGNED_HEADERS), list(ALIGNED_HEADERS), list(ALIGNED_HEADERS), {}
+            )
+        self.assertIsNone(viewer.embedding.source)
+        self.assertIsNone(viewer.embedding.load_failure)
+        self.assertIn("An embedding file is not selected", buffer.getvalue())
+
+    def test_the_configured_embedding_is_matched_to_the_nodes(self):
+        root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, root, ignore_errors=True)
+        patch_settings(self, EMBED_FILE=write_embeddings(root, ALIGNED_HEADERS[:2]))
+        viewer = aligned_viewer()
+        expected = [0, 1] + [-1] * (len(ALIGNED_HEADERS) - 2)
+        self.assertEqual(viewer.embedding.viewer_to_emb.tolist(), expected)
+        self.assertEqual(viewer.embedding.model_name, "test_model")
+        np.testing.assert_array_equal(viewer.embedding.residues(1), np.full((4, 2), 2.0))
+        # The manifest read at launch is kept when the file is unchanged.
+        first = viewer.embedding
+        with redirect_stdout(io.StringIO()) as output:
+            viewer.load_embedding(reuse_loaded=True)
+        self.assertIn("Reusing the loaded embedding manifest", output.getvalue())
+        self.assertIs(viewer.embedding._manifest, first._manifest)
+
+
 if __name__ == "__main__":
     unittest.main()

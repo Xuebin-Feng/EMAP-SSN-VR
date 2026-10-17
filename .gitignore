@@ -202,10 +202,12 @@ Cache_Files/
 VR_Test/
 
 # The user's own data. Relative directories resolve inside opt_vr, so input
-# files (sequence sets, networks, alignments, metadata, saved header lists)
-# and command outputs (label workbooks, logos, exports) land here. The parent
-# project ignores its own Input_Files/ and Analysis_Results/ identically.
+# files (sequence sets, networks, alignments, embeddings, metadata, saved
+# header lists) and command outputs (label workbooks, logos, exports) land
+# here. The parent project ignores its own Input_Files/, Embeddings/ and
+# Analysis_Results/ identically.
 Input_Files/
+Embeddings/
 Analysis_Results/
 
 # The VR client. install_vr.bat unpacks the release pinned in

@@ -201,6 +201,17 @@ class BootstrapTests(unittest.TestCase):
             "opt_vr must not carry its own Alignment_Manager fork",
         )
 
+    def test_embedding_manager_comes_from_the_main_program(self):
+        """The embedding is matched to nodes exactly as the desktop viewer does."""
+        import Embedding_Manager
+
+        self.assertIs(vr_viewer.Embedding_Manager, Embedding_Manager)
+        self.assertEqual(
+            os.path.normcase(os.path.dirname(os.path.abspath(Embedding_Manager.__file__))),
+            os.path.normcase(os.path.abspath(_bootstrap_vr.SRC_DIR)),
+        )
+        self.assertFalse(os.path.exists(os.path.join(VR_SRC, "Embedding_Manager.py")))
+
 
 class SettingsTests(unittest.TestCase):
     def test_file_paths_resolve_directory_aliases(self):
@@ -1293,6 +1304,36 @@ class LaunchHandoffTests(unittest.TestCase):
         import Settings_VR
 
         self.assertEqual(Settings_VR._read_json(handle.name).get("NODE_SIZE"), 17)
+
+    def test_a_snapshot_embedding_resolves_in_the_submodule_and_empty_stays_empty(self):
+        """EMBED_FILE is a file key, so a relative one lands inside opt_vr like MSA_FILE."""
+        import tempfile
+
+        import Settings_VR
+
+        for value, expected in (
+            ("Embeddings/set_[esmc_6b]_embeddings.h5",
+             os.path.join(_bootstrap_vr.OPT_VR_DIR, "Embeddings", "set_[esmc_6b]_embeddings.h5")),
+            ("", ""),
+        ):
+            with self.subTest(value=value):
+                handle = tempfile.NamedTemporaryFile(
+                    "w", suffix=".json", delete=False, encoding="utf-8"
+                )
+                json.dump({"EMBED_FILE": value}, handle)
+                handle.close()
+                self.addCleanup(lambda name=handle.name: os.path.exists(name) and os.unlink(name))
+                os.environ["SSN_VIEWER_SETTINGS_PATH"] = handle.name
+                values = Settings_VR.load_settings()
+                if expected:
+                    self.assertEqual(os.path.normcase(os.path.normpath(values["EMBED_FILE"])),
+                                     os.path.normcase(os.path.normpath(expected)))
+                else:
+                    self.assertEqual(values["EMBED_FILE"], "")
+                self.assertEqual(
+                    os.path.normcase(values["EMBED_DIR"]),
+                    os.path.normcase(os.path.join(_bootstrap_vr.OPT_VR_DIR, "Embeddings")),
+                )
 
 
 
