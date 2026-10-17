@@ -422,6 +422,7 @@ class TipPanelStatusLockTests(unittest.TestCase):
                 combo.blockSignals(False)
             window.run_consistency_check()
             steps["check result"] = panel()
+            steps["check is a table"] = "<table" in window.tip_panel.text()
             steps["popup after a check"] = hover(window.btn_clear_top_edge)
             hover(offset)
             press(reference, Qt.MouseButton.RightButton)
@@ -456,7 +457,10 @@ class TipPanelStatusLockTests(unittest.TestCase):
     def test_hovering_shows_tips_until_a_status_message_arrives(self):
         self.assertEqual(self.report["hover before a check"], self.tips["ALIGNMENT_REFERENCE"])
         result = self.report["check result"]
-        self.assertTrue(result.startswith("SUCCESS: FASTA is a strict subset of HDF5."), result)
+        # The result is a table of rich text, with a row per check.
+        self.assertIn("FASTA vs HDF5", result)
+        self.assertIn("strict subset", result)
+        self.assertTrue(self.report["check is a table"])
         self.assertEqual(self.report["after hover, right click and window focus"], result)
 
     def test_a_left_click_or_tab_shows_its_tip_and_reenables_hovering(self):
@@ -478,6 +482,96 @@ class TipPanelStatusLockTests(unittest.TestCase):
     def test_tips_never_open_qt_tooltip_popups(self):
         self.assertFalse(self.report["popup before a check"])
         self.assertFalse(self.report["popup after a check"])
+
+
+class ConsistencyReportTests(unittest.TestCase):
+    """The Consistency Check shows a table with a row per check, as in the desktop Config.
+
+    What each check says is the desktop Config's tests' business; here the
+    copy must lay the report out: one row per check, what the MSA misses
+    named below the table, all of it shown, and a header too long for the
+    panel wrapped rather than widening the window.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.report = report_from(
+            """
+            import tempfile
+            import h5py
+            from PySide6.QtGui import QTextCursor, QTextDocument, QTextTable
+
+            window.resize(1000, 650)
+            window.show()
+            app.processEvents()
+            folder = tempfile.mkdtemp()
+            long_header = "tr" + "A0A0A0_9BACT" * 40
+            headers = ["WP_1_alpha", "WP_2_beta", long_header]
+            sequences = ["MKTAYIAK", "MSEQNNTE", "MAAAGGGK"]
+            with open(os.path.join(folder, "nodes.fasta"), "w", encoding="utf-8") as handle:
+                for header, sequence in zip(headers, sequences):
+                    handle.write(">" + header + "\\n" + sequence + "\\n")
+            with open(os.path.join(folder, "alignment.fasta"), "w", encoding="utf-8") as handle:
+                handle.write(">WP_1_alpha\\nMKTAYIAK\\n>WP_2_beta\\nMSEQNNTE\\n")
+            with h5py.File(os.path.join(folder, "network.h5"), "w") as hf:
+                hf.create_dataset("headers", data=[header.encode() for header in headers])
+            for key in ("FASTA_DIR", "HDF5_DIR", "MSA_DIR"):
+                window.inputs[key].blockSignals(True)
+                window.inputs[key].setText(folder)
+                window.inputs[key].blockSignals(False)
+            for combo, name in ((window.cb_fasta, "nodes.fasta"), (window.cb_hdf5, "network.h5"),
+                                (window.cb_msa, "alignment.fasta")):
+                combo.blockSignals(True)
+                combo.clear()
+                combo.addItem(name)
+                combo.blockSignals(False)
+            window.line_ref.setText("WP_2")
+            width_before = window.minimumSizeHint().width()
+            window.run_consistency_check()
+            app.processEvents()
+
+            document = QTextDocument()
+            document.setHtml(window.tip_panel.text())
+            table = [frame for frame in document.rootFrame().childFrames()
+                     if isinstance(frame, QTextTable)][0]
+
+            def cell(row, column):
+                found = table.cellAt(row, column)
+                cursor = found.firstCursorPosition()
+                cursor.setPosition(found.lastCursorPosition().position(),
+                                   QTextCursor.MoveMode.KeepAnchor)
+                return cursor.selectedText().replace("\\xa0", " ")
+
+            panel = window.tip_panel
+            print("@@" + json.dumps({
+                "rows": [[cell(row, column) for column in (1, 2, 3)] for row in range(table.rows())],
+                "text": document.toPlainText().replace("\\u200b", ""),
+                "width_before": width_before,
+                "width_after": window.minimumSizeHint().width(),
+                "panel_height": panel.height(),
+                "panel_needs": panel.heightForWidth(panel.width()),
+                "long_header": long_header,
+            }))
+            """
+        )
+
+    def test_there_is_a_row_for_each_check(self):
+        rows = self.report["rows"]
+        self.assertEqual([row[0] for row in rows], ["FASTA vs HDF5", "FASTA vs MSA", "Reference ID"])
+        self.assertEqual(rows[0][1:], ["3 of 3 matched", "strict subset"])
+        self.assertEqual(rows[1][1:], ["2 of 3 matched", "coverage incomplete: 1 missing"])
+        self.assertEqual(rows[2][1], "'WP_2' resolves to WP_2_beta")
+
+    def test_what_the_msa_misses_follows_the_table(self):
+        text = self.report["text"]
+        self.assertIn("Missing examples: " + self.report["long_header"], text)
+        self.assertIn(
+            "Missing nodes remain plotted but are excluded from alignment-dependent analyses.", text
+        )
+
+    def test_the_report_is_shown_whole_and_does_not_widen_the_window(self):
+        self.assertGreaterEqual(self.report["panel_height"], self.report["panel_needs"])
+        self.assertEqual(self.report["width_after"], self.report["width_before"])
 
 
 class AutoStepSizeTests(unittest.TestCase):
