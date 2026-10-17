@@ -186,7 +186,6 @@ def _resolve_upload_paths(viewer, tokens, meta_dir):
 
 def run(viewer, args):
     meta_dir = getattr(cfg, 'METADATA_DIR', os.path.join("Input_Files", "Meta_Data"))
-    os.makedirs(meta_dir, exist_ok=True)
 
     # Upstream registers the sidebar button for the web spreadsheet here. There
     # is nothing to register without a web server, and the viewer issues this
@@ -274,6 +273,10 @@ def run(viewer, args):
         name_words, expression_words = _split_download_arguments(list(args[1:]))
         expr = " ".join(expression_words) or None
 
+        # Only a download writes into the folder, so only a download creates it:
+        # every other action leaves a folder that is not there alone, as on the
+        # desktop (an upload reads files from wherever they are).
+        os.makedirs(meta_dir, exist_ok=True)
         try:
             filepath = metadata_download_path(meta_dir, " ".join(name_words).strip())
         except ValueError as error:

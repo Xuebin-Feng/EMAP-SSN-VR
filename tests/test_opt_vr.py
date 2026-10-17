@@ -852,6 +852,25 @@ class MetadataCommandTests(unittest.TestCase):
         output = run_command(self.viewer, "meta upload no_such_file.csv")
         self.assertIn("not found (checked absolute, relative", output)
 
+    def test_the_metadata_folder_is_created_only_by_a_download(self):
+        """As on the desktop: nothing but a download makes the folder."""
+        settings = importlib.import_module("Settings_VR")
+        meta_dir = os.path.join(self.folder, "Meta_Data")
+        settings.METADATA_DIR = meta_dir
+
+        for command in (
+            "meta", "meta --register-only", "meta help", "meta show Length",
+            "meta show off", "meta delete", "meta upload no_such_file.csv",
+            f"meta {self.sheet}", "meta delete Organism",
+        ):
+            with self.subTest(command=command):
+                run_command(self.viewer, command)
+                self.assertFalse(os.path.exists(meta_dir))
+
+        output = run_command(self.viewer, "meta download table")
+        self.assertIn("table.csv", os.listdir(meta_dir))
+        self.assertNotIn("Error", output)
+
     def test_download_auto_names_and_does_not_overwrite(self):
         run_command(self.viewer, "meta extra.csv")
         run_command(self.viewer, "meta download")

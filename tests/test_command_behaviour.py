@@ -240,6 +240,11 @@ class UndoTests(unittest.TestCase):
     """Undo restores everything a command changed, and says whether it did."""
 
     def setUp(self):
+        # `meta` reads the metadata folder setting; the default is a folder in
+        # the project root, which no test may touch.
+        metadata_folder = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, metadata_folder, True)
+        patch_settings(self, METADATA_DIR=metadata_folder)
         self.viewer = build_viewer()
         self.viewer.metadata["Organism"] = {
             "type": "text",
