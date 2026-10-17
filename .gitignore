@@ -195,19 +195,15 @@ viewer_settings_vr.json
 # Temporary copies an interrupted save of it can leave beside it.
 .viewer_settings_vr.json.*.partial
 
-# Runtime working directory: layout caches, saved and exported settings, and
-# command history, all produced by a session and specific to one dataset. The
-# parent project ignores its own Cache_Files/ identically.
+# The user's data and VR's runtime working directory once lived here, when
+# relative directories resolved inside opt_vr: layout caches, saved and
+# exported settings and command history (Cache_Files/), input files
+# (Input_Files/) and command outputs (Analysis_Results/). They now resolve
+# against the parent checkout, which ignores them, with Cache_Files_VR/ as
+# VR's cache folder; these stay ignored so folders left from before do too.
 Cache_Files/
 VR_Test/
-
-# The user's own data. Relative directories resolve inside opt_vr, so input
-# files (sequence sets, networks, alignments, embeddings, metadata, saved
-# header lists) and command outputs (label workbooks, logos, exports) land
-# here. The parent project ignores its own Input_Files/, Embeddings/ and
-# Analysis_Results/ identically.
 Input_Files/
-Embeddings/
 Analysis_Results/
 
 # The VR client. install_vr.bat unpacks the release pinned in

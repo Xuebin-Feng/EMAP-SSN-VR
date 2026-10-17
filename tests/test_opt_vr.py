@@ -1305,15 +1305,15 @@ class LaunchHandoffTests(unittest.TestCase):
 
         self.assertEqual(Settings_VR._read_json(handle.name).get("NODE_SIZE"), 17)
 
-    def test_a_snapshot_embedding_resolves_in_the_submodule_and_empty_stays_empty(self):
-        """EMBED_FILE is a file key, so a relative one lands inside opt_vr like MSA_FILE."""
+    def test_a_snapshot_embedding_resolves_at_the_project_root_and_empty_stays_empty(self):
+        """EMBED_FILE is a file key, so a relative one resolves against the project root like MSA_FILE."""
         import tempfile
 
         import Settings_VR
 
         for value, expected in (
             ("Embeddings/set_[esmc_6b]_embeddings.h5",
-             os.path.join(_bootstrap_vr.OPT_VR_DIR, "Embeddings", "set_[esmc_6b]_embeddings.h5")),
+             os.path.join(_bootstrap_vr.PROJECT_ROOT, "Embeddings", "set_[esmc_6b]_embeddings.h5")),
             ("", ""),
         ):
             with self.subTest(value=value):
@@ -1332,12 +1332,31 @@ class LaunchHandoffTests(unittest.TestCase):
                     self.assertEqual(values["EMBED_FILE"], "")
                 self.assertEqual(
                     os.path.normcase(values["EMBED_DIR"]),
-                    os.path.normcase(os.path.join(_bootstrap_vr.OPT_VR_DIR, "Embeddings")),
+                    os.path.normcase(os.path.join(_bootstrap_vr.PROJECT_ROOT, "Embeddings")),
                 )
 
 
 
 class ViewerStateTests(unittest.TestCase):
+    def test_the_viewer_uses_the_main_programs_folders_and_its_own_cache(self):
+        """With default settings, shared commands write where the desktop
+        viewer's do, and the command history goes to Cache_Files_VR."""
+        root = _bootstrap_vr.PROJECT_ROOT
+        norm = lambda path: os.path.normcase(os.path.normpath(path))  # noqa: E731
+        self.assertEqual(norm(cfg.resolve_directory_path("$analysis_result$/Sequence_Logos")),
+                         norm(os.path.join(root, "Analysis_Results", "Sequence_Logos")))
+        self.assertEqual(norm(cfg.resolve_directory_path("$input_file$/Meta_Data")),
+                         norm(os.path.join(root, "Input_Files", "Meta_Data")))
+        viewer = build_viewer()
+        self.assertEqual(norm(os.path.dirname(viewer.history_file)),
+                         norm(os.path.join(root, "Cache_Files_VR", "History")))
+        # The client build alone stays in opt_vr.
+        self.assertEqual(norm(vr_viewer.vr_app_search_dirs()[0]),
+                         norm(os.path.join(_bootstrap_vr.OPT_VR_DIR, "player")))
+        # An input path that climbs out of a folder starts at the project root too.
+        self.assertEqual(norm(vr_viewer._input_path(os.path.join("..", "set.fasta"))),
+                         norm(os.path.join(root, "..", "set.fasta")))
+
     def test_viewer_exposes_positions_for_commands(self):
         """viewer.pos used to be missing, so `save` raised AttributeError."""
         viewer = build_viewer()

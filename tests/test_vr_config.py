@@ -604,7 +604,8 @@ class LongFileNameTests(unittest.TestCase):
         # Long, but short enough for Windows' 260-character paths in a temp folder.
         name = "A_long_network_filename_" * 5 + "network.h5"
         with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as project:
-            folder = os.path.join(project, "opt_vr", "Input_Files", "Networks_EValues")
+            # Input_Files is the project root's, as in the main program.
+            folder = os.path.join(project, "Input_Files", "Networks_EValues")
             os.makedirs(folder)
             open(os.path.join(folder, name), "w").close()
             report = report_from(
@@ -1655,31 +1656,69 @@ class VRSettingsSourceTests(unittest.TestCase):
         finally:
             os.environ.pop("SSN_VIEWER_SETTINGS_PATH", None)
 
-    def test_relative_directories_resolve_inside_the_submodule(self):
-        """A relative directory is the submodule's, never the parent's.
+    def test_relative_directories_resolve_against_the_project_root(self):
+        """A relative directory is the parent checkout's, as in the main program.
 
-        This drives a settings file of its own rather than whatever the user
-        last saved. Pointing the VR front end at an external data store is a
-        supported configuration - an absolute path is honoured as written, and
-        the next test pins that - so reading the live file made this assert the
-        user's setup instead of the resolution rule.
+        Only the VR client build stays in the submodule. This drives a
+        settings file of its own rather than whatever the user last saved:
+        pointing the VR front end at an external data store is a supported
+        configuration - an absolute path is honoured as written, and the next
+        test pins that - so reading the live file made this assert the user's
+        setup instead of the resolution rule.
         """
-        import Settings_VR
-
         relative = {
-            "CACHE_FILE_DIR": "Cache_Files",
+            "CACHE_FILE_DIR": "Cache_Files_VR",
             "SAVED_LAYOUT_DIR": r"$cache_file$\Saved_Layouts",
             "INPUT_FILE_DIR": "Input_Files",
             "ANALYSIS_RESULT_DIR": "Analysis_Results",
+            "NODE_FASTA_FILE": r"$input_file$\Sequence_Sets\set.fasta",
             "VR_APP_DIR": "player",
         }
         values = self._settings_from(relative)
-        for key in relative:
+        expected = {
+            "CACHE_FILE_DIR": (_bootstrap_vr.PROJECT_ROOT, "Cache_Files_VR"),
+            "SAVED_LAYOUT_DIR": (_bootstrap_vr.PROJECT_ROOT, "Cache_Files_VR", "Saved_Layouts"),
+            "INPUT_FILE_DIR": (_bootstrap_vr.PROJECT_ROOT, "Input_Files"),
+            "ANALYSIS_RESULT_DIR": (_bootstrap_vr.PROJECT_ROOT, "Analysis_Results"),
+            "NODE_FASTA_FILE": (_bootstrap_vr.PROJECT_ROOT, "Input_Files", "Sequence_Sets", "set.fasta"),
+            "VR_APP_DIR": (_bootstrap_vr.OPT_VR_DIR, "player"),
+        }
+        for key, parts in expected.items():
             with self.subTest(key=key):
-                self.assertTrue(
-                    str(values[key]).startswith(_bootstrap_vr.OPT_VR_DIR),
-                    f"{key} escaped the submodule: {values[key]}",
-                )
+                self.assertEqual(os.path.normcase(os.path.normpath(values[key])),
+                                 os.path.normcase(os.path.join(*parts)))
+
+    def test_default_folders_are_the_main_programs_except_the_cache(self):
+        """Every default folder resolves as the main program resolves it,
+        against the same root, except the cache folder, Cache_Files_VR, which
+        everything under $cache_file$ follows."""
+        from desktop.Viewer_State import DEFAULTS, DIRECTORY_PROFILE_DEFAULTS, normalize_viewer_paths
+
+        values = self._settings_from({})
+        main = normalize_viewer_paths(
+            {**DEFAULTS, "CACHE_FILE_DIR": "Cache_Files_VR",
+             # Placeholders: the main program requires these two inputs.
+             "NODE_FASTA_FILE": "set.fasta", "INPUT_HDF5": "network.h5"},
+            _bootstrap_vr.PROJECT_ROOT, require_cache=False,
+        )
+        for key in (*DIRECTORY_PROFILE_DEFAULTS, "SAVED_CONFIG_DIR"):
+            with self.subTest(key=key):
+                self.assertEqual(os.path.normcase(os.path.normpath(values[key])),
+                                 os.path.normcase(os.path.normpath(main[key])))
+        root = _bootstrap_vr.PROJECT_ROOT
+        for key, parts in {
+            "CACHE_FILE_DIR": ("Cache_Files_VR",),
+            "INPUT_FILE_DIR": ("Input_Files",),
+            "EMBED_DIR": ("Embeddings",),
+            "SAVED_CONFIG_DIR": ("Cache_Files_VR", "Saved_Config"),
+            "HISTORY_DIR": ("Cache_Files_VR", "History"),
+            "CLUSTER_ALIGNMENT_DIR": ("Analysis_Results", "Cluster_Alignments"),
+        }.items():
+            with self.subTest(key=key):
+                self.assertEqual(os.path.normcase(os.path.normpath(values[key])),
+                                 os.path.normcase(os.path.join(root, *parts)))
+        self.assertEqual(os.path.normcase(values["VR_APP_DIR"]),
+                         os.path.normcase(os.path.join(_bootstrap_vr.OPT_VR_DIR, "player")))
 
     def test_absolute_directories_are_left_alone(self):
         """An external data store is a supported choice, not a mistake."""
@@ -1768,7 +1807,7 @@ class ClientEndpointTests(unittest.TestCase):
         report = report_from(
             """
             decide = namespace["bridge_note_text"]
-            player = os.path.join(str(namespace["PROJECT_ROOT"]), "player")
+            player = os.path.join(str(namespace["OPT_VR_DIR"]), "player")
             print("@@" + json.dumps({{
                 "missing": str(decide(None, "127.0.0.1", 5005)),
                 "match": str(decide(("127.0.0.1", 5005), "127.0.0.1", 5005)),
@@ -2625,6 +2664,66 @@ class CacheDiscoveryRaceTests(unittest.TestCase):
             self.report["recheck"]["folder_removed"],
             {"looked": True, "error": True, "look": None, "after_hashing": True},
         )
+
+
+class ProjectRootFolderTests(unittest.TestCase):
+    """The window uses the main program's folders, at the project root,
+    except its own cache folder; only its settings file and the VR client
+    build are in opt_vr."""
+
+    def test_folders_resolve_at_the_project_root_and_the_client_in_opt_vr(self):
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as root:
+            for folder, name in (
+                (os.path.join(root, "Input_Files", "Sequence_Sets"), "root_set.fasta"),
+                # Left from when relative folders resolved inside opt_vr.
+                (os.path.join(root, "opt_vr", "Input_Files", "Sequence_Sets"), "old_set.fasta"),
+            ):
+                os.makedirs(folder)
+                with open(os.path.join(folder, name), "w", encoding="utf-8") as handle:
+                    handle.write(">a\nMKT\n")
+            for folder in (os.path.join(root, "player"), os.path.join(root, "opt_vr", "player")):
+                os.makedirs(folder)
+                open(os.path.join(folder, "EMAP-SSN-VR.exe"), "w").close()
+            report = report_from(
+                """
+                window.cb_fasta.refresh_callback()
+                foreign = namespace["_holds_foreign_client"]
+                print("@@" + json.dumps({
+                    "cwd": os.getcwd(),
+                    "project_root": str(namespace["PROJECT_ROOT"]),
+                    "opt_vr": str(namespace["OPT_VR_DIR"]),
+                    "settings_file": namespace["DEFAULT_SETTINGS_FILE"],
+                    "directories": {key: window.inputs[key].text() for key in
+                                    ("INPUT_FILE_DIR", "CACHE_FILE_DIR", "ANALYSIS_RESULT_DIR", "EMBED_DIR")},
+                    "saved_config_root": str(window._saved_config_root()),
+                    "fasta": [window.cb_fasta.itemText(i) for i in range(window.cb_fasta.count())],
+                    "player_in_opt_vr_is_foreign": foreign(os.path.join(str(namespace["OPT_VR_DIR"]), "player")),
+                    "player_at_root_is_foreign": foreign(os.path.join(str(namespace["PROJECT_ROOT"]), "player")),
+                    # Save & Run starts the viewer or generator in the project root.
+                    "launch_root": "script_dir = str(PROJECT_ROOT)" in __import__("inspect").getsource(
+                        namespace["ConfigGUI"].save_and_run),
+                }))
+                """,
+                project_root=root,
+            )
+        norm = lambda path: os.path.normcase(os.path.normpath(path))  # noqa: E731
+        self.assertEqual(norm(report["project_root"]), norm(root))
+        self.assertEqual(norm(report["cwd"]), norm(root))
+        self.assertEqual(norm(report["opt_vr"]), norm(os.path.join(root, "opt_vr")))
+        self.assertEqual(norm(os.path.dirname(report["settings_file"])), norm(os.path.join(root, "opt_vr")))
+        # The main program's default folders, but VR's own cache folder.
+        self.assertEqual(report["directories"], {
+            "INPUT_FILE_DIR": "Input_Files", "CACHE_FILE_DIR": "Cache_Files_VR",
+            "ANALYSIS_RESULT_DIR": "Analysis_Results", "EMBED_DIR": "Embeddings",
+        })
+        self.assertEqual(norm(report["saved_config_root"]),
+                         norm(os.path.join(root, "Cache_Files_VR", "Saved_Config")))
+        self.assertIn("root_set.fasta", report["fasta"])
+        self.assertNotIn("old_set.fasta", report["fasta"])
+        # player/ is the client folder only in opt_vr.
+        self.assertFalse(report["player_in_opt_vr_is_foreign"])
+        self.assertTrue(report["player_at_root_is_foreign"])
+        self.assertTrue(report["launch_root"])
 
 
 if __name__ == "__main__":

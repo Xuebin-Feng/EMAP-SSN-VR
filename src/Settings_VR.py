@@ -22,8 +22,10 @@ adds the handful of keys only the VR bridge needs.
 The division of labour is deliberate: **opt_vr's Config GUI writes settings,
 the VR runtime only reads them.** Nothing here imports PySide6, so the viewer
 process stays headless. The two front ends are configured independently - the
-VR side never reads or writes the desktop program's ``viewer_settings.json``,
-and every relative path resolves inside the submodule.
+VR side never reads or writes the desktop program's ``viewer_settings.json`` -
+but share their folders: every relative path resolves against the project
+root, as the main program's do, with its defaults, except the cache folder,
+Cache_Files_VR. Only the VR client build (VR_APP_DIR) resolves in opt_vr.
 
 Values are exposed as module attributes so existing ``cfg.NODE_SIZE`` style
 access keeps working unchanged.
@@ -77,6 +79,9 @@ VR_BRIDGE_DEFAULTS = {
 #: Keys with no upstream counterpart. Everything else comes from DEFAULTS.
 VR_DEFAULTS = {
     **VR_BRIDGE_DEFAULTS,
+    # The one folder default VR does not share with the main program, so its
+    # saved configs, 3D layouts and history stay out of Cache_Files.
+    "CACHE_FILE_DIR": _bootstrap_vr.VR_CACHE_FILE_DIR,
     "VR_APP_DIR": Player_Build_VR.DEFAULT_CLIENT_DIR,
     # --- Alignment ----------------------------------------------------
     "GAP_CHARS": ["-", "."],
@@ -100,6 +105,10 @@ _DIRECTORY_SUFFIX = "_DIR"
 
 #: File-valued settings that are stored with an alias and/or relative.
 _PATH_KEYS = ("NODE_FASTA_FILE", "INPUT_HDF5", "MSA_FILE", "EMBED_FILE", "TARGET_CACHE_PATH")
+
+#: Directories that live in the submodule rather than at the project root:
+#: the VR client build install_vr.bat unpacks into opt_vr/player.
+_OPT_VR_DIRECTORY_KEYS = ("VR_APP_DIR",)
 
 
 def _settings_path() -> str:
@@ -281,12 +290,15 @@ def load_settings() -> dict:
         if isinstance(value, str) and value.startswith(tuple(ALIASES)):
             values[key] = _resolve_alias(value, values)
 
-    # Relative paths resolve inside the submodule. opt_vr keeps its own inputs,
-    # caches and analysis outputs, so a VR configuration never writes into the
-    # desktop program's directories.
+    # Relative paths resolve against the project root, as the main program
+    # resolves its own, so both read the same inputs and write the same
+    # analysis results; only the cache folder differs (CACHE_FILE_DIR). The VR
+    # client build is the exception: it lives in opt_vr.
     for key, value in list(values.items()):
-        if key.endswith(_DIRECTORY_SUFFIX) or key in _PATH_KEYS:
+        if key in _OPT_VR_DIRECTORY_KEYS:
             values[key] = _absolute(values[key], OPT_VR_DIR)
+        elif key.endswith(_DIRECTORY_SUFFIX) or key in _PATH_KEYS:
+            values[key] = _absolute(values[key], PROJECT_ROOT)
 
     # The launcher pins one cache folder for this session.
     target = os.environ.get("SSN_TARGET_CACHE") or values.get("TARGET_CACHE_PATH")

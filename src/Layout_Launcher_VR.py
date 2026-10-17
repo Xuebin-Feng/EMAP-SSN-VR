@@ -65,7 +65,9 @@ def main(argv=None):
             viewer_env.pop(key, None)
         return subprocess.call(
             [sys.executable, "-u", str(viewer), "--settings", launch_snapshot, "--delete-settings"],
-            cwd=_bootstrap_vr.OPT_VR_DIR,
+            # As the desktop viewer starts: relative paths a command is given
+            # resolve against the project root, as the settings' do.
+            cwd=_bootstrap_vr.PROJECT_ROOT,
             env=viewer_env,
         )
     except Exception as error:

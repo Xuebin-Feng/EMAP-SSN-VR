@@ -57,14 +57,22 @@ if sys.stderr is not None and hasattr(sys.stderr, "reconfigure"):
 
 #: ``opt_vr/src`` - this file's own directory, and the VR module tree.
 VR_SRC_DIR = os.path.dirname(os.path.abspath(__file__))
-#: The submodule root. Every relative directory a VR setting names - the
-#: cache folder, the VR client build - resolves against this, not against
-#: ``VR_SRC_DIR``, so the layout mirrors the main program's.
+#: The submodule root. It holds VR Config's settings file,
+#: ``viewer_settings_vr.json``, and the VR client build: a relative VR_APP_DIR
+#: resolves against this.
 OPT_VR_DIR = os.path.dirname(VR_SRC_DIR)
-#: The parent EMAP-SSN checkout, and its module tree.
+#: The parent EMAP-SSN checkout, and its module tree. Every other relative
+#: directory a VR setting names resolves against this, as the main program
+#: resolves its own, so both programs default to the same folders.
 PROJECT_ROOT = os.path.dirname(OPT_VR_DIR)
 SRC_DIR = os.path.join(PROJECT_ROOT, "src")
 UTILITIES_DIR = os.path.join(SRC_DIR, "utilities")
+#: The one default folder VR does not share with the main program: its cache
+#: folder (CACHE_FILE_DIR), at the project root. The saved configs, layouts,
+#: exported settings and command history under ``$cache_file$`` follow it, so
+#: VR's 3D layouts and profiles stay apart from the desktop program's
+#: Cache_Files.
+VR_CACHE_FILE_DIR = "Cache_Files_VR"
 
 
 def _require_parent_checkout() -> None:

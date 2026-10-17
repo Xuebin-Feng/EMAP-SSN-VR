@@ -52,6 +52,9 @@ class LayoutLauncherTests(unittest.TestCase):
                 self.assertEqual(command[3:], ["--settings", handed, "--delete-settings"])
                 self.assertEqual(kwargs["env"]["SSN_VIEWER_SETTINGS_PATH"], handed)
                 self.assertNotIn("SSN_TARGET_CACHE", kwargs["env"])
+                # As the desktop viewer starts: in the project root, against
+                # which relative paths a command is given resolve.
+                self.assertEqual(kwargs["cwd"], launcher._bootstrap_vr.PROJECT_ROOT)
                 return 7
 
             with mock.patch.dict(os.environ, {"SSN_VIEWER_SETTINGS_PATH": str(snapshot), "SSN_TARGET_CACHE": "stale"}), mock.patch.object(launcher, "generate", side_effect=generate) as generated, mock.patch.object(launcher.subprocess, "call", side_effect=run):

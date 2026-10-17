@@ -682,11 +682,12 @@ def _as_three_dimensional(positions):
 def _input_path(value):
     """A configured input path, resolved as the VR settings write it.
 
-    Relative settings that climb out of the submodule resolve against the
-    submodule root, not against this module's directory inside src/.
+    Relative settings that climb out of a folder resolve against the project
+    root, as Settings_VR resolves every relative path, not against this
+    module's directory inside src/.
     """
     if value and value.startswith('..'):
-        return os.path.normpath(os.path.join(_bootstrap_vr.OPT_VR_DIR, value))
+        return os.path.normpath(os.path.join(_bootstrap_vr.PROJECT_ROOT, value))
     return value
 
 

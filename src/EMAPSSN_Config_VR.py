@@ -60,6 +60,11 @@ import Player_Build_VR
 from desktop.Viewer_State import (
     INPUT_PROFILE_DEFAULTS, VISUAL_PROFILE_DEFAULTS, PHYSICS_PROFILE_DEFAULTS, DIRECTORY_PROFILE_DEFAULTS, LEGACY_DEFAULT_DIRECTORY_PATHS, PROFILE_ENUM_VALUES, PROFILE_RANGES
 )
+# The desktop program's default folders, but VR's own cache folder,
+# Cache_Files_VR: its saved configs, 3D layouts and history stay apart.
+DIRECTORY_PROFILE_DEFAULTS = {
+    **DIRECTORY_PROFILE_DEFAULTS, "CACHE_FILE_DIR": _bootstrap_vr.VR_CACHE_FILE_DIR,
+}
 #: This window configures the VR front end, so it names itself accordingly
 #: rather than borrowing the desktop program's display names.
 VR_CONFIG_DISPLAY_NAME = QT_TRANSLATE_NOOP("Config", "EMAP-SSN VR Configuration")
@@ -114,7 +119,7 @@ def _holds_foreign_client(build_dir):
     """True for a folder other than player/ that holds a non-console .exe."""
     if not build_dir or not os.path.isdir(build_dir):
         return False
-    player_dir = os.path.join(str(PROJECT_ROOT), Player_Build_VR.DEFAULT_CLIENT_DIR)
+    player_dir = os.path.join(str(OPT_VR_DIR), Player_Build_VR.DEFAULT_CLIENT_DIR)
     if os.path.normcase(os.path.abspath(build_dir)) == os.path.normcase(os.path.abspath(player_dir)):
         return False
     return any(
@@ -169,10 +174,13 @@ TARGET_CACHE_FILE = os.environ.get("SSN_TARGET_CACHE", None)
 TARGET_CACHE_PATH = os.environ.get("SSN_TARGET_CACHE_PATH", None)
 TARGET_CACHE_MODE = os.environ.get("SSN_TARGET_CACHE_MODE", None)
 
-# This GUI belongs to the submodule, so its root - and every relative
-# directory it resolves - is opt_vr. SRC_DIR reaches the shared pipeline
-# scripts in the parent checkout's src/.
-PROJECT_ROOT = Path(_bootstrap_vr.OPT_VR_DIR)
+# Relative directories resolve against the parent checkout, the project
+# root, as in the main program, so both default to the same folders; only
+# CACHE_FILE_DIR's default differs (DIRECTORY_PROFILE_DEFAULTS above). This
+# GUI's settings file and the VR client build (VR_APP_DIR) live in opt_vr.
+# SRC_DIR reaches the shared pipeline scripts in the parent checkout's src/.
+PROJECT_ROOT = Path(_bootstrap_vr.PROJECT_ROOT)
+OPT_VR_DIR = Path(_bootstrap_vr.OPT_VR_DIR)
 SRC_DIR = Path(_bootstrap_vr.SRC_DIR)
 
 # --- Directory & File Paths ---
@@ -181,7 +189,7 @@ CACHE_FILE_ALIAS = "$cache_file$"
 ANALYSIS_RESULT_ALIAS = "$analysis_result$"
 
 INPUT_FILE_DIR = "Input_Files"
-CACHE_FILE_DIR = "Cache_Files"
+CACHE_FILE_DIR = DIRECTORY_PROFILE_DEFAULTS["CACHE_FILE_DIR"]
 ANALYSIS_RESULT_DIR = "Analysis_Results"
 
 FASTA_DIR = os.path.join(INPUT_FILE_ALIAS, "Sequence_Sets")
@@ -591,7 +599,7 @@ def apply_viewer_settings(settings_dict):
     _resolve_runtime_path_settings()
 
 
-DEFAULT_SETTINGS_FILE = str(PROJECT_ROOT / "viewer_settings_vr.json")
+DEFAULT_SETTINGS_FILE = str(OPT_VR_DIR / "viewer_settings_vr.json")
 SETTINGS_FILE = os.environ.get("SSN_VIEWER_SETTINGS_PATH") or DEFAULT_SETTINGS_FILE
 viewer_settings = {}
 if not os.environ.get("SSN_VIEWER_EXPLICIT_SETTINGS") and os.path.exists(SETTINGS_FILE):
@@ -758,6 +766,10 @@ def _consistency_network_metadata(network_path):
 # GUI APPLICATION
 # =============================================================================
 if __name__ == "__main__":
+    # The window lists folders by relative path, as the main program's does,
+    # which its launcher starts at the project root. The VR launcher starts
+    # this one in opt_vr, so move to the root first.
+    os.chdir(PROJECT_ROOT)
     # Hardware_Utils imports PyTorch.  On Windows this must happen before
     # PySide6/OpenGL initializes, otherwise torch's c10.dll can fail to load.
     try:
@@ -4130,15 +4142,15 @@ if __name__ == "__main__":
             self._client_browse_button = browse
 
             def choose_app_dir(_checked=False, field=app_dir):
-                start = field.text().strip() or str(PROJECT_ROOT)
+                start = field.text().strip() or str(OPT_VR_DIR)
                 if not os.path.isabs(start):
-                    start = os.path.join(str(PROJECT_ROOT), start)
+                    start = os.path.join(str(OPT_VR_DIR), start)
                 chosen = QFileDialog.getExistingDirectory(
                     self, translate("Config", "VR Client Build Directory"), start
                 )
                 if chosen:
                     try:
-                        relative = os.path.relpath(chosen, str(PROJECT_ROOT))
+                        relative = os.path.relpath(chosen, str(OPT_VR_DIR))
                     except ValueError:
                         relative = chosen
                     field.setText(chosen if relative.startswith("..") else relative)
@@ -4227,7 +4239,7 @@ if __name__ == "__main__":
                 build_dir = (
                     value
                     if os.path.isabs(value)
-                    else os.path.join(str(PROJECT_ROOT), value)
+                    else os.path.join(str(OPT_VR_DIR), value)
                 ) if value else ""
                 try:
                     endpoint = Player_Build_VR.read_endpoint(build_dir)
@@ -4767,8 +4779,8 @@ if __name__ == "__main__":
             env["SSN_TARGET_CACHE_MODE"] = cache_mode
             env["SSN_VIEWER_SETTINGS_PATH"] = settings_snapshot
 
-            # Use the project root (parent of src/) as cwd so all relative data paths resolve correctly
-            script_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            # Use the project root as cwd so all relative data paths resolve correctly
+            script_dir = str(PROJECT_ROOT)
 
             if cache_mode == "new":
                 try:

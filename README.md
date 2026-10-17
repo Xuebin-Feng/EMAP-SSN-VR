@@ -102,10 +102,6 @@ opt_vr/
 ├── install_vr.bat                       # installs the VR client, writes the shortcut
 ├── player_release.json                  # the client release to install, with its SHA-256
 ├── player/                              # the installed VR client (ignored)
-├── Input_Files/                         # sequence sets, networks, MSAs, metadata, header lists (ignored)
-├── Embeddings/                          # protein language model embeddings, the optional input (ignored)
-├── Analysis_Results/                    # command outputs: label workbooks, logos, exports (ignored)
-├── Cache_Files/                         # runtime working directory (ignored)
 ├── viewer_settings_vr.json              # per-user settings (ignored)
 ├── docs/PROTOCOL.md                     # Python/VR client wire protocol
 ├── tools/                               # protocol reference client, fixtures, test servers
@@ -197,10 +193,19 @@ There is no 2D/3D control. The VR viewer is three dimensional by definition, so
 dimensionality follows from which viewer you opened — exactly as the desktop
 GUI has no such control. Every cache this GUI resolves or generates is 3D.
 
-Settings are written to **`opt_vr/viewer_settings_vr.json`**, and every relative
-directory resolves inside the submodule, so a VR configuration never disturbs
-the desktop program's `viewer_settings.json`. The file is git-ignored, like its
-desktop counterpart, because it holds local paths.
+Settings are written to **`opt_vr/viewer_settings_vr.json`**, so a VR
+configuration never disturbs the desktop program's `viewer_settings.json`. The
+file is git-ignored, like its desktop counterpart, because it holds local paths.
+
+The two programs share their folders. Every relative directory resolves
+against the project root, the parent EMAP-SSN checkout, exactly as the main
+program resolves its own, and every default folder is the main program's:
+`Input_Files` and its subfolders, `Embeddings` and `Analysis_Results`. The one
+exception is the cache folder, whose default is **`Cache_Files_VR`** beside
+`Cache_Files`; the saved configs, 3D layouts, exported settings and command
+history under `$cache_file$` follow it, so VR's stay apart from the desktop
+program's. Only the VR client build (`player/`, or a relative **VR Client
+Build** folder) resolves inside `opt_vr`.
 
 `src/EMAPSSN_Config_VR.py` is a **copy of the main program's
 `src/EMAPSSN_Config.py`**, rebased onto the
@@ -216,8 +221,9 @@ every difference is deliberate:
 | Change | Why |
 |---|---|
 | `_bootstrap_vr` import and Windows-only guard | puts the parent's `src` on `sys.path`; like every VR entry point, the GUI refuses to start off Windows |
-| `PROJECT_ROOT` → `opt_vr` | every relative directory resolves in the submodule; `SRC_DIR` still reaches the shared pipeline scripts |
-| `viewer_settings_vr.json` | the desktop program's settings are never touched |
+| `PROJECT_ROOT` from `_bootstrap_vr`; `CACHE_FILE_DIR` defaults to `Cache_Files_VR` | every folder resolves as in the desktop program, against the parent checkout, with its defaults, except the cache folder, so VR's saved configs, 3D layouts and history stay apart; `SRC_DIR` reaches the shared pipeline scripts |
+| starts in the project root (`os.chdir`); launches from there | the window lists folders by relative path, as the desktop one does from the root its launcher starts it in; the VR launcher starts in `opt_vr` |
+| `viewer_settings_vr.json` in `opt_vr` (`OPT_VR_DIR`) | the desktop program's settings are never touched |
 | launches `src/EMAPSSN_Viewer_VR.py` | the VR viewer, not the desktop one |
 | a new cache goes through `src/Layout_Launcher_VR.py` | it generates the 3D cache, then opens the VR viewer; the shared generator's `--launch-viewer` would open the desktop one |
 | flat settings snapshot | `Settings_VR` reads flat keys, and the desktop document encoder would drop every VR-only one |
@@ -295,8 +301,9 @@ shared defaults in the main program's `src/desktop/Viewer_State.py`, the
 VR-only keys (VR client host and port, client folder, edge-render budget,
 **Quit with VR Client**), and then one settings file: the Save & Run snapshot
 when there is one, otherwise `viewer_settings_vr.json`. It imports no Qt, so
-the headless VR process stays headless, and it resolves every relative
-directory inside `opt_vr`.
+the headless VR process stays headless. It resolves every relative directory
+against the project root, as the GUI does, with `Cache_Files_VR` as the cache
+folder's default; only the VR client build resolves inside `opt_vr`.
 
 The VR Configuration GUI shows the language its 🌐 dropdown names, the one
 setting every EMAP-SSN window shares. The texts it shares with the desktop
