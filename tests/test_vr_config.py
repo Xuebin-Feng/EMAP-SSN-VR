@@ -514,6 +514,131 @@ class TipPanelStatusLockTests(unittest.TestCase):
         self.assertFalse(self.report["popup after a check"])
 
 
+class TipPanelFixedHeightTests(unittest.TestCase):
+    """The tip panel is as tall at the first layout as the desktop Config's, and what it shows never changes that.
+
+    It starts at a fixed number of lines of its own font; text that does not fit scrolls, by a
+    vertical bar only while it is needed, and each new tip starts at the top. The pointer resting
+    on fields shows their tips, until a message, as in the desktop Config.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.report = report_from(
+            """
+            from PySide6.QtCore import QEvent, QObject, QPoint, Qt
+            from PySide6.QtGui import QTextDocumentFragment
+            from PySide6.QtTest import QTest
+            from PySide6.QtWidgets import QTextEdit
+
+            window.resize(1000, 650)
+            window.show()
+            window.activateWindow()
+            app.processEvents()
+            panel = window.tip_panel
+            first_height = panel.height()
+            held = lambda: [panel.height(), window.left_split.sizes(), window.tabs.height(),
+                            [window.minimumSizeHint().width(), window.minimumSizeHint().height()]]
+            before = held()
+            bar = panel.verticalScrollBar()
+            moved, scrolls, horizontal, mismatch = [], [], [], []
+            # The tips of fields this window has (VR hides some of the desktop's, whose tips no pointer reaches).
+            shown_tips = {key: entry for key, entry in window._field_tips.items() if entry.field.widget is not None}
+            for key, entry in shown_tips.items():
+                panel.setTip(entry)
+                app.processEvents()
+                if held() != before:
+                    moved.append(key)
+                needed, available = panel.document().size().height(), panel.viewport().height()
+                if bar.isVisible() != (needed > available):
+                    mismatch.append(key)
+                if bar.isVisible():
+                    scrolls.append(key)
+                    bar.setValue(bar.maximum())
+                horizontal.append(panel.horizontalScrollBar().isVisible())
+            tips = len(shown_tips)
+            panel.setTip(window._field_tips["NORM_MODE"])
+            bar.setValue(bar.maximum())
+            panel.setTip(window._field_tips["ALIGNMENT_OFFSET"])
+            at_top = bar.value() == 0
+
+            def title():
+                text = QTextDocumentFragment.fromHtml(panel.text()).toPlainText()
+                return text.replace("\\ufffc", "").strip().split("\\n")[0].strip()
+
+            def real_hover(widget):
+                class Spy(QObject):
+                    arrived = False
+
+                    def eventFilter(spy, watched, event):
+                        if watched is widget and event.type() == QEvent.Type.ToolTip:
+                            spy.arrived = True
+                        return False
+
+                spy = Spy()
+                app.installEventFilter(spy)
+                window.activateWindow()
+                QTest.mouseMove(window, QPoint(2, 2))
+                QTest.qWait(30)
+                QTest.mouseMove(widget, QPoint(5, 5))
+                QTest.qWait(30)
+                QTest.mouseMove(widget, QPoint(7, 6))
+                waited = 0
+                while not spy.arrived and waited < 3000:
+                    QTest.qWait(50)
+                    waited += 50
+                app.processEvents()
+                app.removeEventFilter(spy)
+                return spy.arrived
+
+            window.tabs.setCurrentIndex(0)
+            first, second = window.labels["NODE_FASTA_FILE"], window.labels["MSA_FILE"]
+            pointer = {"visible": first.isVisible() and second.isVisible()}
+            pointer["first"] = [real_hover(first), title()]
+            pointer["second"] = [real_hover(second), title()]
+            panel.setStatus("success", "Settings saved.")
+            message = panel.text()
+            pointer["locked second"] = [real_hover(second), panel.text() == message]
+            pointer["locked first"] = [real_hover(first), panel.text() == message]
+            QTest.mouseClick(first, Qt.MouseButton.LeftButton, pos=QPoint(5, 5))
+            app.processEvents()
+            pointer["click"] = title()
+            pointer["after click"] = [real_hover(second), title()]
+            print("@@" + json.dumps({
+                "first_height": first_height, "preferred": panel.preferred_height(),
+                "is_scrolling_text_edit": isinstance(panel, QTextEdit),
+                "moved": moved, "scrolls": scrolls, "mismatch": mismatch, "tips": tips,
+                "horizontal": any(horizontal), "at_top": at_top, "pointer": pointer,
+            }))
+            """
+        )
+
+    def test_the_panel_starts_at_its_fixed_height_and_no_tip_or_message_moves_anything(self):
+        report = self.report
+        self.assertTrue(report["is_scrolling_text_edit"])
+        self.assertEqual(report["first_height"], report["preferred"])
+        self.assertEqual(report["moved"], [])
+        self.assertFalse(report["horizontal"])
+
+    def test_a_tip_scrolls_exactly_when_it_does_not_fit_and_a_new_one_starts_at_the_top(self):
+        report = self.report
+        self.assertEqual(report["mismatch"], [])
+        self.assertIn("NORM_MODE", report["scrolls"])
+        self.assertLess(len(report["scrolls"]), report["tips"])
+        self.assertTrue(report["at_top"])
+
+    def test_the_real_pointer_follows_the_fields_until_a_message_and_a_left_click_gives_it_back(self):
+        pointer = self.report["pointer"]
+        self.assertTrue(pointer["visible"])
+        self.assertEqual(pointer["first"], [True, "Sequence Set / Subset (.fasta)"])
+        self.assertEqual(pointer["second"], [True, "MSA Input (.fasta / _sparse.h5)"])
+        # A status message: hovering leaves it where it is (the ToolTip event did arrive).
+        self.assertEqual(pointer["locked second"], [True, True])
+        self.assertEqual(pointer["locked first"], [True, True])
+        self.assertEqual(pointer["click"], "Sequence Set / Subset (.fasta)")
+        self.assertEqual(pointer["after click"], [True, "MSA Input (.fasta / _sparse.h5)"])
+
+
 class RichTipTests(unittest.TestCase):
     """Every tip of the window is a Tip the shared panel lays out, as in the desktop Config.
 
@@ -706,6 +831,7 @@ class ConsistencyReportTests(unittest.TestCase):
             window.resize(1000, 650)
             window.show()
             app.processEvents()
+            first_height = window.tip_panel.height()
             folder = tempfile.mkdtemp()
             long_header = "tr" + "A0A0A0_9BACT" * 40
             headers = ["WP_1_alpha", "WP_2_beta", long_header]
@@ -745,45 +871,29 @@ class ConsistencyReportTests(unittest.TestCase):
                 return cursor.selectedText().replace("\\xa0", " ")
 
             panel = window.tip_panel
-            wide_minimum = panel.minimumHeight()
-
-            from PySide6.QtCore import QEvent, QObject
-
-            class Resizes(QObject):
-                count = 0
-
-                def eventFilter(self, watched, event):
-                    if event.type() == QEvent.Type.Resize:
-                        self.count += 1
-                    return False
-
-            resizes = Resizes(panel)
-            panel.installEventFilter(resizes)
-            cycles = []
-            for _ in range(3):
-                resizes.count = 0
-                window.resize(width_before, 650)
+            bar = panel.verticalScrollBar()
+            states = []
+            for width in (width_before, 1000, width_before, 1000):
+                window.resize(width, 650)
                 app.processEvents()
                 app.processEvents()
-                narrow_minimum, narrow_height = panel.minimumHeight(), panel.height()
-                window.resize(1000, 650)
-                app.processEvents()
-                app.processEvents()
-                cycles.append({
-                    "resizes": resizes.count, "narrow_minimum": narrow_minimum,
-                    "narrow_height": narrow_height, "minimum": panel.minimumHeight(),
-                    "height": panel.height(), "needs": panel.heightForWidth(panel.width()),
+                states.append({
+                    "width": width, "height": panel.height(), "minimum": panel.minimumHeight(),
+                    "bar": bar.isVisible(), "value": bar.value(),
+                    # What the viewport and the scroll range don't reach of the document.
+                    "lost": panel.document().size().height() - (bar.maximum() + panel.viewport().height()),
+                    "horizontal": panel.horizontalScrollBar().isVisible(),
+                    "text width": panel.document().textWidth() - panel.viewport().width(),
                 })
 
             print("@@" + json.dumps({
-                "wide_minimum": wide_minimum,
-                "cycles": cycles,
+                "first_height": first_height,
+                "preferred": panel.preferred_height(),
+                "states": states,
                 "rows": [[cell(row, column) for column in (1, 2, 3)] for row in range(table.rows())],
                 "text": document.toPlainText().replace("\\u200b", ""),
                 "width_before": width_before,
                 "width_after": window.minimumSizeHint().width(),
-                "panel_height": panel.height(),
-                "panel_needs": panel.heightForWidth(panel.width()),
                 "long_header": long_header,
             }))
             """
@@ -803,25 +913,29 @@ class ConsistencyReportTests(unittest.TestCase):
             "Missing nodes remain plotted but are excluded from alignment-dependent analyses.", text
         )
 
-    def test_the_report_is_shown_whole_and_does_not_widen_the_window(self):
-        self.assertGreaterEqual(self.report["panel_height"], self.report["panel_needs"])
-        self.assertEqual(self.report["width_after"], self.report["width_before"])
+    def test_the_report_scrolls_in_the_fixed_panel_and_does_not_widen_the_window(self):
+        report = self.report
+        self.assertEqual(report["width_after"], report["width_before"])
+        # Laid out at its fixed height, the report does not change it: it scrolls.
+        self.assertEqual(report["first_height"], report["preferred"])
+        for state in report["states"]:
+            with self.subTest(width=state["width"]):
+                self.assertEqual(state["minimum"], 0)
+                self.assertTrue(state["bar"])
+                self.assertEqual(state["value"], 0)
+                self.assertLessEqual(state["lost"], 1)  # scrolled to the end, all of it has been shown
+                self.assertFalse(state["horizontal"])
+                self.assertLessEqual(abs(state["text width"]), 1)
 
-    def test_the_panel_gives_its_height_back_when_the_window_widens_again(self):
-        wide, cycles = self.report["wide_minimum"], self.report["cycles"]
-        for cycle in cycles:
-            # Narrower, the report wraps more and the panel grows...
-            self.assertGreater(cycle["narrow_minimum"], wide)
-            self.assertGreaterEqual(cycle["narrow_height"], cycle["narrow_minimum"])
-            # ...and widening gives the height back, with nothing cut off.
-            self.assertEqual(cycle["minimum"], wide)
-            self.assertLess(cycle["height"], cycle["narrow_height"])
-            self.assertGreaterEqual(cycle["height"], cycle["needs"])
-        # Fitting the panel does not feed back into more resizing: every cycle takes
-        # the same few resize events.
-        counts = {cycle["resizes"] for cycle in cycles}
-        self.assertEqual(len(counts), 1, cycles)
-        self.assertLessEqual(counts.pop(), 6)
+    def test_the_panel_has_the_same_height_each_time_the_window_comes_back_to_a_width(self):
+        # (Narrower, the action buttons under it wrap onto another row, as they always did;
+        # the report never changes the height.)
+        heights = {}
+        for state in self.report["states"]:
+            heights.setdefault(state["width"], set()).add(state["height"])
+        for width, seen in heights.items():
+            self.assertEqual(len(seen), 1, (width, seen))
+        self.assertEqual(heights[1000], {self.report["first_height"]})
 
 
 class AutoStepSizeTests(unittest.TestCase):
