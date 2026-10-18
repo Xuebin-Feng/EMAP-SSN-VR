@@ -130,6 +130,17 @@ def run_gui_script(body, project_root=None, pseudo_translation=False):
             )
         window = namespace["window"]
         Config = type("Config", (), namespace)
+
+        def finish_statistics(window, timeout=60.0):
+            # run_statistics works on a worker thread; wait for it, inside any patch its reads need.
+            import time
+            deadline = time.monotonic() + timeout
+            while window._statistics_request is not None:
+                if time.monotonic() > deadline:
+                    raise AssertionError("the network statistics did not finish")
+                app.processEvents()
+                time.sleep(0.005)
+            app.processEvents()
         """
     ).format(
         vr_src=VR_SRC, project_root=project_root, opt_vr=working_directory
@@ -458,6 +469,7 @@ class TipPanelStatusLockTests(unittest.TestCase):
 
             with mock.patch("h5py.File", side_effect=OSError("unreadable network")):
                 window.run_statistics()
+                finish_statistics(window)
             steps["statistics message"] = panel()
             hover(offset)
             steps["hover after statistics"] = panel()
@@ -1851,6 +1863,7 @@ class RunTimeTextTests(unittest.TestCase):
             cache_manifest = window.run_statistics.__globals__["cache_manifest"]
             with mock.patch.object(cache_manifest, "validate_network_schema", return_value=blast):
                 window.run_statistics()
+                finish_statistics(window)
             check("statistics report", window.stat_display.toPlainText())
             check("statistics tip", plain(window.tip_panel.text()))
             print("@@" + json.dumps({{"checked": checked, "left": left}}))
@@ -3325,6 +3338,241 @@ class ProjectRootFolderTests(unittest.TestCase):
         self.assertFalse(report["player_in_opt_vr_is_foreign"])
         self.assertTrue(report["player_at_root_is_foreign"])
         self.assertTrue(report["launch_root"])
+
+
+class StatisticsWindowTests(unittest.TestCase):
+    """Compute Network Statistics works on a thread, keeps the window usable and never reports stale inputs.
+
+    The desktop Config's tests (test_emapssn_config_statistics) hold the details; the VR copy of
+    the code is held to the same behaviour. The worker starts deferred (start() only records) and
+    the script runs it on its own thread when it chooses, so every interleaving is deterministic.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.report = report_from(
+            """
+            import tempfile
+            import threading
+            import h5py
+            import numpy as np
+            from PySide6.QtGui import QTextDocumentFragment
+            from utilities import Network_Score_Statistics as scores
+
+            window_globals = window.run_statistics.__globals__
+            real_worker = window_globals["StatisticsWorker"]
+            started = []
+
+            class DeferredWorker(real_worker):
+                interrupted = False
+
+                def start(self):
+                    started.append(self)
+
+                def requestInterruption(self):
+                    self.interrupted = True
+
+                def isInterruptionRequested(self):
+                    return self.interrupted
+
+            window_globals["StatisticsWorker"] = DeferredWorker
+            work = tempfile.mkdtemp()
+            rng = np.random.default_rng(1)
+            first = rng.integers(0, 5, size=60)
+            second = rng.integers(first + 1, 6)
+            with h5py.File(os.path.join(work, "network.h5"), "w") as network:
+                network.attrs["model_name"] = "BLAST"
+                network.create_dataset("headers", data=[("n%d" % index).encode() for index in range(6)])
+                network.create_dataset("i", data=first.astype(np.uint16))
+                network.create_dataset("j", data=second.astype(np.uint16))
+                network.create_dataset("score", data=(rng.random(60) * 40).astype(np.float32))
+            for name, nodes in (("all.fasta", range(6)), ("half.fasta", range(0, 6, 2))):
+                with open(os.path.join(work, name), "w", encoding="utf-8") as handle:
+                    handle.write("".join(">n%d\\nACDE\\n" % index for index in nodes))
+
+            def select(fasta):
+                for key in ("FASTA_DIR", "HDF5_DIR"):
+                    window.inputs[key].blockSignals(True)
+                    window.inputs[key].setText(work)
+                    window.inputs[key].blockSignals(False)
+                for combo, name in ((window.cb_fasta, fasta), (window.cb_hdf5, "network.h5")):
+                    combo.blockSignals(True)
+                    combo.clear()
+                    combo.addItem(name)
+                    combo.blockSignals(False)
+                window._update_statistics_button()
+
+            def panel():
+                return QTextDocumentFragment.fromHtml(window.tip_panel.text()).toPlainText().strip()
+
+            def run_deferred(worker):
+                worker.run()
+                app.processEvents()
+
+            steps = {}
+            select("all.fasta")
+
+            # A run left alone: progress, a waiting button, then the report.
+            window.run_statistics()
+            worker = started[-1]
+            steps["panel at start"] = panel()
+            steps["button while running"] = window.btn_stats.isEnabled()
+            window.update_live_validators()
+            steps["button after an unrelated edit"] = window.btn_stats.isEnabled()
+            shown = []
+            worker.progress.connect(lambda request, fraction: shown.append(panel()))
+            with mock.patch.object(scores, "CHUNK_EDGES", 10), mock.patch.object(scores, "worker_count", lambda: 1):
+                run_deferred(worker)
+            steps["progress"] = shown
+            steps["panel at end"] = panel()
+            steps["button after"] = window.btn_stats.isEnabled()
+            steps["report"] = window.stat_display.toPlainText()
+            first_report = steps["report"]
+
+            # Changing the selection stops it, and its late result lands nowhere.
+            started.clear()
+            window.stat_display.clear()
+            window._statistics = None
+            window.run_statistics()
+            worker = started[-1]
+            window.cb_fasta.addItem("half.fasta")
+            window.cb_fasta.setCurrentText("half.fasta")
+            steps["interrupted by a selection"] = worker.interrupted
+            steps["panel after a selection"] = panel()
+            run_deferred(worker)
+            steps["report after a stale run"] = window.stat_display.toPlainText()
+            steps["workers left"] = len(window._statistics_workers)
+
+            # A second run replaces the first.
+            started.clear()
+            select("all.fasta")
+            window.run_statistics()
+            window.run_statistics()
+            first_worker, second_worker = started
+            steps["first interrupted by the second"] = [first_worker.interrupted, second_worker.interrupted]
+            run_deferred(first_worker)
+            steps["report after the replaced run"] = window.stat_display.toPlainText()
+            run_deferred(second_worker)
+            steps["report after the second run"] = window.stat_display.toPlainText()
+
+            # An error shows as it always did.
+            started.clear()
+            window.run_statistics()
+            with mock.patch("h5py.File", side_effect=OSError("unreadable network")):
+                run_deferred(started[-1])
+            steps["error"] = panel()
+            steps["button after the error"] = window.btn_stats.isEnabled()
+
+            # A network rewritten while it ran is not reported.
+            started.clear()
+            window.stat_display.clear()
+            window._statistics = None
+            window.run_statistics()
+            worker = started[-1]
+            network_path = os.path.join(work, "network.h5")
+            before = os.stat(network_path)
+            with h5py.File(network_path, "a") as network:
+                network.attrs["touched"] = "x" * 500
+            os.utime(network_path, ns=(before.st_atime_ns, before.st_mtime_ns + 5_000_000_000))
+            run_deferred(worker)
+            steps["panel after a rewrite"] = panel()
+            steps["report after a rewrite"] = window.stat_display.toPlainText()
+            steps["button after a rewrite"] = window.btn_stats.isEnabled()
+
+            # Progress leaves a tip the user chose alone.
+            started.clear()
+            window.run_statistics()
+            worker = started[-1]
+            window.tip_panel.setTip("A tip the user asked for.")
+            during = []
+            worker.progress.connect(lambda request, fraction: during.append(panel()))
+            with mock.patch.object(scores, "CHUNK_EDGES", 10), mock.patch.object(scores, "worker_count", lambda: 1):
+                run_deferred(worker)
+            steps["panel during progress after a tip"] = sorted(set(during))
+            steps["panel after that run"] = panel()
+
+            # Closing the window stops a run.
+            started.clear()
+            window.run_statistics()
+            worker = started[-1]
+            window.close()
+            steps["interrupted by closing"] = worker.interrupted
+            run_deferred(worker)
+            steps["workers after closing"] = len(window._statistics_workers)
+
+            # Closing while the real thread runs waits for it (a shown window, so closing sends the event).
+            window.show()
+            window_globals["StatisticsWorker"] = real_worker
+            reached, release = threading.Event(), threading.Event()
+            real_compute = scores.compute_score_statistics
+
+            def gated(source, **options):
+                reached.set()
+                release.wait(30)
+                if options["cancelled"]():
+                    raise scores.StatisticsCancelled()
+                return real_compute(source, **options)
+
+            with mock.patch.object(scores, "compute_score_statistics", gated):
+                window.run_statistics()
+                steps["gate reached"] = reached.wait(30)
+                running = next(iter(window._statistics_workers.values()))
+                threading.Timer(0.3, release.set).start()
+                window.close()
+                steps["thread finished on closing"] = running.isFinished()
+                release.set()
+            print("@@" + json.dumps(steps))
+            """
+        )
+
+    def test_progress_runs_while_the_button_waits(self):
+        steps = self.report
+        self.assertEqual(steps["panel at start"], "Computing network statistics... 0 %")
+        self.assertFalse(steps["button while running"])
+        self.assertFalse(steps["button after an unrelated edit"])
+        percents = [int(text.split("... ")[1].rstrip(" %")) for text in steps["progress"]]
+        self.assertEqual(percents, sorted(percents))
+        self.assertGreater(len(set(percents)), 3)
+        self.assertEqual(percents[-1], 100)
+        self.assertTrue(steps["button after"])
+        self.assertEqual(steps["panel at end"], "Network statistics computed successfully.")
+        self.assertIn("Stored Edges: 60 (Max possible: 15)", steps["report"])
+
+    def test_changing_the_selection_stops_the_run_and_its_result_lands_nowhere(self):
+        steps = self.report
+        self.assertTrue(steps["interrupted by a selection"])
+        self.assertEqual(steps["panel after a selection"], "Network statistics stopped: the inputs changed.")
+        self.assertEqual(steps["report after a stale run"], "")
+        self.assertEqual(steps["workers left"], 0)
+
+    def test_a_second_run_replaces_the_first(self):
+        steps = self.report
+        self.assertEqual(steps["first interrupted by the second"], [True, False])
+        self.assertEqual(steps["report after the replaced run"], "")
+        self.assertIn("Stored Edges: 60", steps["report after the second run"])
+
+    def test_an_error_shows_as_before_and_frees_the_button(self):
+        self.assertEqual(self.report["error"], "Error during network statistics calculation: unreadable network")
+        self.assertTrue(self.report["button after the error"])
+
+    def test_a_network_rewritten_while_it_ran_is_not_reported(self):
+        steps = self.report
+        self.assertEqual(steps["panel after a rewrite"], "Network statistics stopped: the inputs changed.")
+        self.assertEqual(steps["report after a rewrite"], "")
+        self.assertTrue(steps["button after a rewrite"])
+
+    def test_progress_leaves_a_tip_the_user_chose_alone(self):
+        steps = self.report
+        self.assertEqual(steps["panel during progress after a tip"], ["A tip the user asked for."])
+        self.assertEqual(steps["panel after that run"], "Network statistics computed successfully.")
+
+    def test_closing_the_window_stops_the_run(self):
+        self.assertTrue(self.report["interrupted by closing"])
+        self.assertEqual(self.report["workers after closing"], 0)
+
+    def test_closing_while_the_thread_runs_waits_for_it(self):
+        self.assertTrue(self.report["gate reached"])
+        self.assertTrue(self.report["thread finished on closing"])
 
 
 if __name__ == "__main__":
