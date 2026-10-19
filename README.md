@@ -236,13 +236,13 @@ every difference is deliberate:
 | `VR_CONFIG_THEME_SETTING` for the theme colour | VR Config keeps its own colour (`VR_CONFIG_THEME_COLOR`), so choosing one there leaves the desktop Config's and Tools' as they were |
 | `extra_catalogs=VR_TRANSLATION_CATALOGS` | `install_translations` and `redraw_in_language` also load opt_vr's catalog, `emapssn_vr`, which holds the texts VR Config does not share with the desktop Config |
 
-Three settings the desktop GUI offers are deliberately absent, because nothing
+Some settings the desktop GUI offers are deliberately absent, because nothing
 in the VR runtime reads them and no shared command does either:
 
 | Removed | Why |
 |---|---|
 | `TEXT_SIZE`, `TEXT_COLOR` | no HUD text is drawn in the headset |
-| `LOW_RESOURCE_MODE` | a VisPy canvas optimisation; the VR client does the drawing |
+| `FEWER_EDGES_WHILE_MOVING`, `LOW_RESOURCE_ANIMATIONS`, `LOW_RESOURCE_DRAWING`, `LOW_RESOURCE_WEBSERVER`, `SHOW_FPS` | Low Resource Mode and the frame rate: optimisations of the desktop Viewer's canvas, sidebar, slider and web pages; the VR client does the drawing |
 
 `NEIGHBOR_COLOR` has no control of its own either: `Settings` republishes
 `INITIAL_NODE_COLOR` under that name and it wins, so a second control would

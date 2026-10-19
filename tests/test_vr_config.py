@@ -189,6 +189,10 @@ class ConfigWindowTests(unittest.TestCase):
                 "title": window.windowTitle(),
                 "tabs": [window.tabs.tabText(i) for i in range(window.tabs.count())],
                 "inputs": sorted(window.inputs),
+                "unused_in_vr": sorted(namespace["UNUSED_IN_VR"]),
+                "low_resource_keys": sorted(
+                    key for key in namespace["VISUAL_PROFILE_DEFAULTS"]
+                    if key.startswith("LOW_RESOURCE_") or key in ("FEWER_EDGES_WHILE_MOVING", "SHOW_FPS")),
                 "profile_tabs": sorted(window.profile_selectors),
                 "cache_settings": window._cache_setting_values(),
                 "settings_file": namespace["SETTINGS_FILE"],
@@ -228,8 +232,15 @@ class ConfigWindowTests(unittest.TestCase):
 
     def test_settings_the_client_ignores_are_gone(self):
         """A control with no effect is worse than no control."""
-        for key in ("TEXT_SIZE", "TEXT_COLOR", "LOW_RESOURCE_MODE"):
+        for key in ("TEXT_SIZE", "TEXT_COLOR", "FEWER_EDGES_WHILE_MOVING", "LOW_RESOURCE_ANIMATIONS",
+                    "LOW_RESOURCE_DRAWING", "LOW_RESOURCE_WEBSERVER", "SHOW_FPS", "LOW_RESOURCE_MODE"):
             self.assertNotIn(key, self.report["inputs"], key)
+
+    def test_every_low_resource_setting_is_unused_in_vr(self):
+        """Low Resource Mode's categories and Show FPS, as the desktop Config has them."""
+        self.assertEqual(
+            set(self.report["low_resource_keys"]) - set(self.report["unused_in_vr"]), set())
+        self.assertIn("SHOW_FPS", self.report["low_resource_keys"])
 
     def test_the_optional_embedding_input_came_with_the_copy(self):
         """Shared commands that need an embedding run in VR too."""

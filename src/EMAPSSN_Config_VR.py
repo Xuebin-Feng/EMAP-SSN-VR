@@ -251,8 +251,13 @@ INITIAL_NODE_COLOR = '#4488ff'
 HOVER_COLOR = '#ffaa00'
 CONNECTED_NODE_COLOR = '#ff0000'
 EDGE_COLOR = '#000000'
-LOW_RESOURCE_MODE = False
 NODE_BOUNDARY_COLOR = '#000000'
+# Low Resource Mode, by category (desktop.Viewer_State.LOW_RESOURCE_DEFAULTS).
+FEWER_EDGES_WHILE_MOVING = False
+LOW_RESOURCE_ANIMATIONS = False
+LOW_RESOURCE_DRAWING = False
+LOW_RESOURCE_WEBSERVER = False
+SHOW_FPS = False
 
 # --- Grid Packing Settings ---
 PACKING_GRID_SIZE = 10.0  # The base size of one grid square
@@ -322,7 +327,13 @@ for _vr_key, _vr_value in VR_PROFILE_DEFAULTS.items():
 UNUSED_IN_VR = frozenset({
     "TEXT_SIZE",          # no HUD text is rendered in the headset
     "TEXT_COLOR",         # ditto
-    "LOW_RESOURCE_MODE",  # a VisPy canvas optimisation; the VR client draws
+    # Low Resource Mode's categories and Show FPS: the desktop Viewer's
+    # canvas, sidebar, slider and web pages; the VR client draws.
+    "FEWER_EDGES_WHILE_MOVING",
+    "LOW_RESOURCE_ANIMATIONS",
+    "LOW_RESOURCE_DRAWING",
+    "LOW_RESOURCE_WEBSERVER",
+    "SHOW_FPS",
 })
 
 #: The bridge settings sit on the Visual Effects tab, so they share its profile
@@ -2655,13 +2666,6 @@ if __name__ == "__main__":
                     translate("Config", "Stroke width (in pixels) of the outer border ring outline drawn around each node."),
                     details=(translate("Config", "Setting a non-zero width helps distinguish overlapping nodes in dense clusters."),),
                     unit="px",
-                ),
-                "LOW_RESOURCE_MODE": Tip(
-                    translate("Config", "Performance mode that simplifies graphics and hides edge lines during pan/zoom/drag interactions."),
-                    details=(translate("Config", "Significantly improves responsiveness and reduces rendering latency for large networks."),),
-                    notes=(
-                        TipNote("info", translate("Config", "The wheel zoom and the sidebar skip their animations; the edges redraw once a threshold slider drag ends, and the Meta Data sheet updates once a right-button node drag ends.")),
-                    ),
                 ),
                 "LAYOUT_DEVICE_SELECTION": Tip(
                     translate("Config", "Selects the compute device used for SSN layout generation (CPU, CUDA, XPU, MPS)."),
