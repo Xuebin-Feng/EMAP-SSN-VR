@@ -24,6 +24,7 @@ wrote sequences the layout was never built from, and the edges came from
 whichever network the settings named.
 """
 
+import atexit
 import importlib
 import io
 import json
@@ -40,10 +41,12 @@ VR_SRC = os.path.join(OPT_VR, "src")
 if VR_SRC not in sys.path:
     sys.path.insert(0, VR_SRC)
 
-_NEUTRAL = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False, encoding="utf-8")
-json.dump({}, _NEUTRAL)
-_NEUTRAL.close()
-os.environ.setdefault("SSN_VIEWER_SETTINGS_PATH", _NEUTRAL.name)
+_NEUTRAL = tempfile.TemporaryDirectory(prefix="ssn_vr_neutral_")  # removed when this process exits
+atexit.register(_NEUTRAL.cleanup)
+_NEUTRAL_SETTINGS = os.path.join(_NEUTRAL.name, "viewer_settings.json")
+with open(_NEUTRAL_SETTINGS, "w", encoding="utf-8") as _neutral_file:
+    json.dump({}, _neutral_file)
+os.environ.setdefault("SSN_VIEWER_SETTINGS_PATH", _NEUTRAL_SETTINGS)
 
 import h5py  # noqa: E402
 import numpy as np  # noqa: E402

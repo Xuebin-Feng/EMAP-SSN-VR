@@ -20,6 +20,7 @@ everything else declines rather than guesses: a wrong endpoint would lock the
 Config GUI to an address the player never dials.
 """
 
+import atexit
 import json
 import os
 import sys
@@ -35,10 +36,14 @@ import Player_Build_VR as build  # noqa: E402
 
 INSTALLED_PLAYER = os.path.join(OPT_VR, "player")
 
+# Every build folder these tests make goes here, removed when the process exits.
+_BUILDS = tempfile.TemporaryDirectory(prefix="ssn_vr_builds_")
+atexit.register(_BUILDS.cleanup)
+
 
 def build_with(manifest):
     """A throwaway build directory holding `manifest` as vr_client.json."""
-    root = tempfile.mkdtemp()
+    root = tempfile.mkdtemp(dir=_BUILDS.name)
     with open(os.path.join(root, build.MANIFEST_NAME), "w", encoding="utf-8") as handle:
         if isinstance(manifest, str):
             handle.write(manifest)
@@ -65,7 +70,7 @@ class ReadEndpointTests(unittest.TestCase):
         self.assertIsNone(build.read_endpoint(os.path.join(OPT_VR, "no_such_build")))
 
     def test_a_build_without_a_manifest_reads_as_unknown(self):
-        self.assertIsNone(build.read_endpoint(tempfile.mkdtemp()))
+        self.assertIsNone(build.read_endpoint(tempfile.mkdtemp(dir=_BUILDS.name)))
 
     def test_an_unreadable_manifest_reads_as_unknown(self):
         self.assertIsNone(build.read_endpoint(build_with("{not json")))

@@ -23,6 +23,7 @@ commands through the terminal's own dispatcher and check the effect: the
 packets queued for the client, the files written and the state restored.
 """
 
+import atexit
 import io
 import json
 import os
@@ -41,10 +42,12 @@ VR_SRC = os.path.join(OPT_VR, "src")
 if VR_SRC not in sys.path:
     sys.path.insert(0, VR_SRC)
 
-_NEUTRAL = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False, encoding="utf-8")
-json.dump({}, _NEUTRAL)
-_NEUTRAL.close()
-os.environ.setdefault("SSN_VIEWER_SETTINGS_PATH", _NEUTRAL.name)
+_NEUTRAL = tempfile.TemporaryDirectory(prefix="ssn_vr_neutral_")  # removed when this process exits
+atexit.register(_NEUTRAL.cleanup)
+_NEUTRAL_SETTINGS = os.path.join(_NEUTRAL.name, "viewer_settings.json")
+with open(_NEUTRAL_SETTINGS, "w", encoding="utf-8") as _neutral_file:
+    json.dump({}, _neutral_file)
+os.environ.setdefault("SSN_VIEWER_SETTINGS_PATH", _NEUTRAL_SETTINGS)
 
 import numpy as np  # noqa: E402
 

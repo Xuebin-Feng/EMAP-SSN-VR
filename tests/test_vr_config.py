@@ -162,11 +162,16 @@ def run_gui_script(body, project_root=None, pseudo_translation=False):
         environment["SSN_PSEUDO_TRANSLATION"] = "1"
     # The language setting, too, comes from the throwaway project.
     environment["SSN_APP_SETTINGS_PATH"] = os.path.join(project_root, "app_settings.json")
-    result = subprocess.run(
-        [sys.executable, "-u", "-c", script],
-        capture_output=True, text=True, env=environment, cwd=working_directory,
-        timeout=900,
-    )
+    # Whatever the GUI or `body` makes with tempfile (scripts call mkdtemp for their fixture
+    # folders) lands in a folder removed after the run, not in the user's temporary folder.
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as scratch:
+        for name in ("TEMP", "TMP", "TMPDIR"):
+            environment[name] = scratch
+        result = subprocess.run(
+            [sys.executable, "-u", "-c", script],
+            capture_output=True, text=True, env=environment, cwd=working_directory,
+            timeout=900,
+        )
     if result.returncode != 0:
         raise AssertionError(
             f"GUI subprocess failed:\n{result.stdout}\n{result.stderr}"

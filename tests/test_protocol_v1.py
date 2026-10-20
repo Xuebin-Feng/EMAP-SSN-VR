@@ -23,6 +23,7 @@ protocol has no framing, magic number or version field, which is exactly why
 every byte count is pinned down.
 """
 
+import atexit
 import io
 import json
 import os
@@ -41,12 +42,12 @@ for _path in (TOOLS, VR_SRC):
     if _path not in sys.path:
         sys.path.insert(0, _path)
 
-_NEUTRAL = tempfile.NamedTemporaryFile(
-    "w", suffix=".json", delete=False, encoding="utf-8"
-)
-json.dump({}, _NEUTRAL)
-_NEUTRAL.close()
-os.environ["SSN_VIEWER_SETTINGS_PATH"] = _NEUTRAL.name
+_NEUTRAL = tempfile.TemporaryDirectory(prefix="ssn_vr_neutral_")  # removed when this process exits
+atexit.register(_NEUTRAL.cleanup)
+_NEUTRAL_SETTINGS = os.path.join(_NEUTRAL.name, "viewer_settings.json")
+with open(_NEUTRAL_SETTINGS, "w", encoding="utf-8") as _neutral_file:
+    json.dump({}, _neutral_file)
+os.environ["SSN_VIEWER_SETTINGS_PATH"] = _NEUTRAL_SETTINGS
 
 import numpy as np  # noqa: E402
 

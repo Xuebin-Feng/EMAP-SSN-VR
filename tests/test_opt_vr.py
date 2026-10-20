@@ -26,6 +26,7 @@ shared Command_Engine API upstream commands depend on, and the load-only
 layout cache consumer.
 """
 
+import atexit
 import io
 import json
 import os
@@ -49,12 +50,12 @@ if VR_SRC not in sys.path:
 
 # A neutral settings file keeps these tests independent of whatever the user
 # last saved in the project's viewer_settings.json.
-_NEUTRAL = tempfile.NamedTemporaryFile(
-    "w", suffix=".json", delete=False, encoding="utf-8"
-)
-json.dump({}, _NEUTRAL)
-_NEUTRAL.close()
-os.environ["SSN_VIEWER_SETTINGS_PATH"] = _NEUTRAL.name
+_NEUTRAL = tempfile.TemporaryDirectory(prefix="ssn_vr_neutral_")  # removed when this process exits
+atexit.register(_NEUTRAL.cleanup)
+_NEUTRAL_SETTINGS = os.path.join(_NEUTRAL.name, "viewer_settings.json")
+with open(_NEUTRAL_SETTINGS, "w", encoding="utf-8") as _neutral_file:
+    json.dump({}, _neutral_file)
+os.environ["SSN_VIEWER_SETTINGS_PATH"] = _NEUTRAL_SETTINGS
 
 import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402

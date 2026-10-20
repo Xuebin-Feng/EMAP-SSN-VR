@@ -27,6 +27,7 @@ dispatcher can reach is loadable. That test is the reason this file exists; the
 rest keeps it honest.
 """
 
+import atexit
 import io
 import json
 import os
@@ -43,21 +44,24 @@ if VR_SRC not in sys.path:
     sys.path.insert(0, VR_SRC)
 
 # Keep these tests independent of whatever the user last saved.
-_NEUTRAL = tempfile.NamedTemporaryFile(
-    "w", suffix=".json", delete=False, encoding="utf-8"
-)
-json.dump({}, _NEUTRAL)
-_NEUTRAL.close()
-os.environ["SSN_VIEWER_SETTINGS_PATH"] = _NEUTRAL.name
+_NEUTRAL = tempfile.TemporaryDirectory(prefix="ssn_vr_neutral_")  # removed when this process exits
+atexit.register(_NEUTRAL.cleanup)
+_NEUTRAL_SETTINGS = os.path.join(_NEUTRAL.name, "viewer_settings.json")
+with open(_NEUTRAL_SETTINGS, "w", encoding="utf-8") as _neutral_file:
+    json.dump({}, _neutral_file)
+os.environ["SSN_VIEWER_SETTINGS_PATH"] = _NEUTRAL_SETTINGS
 
 with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
     import Command_Compatibility_VR as cc  # noqa: E402
 
 
 def _module(source):
-    """Write ``source`` to a throwaway .py file and return its path."""
+    """Write ``source`` to a throwaway .py file and return its path.
+
+    The file lives in the folder removed when this process exits (_NEUTRAL).
+    """
     handle = tempfile.NamedTemporaryFile(
-        "w", suffix=".py", delete=False, encoding="utf-8"
+        "w", suffix=".py", delete=False, encoding="utf-8", dir=_NEUTRAL.name
     )
     handle.write(source)
     handle.close()

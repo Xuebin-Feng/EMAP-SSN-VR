@@ -37,6 +37,7 @@ client that passes them speaks the protocol the server actually implements.
 from __future__ import annotations
 
 import argparse
+import atexit
 import io
 import json
 import os
@@ -46,10 +47,12 @@ from contextlib import redirect_stderr, redirect_stdout
 
 # Neutral settings, so a user's saved viewer_settings_vr.json cannot leak into
 # the fixtures. Must precede every import that reads settings.
-_NEUTRAL = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False, encoding="utf-8")
-json.dump({}, _NEUTRAL)
-_NEUTRAL.close()
-os.environ["SSN_VIEWER_SETTINGS_PATH"] = _NEUTRAL.name
+_NEUTRAL = tempfile.TemporaryDirectory(prefix="ssn_vr_neutral_")  # removed when this process exits
+atexit.register(_NEUTRAL.cleanup)
+_NEUTRAL_SETTINGS = os.path.join(_NEUTRAL.name, "viewer_settings.json")
+with open(_NEUTRAL_SETTINGS, "w", encoding="utf-8") as _neutral_file:
+    json.dump({}, _neutral_file)
+os.environ["SSN_VIEWER_SETTINGS_PATH"] = _NEUTRAL_SETTINGS
 
 import numpy as np  # noqa: E402
 
