@@ -1270,6 +1270,139 @@ class DropdownValueTests(unittest.TestCase):
         self.assertFalse(self.report["profile_error"])
 
 
+class NormalizationLabelTests(unittest.TestCase):
+    """The Normalization Mode dropdown names each mode in words; the stored value stays.
+
+    Alignment Length is shown, alignment_length is saved: settings files, profiles,
+    caches and the MCP documents hold the values, so only the labels read as words.
+    """
+
+    VALUES = ["alignment_length", "shorter_sequence", "longer_sequence", "average_sequence"]
+    WORDS = ["Alignment Length", "Shorter Sequence", "Longer Sequence", "Average Sequence"]
+
+    @classmethod
+    def setUpClass(cls):
+        project = tempfile.mkdtemp()
+        cls.addClassCleanup(shutil.rmtree, project, ignore_errors=True)
+        cls.report = report_from(
+            """
+            from desktop.Tip_Panel import resolve
+            select = namespace["select_combo_value"]
+            value = namespace["combo_value"]
+            combo = window.cb_norm_mode
+
+            def listing():
+                return [
+                    [combo.itemText(i) for i in range(combo.count())],
+                    [combo.itemData(i) for i in range(combo.count())],
+                ]
+
+            window._set_network_type_controls("alignment")
+            select(window.cb_score_mode, "global")
+            select(combo, "alignment_length")
+            global_listing, current_global = listing(), combo.currentText()
+            tip_rows = [label for label, _text in resolve(window.tip_db[combo]).options]
+            global_facts = resolve(window.tip_db[combo]).facts
+            select(window.cb_score_mode, "local")
+            local_listing, current_local = listing(), combo.currentText()
+            local_facts = resolve(window.tip_db[combo]).facts
+            select(window.cb_score_mode, "global")
+
+            restored = {}
+            profile = dict(namespace["TAB_PROFILE_SPECS"]["inputs_outputs"]["defaults"])
+            for mode in global_listing[1]:
+                select(combo, "shorter_sequence")
+                profile.update(ALIGNMENT_SCORE="global", NORM_MODE=mode)
+                window._apply_profile_data("inputs_outputs", profile)
+                restored[mode] = [
+                    value(combo), combo.currentText(),
+                    window._collect_tab_profile_data("inputs_outputs")["NORM_MODE"],
+                    window.collect_data()["NORM_MODE"],
+                    window._cache_setting_values()["normalization"],
+                ]
+
+            names = namespace["normalization_names"]()
+            metrics = {}
+            for mode in names:
+                summary, _headings = namespace["statistics_report_text"]({
+                    "blast": False, "score_mode": "global", "normalization": mode,
+                    "model": "E1_RA", "fasta": "a.fasta", "nodes": 3, "stored_edges": 3,
+                    "possible_edges": 3, "maximum": 1.0, "minimum": 0.0, "mean": 0.5,
+                })
+                metrics[mode] = summary[3]
+            select(combo, "average_sequence")
+            saved_ok = window.save_settings()
+
+            from desktop.Desktop_App import install_translations
+            install_translations(app, "zh_CN")
+            window.update_norm_mode_options()
+            chinese = listing()
+            chinese_names = list(namespace["normalization_names"]().values())
+            print("@@" + json.dumps({
+                "global": global_listing, "current_global": current_global,
+                "local": local_listing, "current_local": current_local,
+                "tip_rows": tip_rows, "restored": restored,
+                "global_facts": global_facts, "local_facts": local_facts,
+                "names": [list(names), list(names.values())], "metrics": metrics,
+                "saved_ok": saved_ok, "tip": window.tip_panel.text(),
+                "chinese": chinese, "chinese_names": chinese_names,
+            }))
+            """,
+            project_root=project,
+        )
+        settings_file = os.path.join(project, "opt_vr", "viewer_settings_vr.json")
+        cls.saved_text = ""
+        if os.path.exists(settings_file):
+            with open(settings_file, encoding="utf-8") as handle:
+                cls.saved_text = handle.read()
+
+    def test_a_global_score_offers_the_four_modes_in_words(self):
+        self.assertEqual(self.report["global"], [self.WORDS, self.VALUES])
+        self.assertEqual(self.report["current_global"], "Alignment Length")
+        self.assertFalse(any("_" in label for label in self.report["global"][0]))
+
+    def test_a_local_score_leaves_alignment_length_out(self):
+        self.assertEqual(self.report["local"], [self.WORDS[1:], self.VALUES[1:]])
+        self.assertEqual(self.report["current_local"], "Longer Sequence")
+
+    def test_each_stored_value_is_restored_collected_and_cached_as_itself(self):
+        for value, words in zip(self.VALUES, self.WORDS):
+            with self.subTest(value=value):
+                self.assertEqual(self.report["restored"][value], [value, words, value, value, value])
+
+    def test_saved_settings_hold_the_value_not_the_label(self):
+        self.assertTrue(self.report["saved_ok"], self.report["tip"])
+        self.assertEqual(json.loads(self.saved_text)["NORM_MODE"], "average_sequence")
+        self.assertNotIn("Average Sequence", self.saved_text)
+
+    def test_the_tip_and_the_statistics_report_name_the_modes_as_the_dropdown_does(self):
+        self.assertEqual(self.report["tip_rows"], self.WORDS)
+        # Its footer names the default by its words, and leaves it out while Alignment Length is hidden.
+        self.assertIn(["Default", "Alignment Length"], self.report["global_facts"])
+        self.assertIn(["Setting", "NORM_MODE"], self.report["global_facts"])
+        self.assertNotIn("Default", dict(self.report["local_facts"]))
+        self.assertNotIn("alignment_length", [value for _label, value in self.report["local_facts"]])
+        self.assertEqual(self.report["names"], [self.VALUES, self.WORDS])
+        # The report's metric line quotes the same words.
+        for value, words in zip(self.VALUES, self.WORDS):
+            with self.subTest(value=value):
+                self.assertEqual(
+                    self.report["metrics"][value],
+                    f"Metric: Global Alignment Score with {words} Normalization",
+                )
+
+    def test_simplified_chinese_shows_the_reviewed_wording_of_the_report(self):
+        labels, values = self.report["chinese"]
+        self.assertEqual(values, self.VALUES)
+        # The statistics report's translations are the dropdown's.
+        self.assertEqual(labels, self.report["chinese_names"])
+        for words, chinese in zip(self.WORDS, labels):
+            with self.subTest(words=words):
+                self.assertNotEqual(chinese, words)
+                self.assertNotIn("_", chinese)
+                self.assertTrue(any("一" <= character <= "鿿" for character in chinese))
+
+
 class ComboPopupTests(unittest.TestCase):
     """An open dropdown list scrolls by the wheel, scroll bar and keys, not by the mouse.
 
