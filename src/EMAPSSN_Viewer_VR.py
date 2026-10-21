@@ -74,7 +74,7 @@ def _initial_edge_threshold():
     """The edge threshold `hide single` applies, as the desktop slider starts.
 
     The desktop slider starts at the cache's SIMILARITY_THRESHOLD; a cache
-    that has none (UMAP topology, a top-percentage filter) starts it at the
+    that has none (UMAP or PaCMAP topology, a top-percentage filter) starts it at the
     lowest edge score, so every edge counts. -inf means the same here.
     """
     threshold = getattr(cfg, 'SIMILARITY_THRESHOLD', None)
@@ -695,6 +695,8 @@ def _edge_filter_label(settings):
     """Describe the edge filter `settings` name, or None when they name none."""
     try:
         if getattr(settings, "UMAP_MODE", False) is True:
+            if getattr(settings, "LAYOUT_METHOD", None) == "pacmap":
+                return f"PaCMAP topology, {int(settings.PACMAP_NEIGHBORS)} neighbours per node"
             return f"UMAP topology, {int(settings.UMAP_NEIGHBORS)} neighbours per node"
         top = getattr(settings, "TOP_EDGE_PERCENT", None)
         if top is not None:
@@ -792,6 +794,8 @@ def verify_layout_cache(cache_path):
             normalization=cfg.NORM_MODE,
             umap_mode=cfg.UMAP_MODE,
             umap_neighbors=cfg.UMAP_NEIGHBORS,
+            layout_method=getattr(cfg, "LAYOUT_METHOD", None) or "umap",
+            pacmap_neighbors=getattr(cfg, "PACMAP_NEIGHBORS", None) or 10,
             top_edge_percent=cfg.TOP_EDGE_PERCENT,
             similarity_threshold=cfg.SIMILARITY_THRESHOLD,
             layout_dimensions=dimensions,

@@ -82,7 +82,7 @@
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <source>Uses UMAP manifold learning to compute 3D coordinates directly from sequence distances.</source>
+        <source>Uses a manifold method (UMAP or PaCMAP, chosen by Layout Method) to compute the 3D coordinates directly from each node&apos;s strongest edges, instead of simulating physics.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>

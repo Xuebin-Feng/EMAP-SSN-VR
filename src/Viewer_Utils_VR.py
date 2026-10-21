@@ -76,7 +76,10 @@ def get_cluster_alignment_dir(viewer):
     lvl2_name = ""
     
     is_umap = getattr(cfg, 'UMAP_MODE', False)
-    if is_umap:
+    if is_umap and getattr(cfg, 'LAYOUT_METHOD', None) == 'pacmap':
+        pacmap_k = getattr(cfg, 'PACMAP_NEIGHBORS', None) or 10
+        lvl2_name += f"_PACMAP_k{int(pacmap_k)}"
+    elif is_umap:
         umap_k = getattr(cfg, 'UMAP_NEIGHBORS', 15)
         lvl2_name += f"_UMAP_k{int(umap_k)}"
     else:

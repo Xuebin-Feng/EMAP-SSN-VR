@@ -296,6 +296,93 @@ class ConfigWindowTests(unittest.TestCase):
         )
 
 
+class LayoutMethodTests(unittest.TestCase):
+    """The Layout Method dropdown, as in the main program's Config (VR layouts are 3D).
+
+    Plot Manifold Instead (UMAP_MODE) swaps the two edge-filter fields for the manifold layout's own: UMAP's
+    neighbour count and minimum distance, or PaCMAP's neighbour count with the minimum distance greyed out.
+    The window's cache identity names the method and its neighbours, always in three dimensions.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.report = report_from(
+            """
+            stacks = window._input_mode_stacks
+            keys = ("UMAP_NEIGHBORS", "UMAP_MIN_DIST", "PACMAP_NEIGHBORS", "LAYOUT_METHOD")
+
+            def page(stack):
+                widget = stack.currentWidget()
+                return widget.text() if widget.metaObject().className() == "QLabel" else "field"
+
+            def state():
+                return {
+                    "pages": [page(stack) for stack in stacks],
+                    "enabled": {key: [window.inputs[key].isEnabled(), window.labels[key].isEnabled()] for key in keys},
+                    "tab_visible": window.tabs.isTabVisible(2),
+                }
+
+            report = {
+                "default_method": window.cb_layout_method.currentData(),
+                "method_values": [window.cb_layout_method.itemData(i) for i in range(2)],
+                "method_texts": [window.cb_layout_method.itemText(i) for i in range(2)],
+                "pacmap_range": [window.spin_pacmap_k.minimum(), window.spin_pacmap_k.maximum(),
+                                 window.spin_pacmap_k.value()],
+                "switch_label": window.labels["UMAP_MODE"].text(),
+                "method_label": window.labels["LAYOUT_METHOD"].text(),
+                "physics": state(),
+            }
+            window.check_umap.setChecked(True)
+            report["umap"] = state()
+            window.cb_layout_method.setCurrentIndex(window.cb_layout_method.findData("pacmap"))
+            window.spin_pacmap_k.setValue(21)
+            report["pacmap"] = state()
+            report["cache_settings"] = window._cache_setting_values()
+            collected = window.collect_data()
+            report["collected"] = [collected["LAYOUT_METHOD"], collected["PACMAP_NEIGHBORS"]]
+            report["tips"] = {key: bool(window.tip_db_keys[key].summary) for key in
+                              ("UMAP_MODE", "LAYOUT_METHOD", "PACMAP_NEIGHBORS", "UMAP_MIN_DIST")}
+            report["profile_defaults"] = [namespace["TAB_PROFILE_SPECS"]["inputs_outputs"]["defaults"][key]
+                                          for key in ("LAYOUT_METHOD", "PACMAP_NEIGHBORS")]
+            print("@@" + json.dumps(report))
+            """
+        )
+
+    def test_the_dropdown_and_the_neighbour_field(self):
+        report = self.report
+        self.assertEqual((report["default_method"], report["method_values"]), ("umap", ["umap", "pacmap"]))
+        self.assertEqual(report["method_texts"], ["UMAP", "PaCMAP"])
+        self.assertEqual(report["pacmap_range"], [2, 50, 10])
+        self.assertEqual((report["switch_label"], report["method_label"]),
+                         ("Plot Manifold Instead:", "Layout Method:"))
+        self.assertEqual(report["profile_defaults"], ["umap", 10])
+
+    def test_each_mode_shows_and_enables_its_own_fields(self):
+        report = self.report
+        self.assertEqual(report["physics"]["pages"][0], "Similarity Threshold:")
+        self.assertEqual(report["umap"]["pages"][0], "UMAP Nearest Neighbors:")
+        self.assertEqual(report["pacmap"]["pages"][0], "PaCMAP Nearest Neighbors:")
+        self.assertEqual(report["pacmap"]["pages"][2], "UMAP Min Distance:")
+        pair = lambda value: [value, value]          # noqa: E731
+        self.assertEqual(report["physics"]["enabled"], {key: pair(False) for key in report["physics"]["enabled"]})
+        self.assertEqual(report["umap"]["enabled"], {"UMAP_NEIGHBORS": pair(True), "UMAP_MIN_DIST": pair(True),
+                                                      "PACMAP_NEIGHBORS": pair(False), "LAYOUT_METHOD": pair(True)})
+        self.assertEqual(report["pacmap"]["enabled"], {"UMAP_NEIGHBORS": pair(False), "UMAP_MIN_DIST": pair(False),
+                                                        "PACMAP_NEIGHBORS": pair(True), "LAYOUT_METHOD": pair(True)})
+        self.assertTrue(report["physics"]["tab_visible"])
+        self.assertFalse(report["umap"]["tab_visible"])
+        self.assertFalse(report["pacmap"]["tab_visible"])
+
+    def test_the_cache_identity_names_the_method_and_stays_three_dimensional(self):
+        settings = self.report["cache_settings"]
+        self.assertEqual((settings["umap_mode"], settings["layout_method"], settings["pacmap_neighbors"],
+                          settings["layout_dimensions"]), (True, "pacmap", 21, 3))
+        self.assertEqual(self.report["collected"], ["pacmap", "21"])
+
+    def test_every_new_field_has_a_tip(self):
+        self.assertEqual(set(self.report["tips"].values()), {True})
+
+
 class EmbeddingRootTests(unittest.TestCase):
     """The Directories tab lists the embedding directory as its fourth root.
 

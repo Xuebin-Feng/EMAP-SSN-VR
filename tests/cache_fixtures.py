@@ -48,6 +48,8 @@ ADOPTED_SETTINGS = (
     "UMAP_MODE",
     "UMAP_NEIGHBORS",
     "UMAP_MIN_DIST",
+    "LAYOUT_METHOD",
+    "PACMAP_NEIGHBORS",
     "BOX_SCALE",
     "SIMILARITY_THRESHOLD",
     "TOP_EDGE_PERCENT",
@@ -104,19 +106,23 @@ def publish_cache(
     similarity_threshold=0.45,
     top_edge_percent=None,
     umap_neighbors=None,
+    pacmap_neighbors=None,
     folder_name=None,
 ):
     """Publish a cache folder the way the layout generator does.
 
     Returns its FASTA, network, folder, cache path, manifest ID and canonical
-    headers. A top-edge percentage or a UMAP neighbour count replaces the
-    similarity threshold, as it does in the generator.
+    headers. A top-edge percentage, a UMAP neighbour count or a PaCMAP
+    neighbour count replaces the similarity threshold, as it does in the
+    generator; a PaCMAP cache names its method in its provenance, a UMAP one
+    does not.
     """
     fasta, network, headers = write_inputs(os.path.join(root, "inputs"), raw_headers)
-    umap_mode = umap_neighbors is not None
+    pacmap = pacmap_neighbors is not None
+    umap_mode = umap_neighbors is not None or pacmap
     if umap_mode or top_edge_percent is not None:
         similarity_threshold = None
-    neighbours = umap_neighbors if umap_mode else 15
+    neighbours = umap_neighbors if umap_neighbors is not None else 15
     manifest = Cache_Manifest.build_manifest_for_files(
         fasta,
         network,
@@ -127,22 +133,23 @@ def publish_cache(
         top_edge_percent=top_edge_percent,
         similarity_threshold=similarity_threshold,
         layout_dimensions=dimensions,
+        layout_method="pacmap" if pacmap else "umap",
+        pacmap_neighbors=pacmap_neighbors or 10,
     )
     folder = os.path.join(root, folder_name or ("Network_3D" if dimensions == 3 else "Network"))
     Cache_Manifest.write_manifest_atomic(folder, manifest)
 
-    parameters = json.dumps(
-        {
-            "UMAP_MODE": umap_mode,
-            "UMAP_NEIGHBORS": neighbours,
-            "UMAP_MIN_DIST": 0.1,
-            "BOX_SCALE": 2.0,
-            "SIMILARITY_THRESHOLD": similarity_threshold,
-            "LAYOUT_DIMENSIONS": dimensions,
-        },
-        sort_keys=True,
-        separators=(",", ":"),
-    )
+    recorded = {
+        "UMAP_MODE": umap_mode,
+        "UMAP_NEIGHBORS": neighbours,
+        "UMAP_MIN_DIST": 0.1,
+        "BOX_SCALE": 2.0,
+        "SIMILARITY_THRESHOLD": similarity_threshold,
+        "LAYOUT_DIMENSIONS": dimensions,
+    }
+    if pacmap:
+        recorded.update(LAYOUT_METHOD="pacmap", PACMAP_NEIGHBORS=pacmap_neighbors)
+    parameters = json.dumps(recorded, sort_keys=True, separators=(",", ":"))
     path = os.path.join(folder, "version_00.h5")
     with h5py.File(path, "w") as handle:
         handle.attrs["cache_manifest_id"] = manifest["manifest_id"]
