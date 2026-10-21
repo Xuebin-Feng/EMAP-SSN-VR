@@ -505,6 +505,20 @@ class SharedHelperContractTests(unittest.TestCase):
         ):
             self.assertTrue(hasattr(Command_Engine, name), name)
 
+    def test_the_command_selection_helpers_are_upstreams_and_use_the_live_selection(self):
+        """select, hide and query read and leave the selection through these; VR has no command queue."""
+        import Command_Engine
+        from types import SimpleNamespace
+
+        upstream = sys.modules["_upstream_Command_Engine"]
+        self.assertIs(Command_Engine.command_selection, upstream.command_selection)
+        self.assertIs(Command_Engine.set_command_selection, upstream.set_command_selection)
+        viewer = SimpleNamespace(selected_indices=[2, 0])
+        self.assertEqual(Command_Engine.command_selection(viewer), [2, 0])
+        self.assertTrue(Command_Engine.set_command_selection(viewer, {1}))
+        self.assertEqual(viewer.selected_indices, [1])
+        self.assertEqual(Command_Engine.command_selection(SimpleNamespace()), [])
+
     def test_selection_error_is_a_value_error(self):
         """Existing `except ValueError` handlers must keep working."""
         import Command_Engine

@@ -133,6 +133,14 @@ def _coerce_node_mask(mask, n_nodes):
     return result
 
 
+# The selection a shared command reads and leaves. Upstream they follow the
+# job of the desktop Viewer's command queue, which runs a waiting command with
+# the selection it was given; VR runs every command at once, so they read and
+# write viewer.selected_indices, as the commands did before.
+command_selection = _upstream.command_selection
+set_command_selection = _upstream.set_command_selection
+
+
 def get_selected_mask(viewer):
     """Return the current selection as a stable node-length Boolean mask."""
     n_nodes = int(
