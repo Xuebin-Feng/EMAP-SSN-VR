@@ -299,9 +299,11 @@ class ConfigWindowTests(unittest.TestCase):
 class LayoutMethodTests(unittest.TestCase):
     """The Layout Method dropdown, as in the main program's Config (VR layouts are 3D).
 
-    Plot Manifold Instead (UMAP_MODE) swaps the two edge-filter fields for the manifold layout's own: UMAP's
-    neighbour count and minimum distance, or PaCMAP's neighbour count with the minimum distance greyed out.
-    The window's cache identity names the method and its neighbours, always in three dimensions.
+    SSN (the default) is the physics layout; UMAP and PaCMAP swap the two edge-filter fields for the manifold
+    layout's own: UMAP's neighbour count and minimum distance, or PaCMAP's neighbour count with the minimum
+    distance greyed out. The dropdown stands for two saved settings, UMAP_MODE and LAYOUT_METHOD: SSN is
+    UMAP_MODE off and leaves LAYOUT_METHOD as saved. The window's cache identity names the method and its
+    neighbours, always in three dimensions.
     """
 
     @classmethod
@@ -309,7 +311,11 @@ class LayoutMethodTests(unittest.TestCase):
         cls.report = report_from(
             """
             stacks = window._input_mode_stacks
-            keys = ("UMAP_NEIGHBORS", "UMAP_MIN_DIST", "PACMAP_NEIGHBORS", "LAYOUT_METHOD")
+            keys = ("UMAP_NEIGHBORS", "UMAP_MIN_DIST", "PACMAP_NEIGHBORS")
+            combo = window.cb_layout_method
+
+            def choose(choice):
+                combo.setCurrentIndex(combo.findData(choice))
 
             def page(stack):
                 widget = stack.currentWidget()
@@ -320,44 +326,86 @@ class LayoutMethodTests(unittest.TestCase):
                     "pages": [page(stack) for stack in stacks],
                     "enabled": {key: [window.inputs[key].isEnabled(), window.labels[key].isEnabled()] for key in keys},
                     "tab_visible": window.tabs.isTabVisible(2),
+                    "dropdown_enabled": [combo.isEnabled(), window.labels["LAYOUT_METHOD"].isEnabled()],
+                    "uses_manifold": window.uses_manifold_layout(),
                 }
 
+            def saved():
+                collected = window.collect_data()
+                profile = [window._widget_profile_value("UMAP_MODE"), window._widget_profile_value("LAYOUT_METHOD")]
+                carried = window.language_carry_over()["values"]
+                same = (profile == [collected["UMAP_MODE"], collected["LAYOUT_METHOD"]]
+                        == [carried["UMAP_MODE"], carried["LAYOUT_METHOD"]])
+                return profile + [same]
+
             report = {
-                "default_method": window.cb_layout_method.currentData(),
-                "method_values": [window.cb_layout_method.itemData(i) for i in range(2)],
-                "method_texts": [window.cb_layout_method.itemText(i) for i in range(2)],
+                "default_choice": combo.currentData(),
+                "values": [combo.itemData(i) for i in range(combo.count())],
+                "texts": [combo.itemText(i) for i in range(combo.count())],
                 "pacmap_range": [window.spin_pacmap_k.minimum(), window.spin_pacmap_k.maximum(),
                                  window.spin_pacmap_k.value()],
-                "switch_label": window.labels["UMAP_MODE"].text(),
-                "method_label": window.labels["LAYOUT_METHOD"].text(),
+                "label": window.labels["LAYOUT_METHOD"].text(),
+                "old_switch": [hasattr(window, "check_umap"), "UMAP_MODE" in window.labels,
+                               "UMAP_MODE" in window.inputs],
+                "in_filter_row": combo.parentWidget().objectName(),
+                "default_saved": saved(),
                 "physics": state(),
             }
-            window.check_umap.setChecked(True)
+            choose("umap")
             report["umap"] = state()
-            window.cb_layout_method.setCurrentIndex(window.cb_layout_method.findData("pacmap"))
+            report["umap_saved"] = saved()
+            choose("pacmap")
             window.spin_pacmap_k.setValue(21)
             report["pacmap"] = state()
+            report["pacmap_saved"] = saved()
             report["cache_settings"] = window._cache_setting_values()
             collected = window.collect_data()
             report["collected"] = [collected["LAYOUT_METHOD"], collected["PACMAP_NEIGHBORS"]]
+            # SSN leaves the method it last showed.
+            choose("ssn")
+            report["ssn_after_pacmap"] = saved()
+            report["ssn_cache"] = window._cache_setting_values()
+            choose("umap")
+            choose("ssn")
+            report["ssn_after_umap"] = saved()
+            # Profiles, in either order.
+            defaults = dict(namespace["TAB_PROFILE_SPECS"]["inputs_outputs"]["defaults"])
+            report["profile_defaults"] = [defaults["UMAP_MODE"], defaults["LAYOUT_METHOD"], defaults["PACMAP_NEIGHBORS"]]
+            orders = []
+            for mode, method in ((True, "pacmap"), (True, "umap"), (False, "pacmap"), (False, "umap")):
+                for order in (("UMAP_MODE", "LAYOUT_METHOD"), ("LAYOUT_METHOD", "UMAP_MODE")):
+                    choose("pacmap" if method == "umap" else "umap")
+                    values = {"UMAP_MODE": mode, "LAYOUT_METHOD": method}
+                    for key in order:
+                        window._set_widget_profile_value(key, values[key])
+                    orders.append([mode, method, list(order), combo.currentData(), saved()[:2]])
+            report["orders"] = orders
+            window._apply_profile_data("inputs_outputs", dict(defaults))
+            report["after_defaults"] = [combo.currentData(), saved()]
             report["tips"] = {key: bool(window.tip_db_keys[key].summary) for key in
-                              ("UMAP_MODE", "LAYOUT_METHOD", "PACMAP_NEIGHBORS", "UMAP_MIN_DIST")}
-            report["profile_defaults"] = [namespace["TAB_PROFILE_SPECS"]["inputs_outputs"]["defaults"][key]
-                                          for key in ("LAYOUT_METHOD", "PACMAP_NEIGHBORS")]
+                              ("LAYOUT_METHOD", "PACMAP_NEIGHBORS", "UMAP_MIN_DIST")}
+            report["tip_options"] = [option.value for option in window.tip_db_keys["LAYOUT_METHOD"].options]
+            from desktop.Tip_Panel import resolve
+            tip_facts = dict(resolve(window.tip_db[combo]).facts)
+            report["tip_facts"] = [tip_facts["Default"], tip_facts["Setting"]]
+            report["no_umap_mode_tip"] = "UMAP_MODE" not in window.tip_db_keys
+            report["profile_defaults_check"] = [defaults["UMAP_MODE"], defaults["LAYOUT_METHOD"]]
             print("@@" + json.dumps(report))
             """
         )
 
     def test_the_dropdown_and_the_neighbour_field(self):
         report = self.report
-        self.assertEqual((report["default_method"], report["method_values"]), ("umap", ["umap", "pacmap"]))
-        self.assertEqual(report["method_texts"], ["UMAP", "PaCMAP"])
+        self.assertEqual((report["default_choice"], report["values"]), ("ssn", ["ssn", "umap", "pacmap"]))
+        self.assertEqual(report["texts"], ["SSN", "UMAP", "PaCMAP"])
         self.assertEqual(report["pacmap_range"], [2, 50, 10])
-        self.assertEqual((report["switch_label"], report["method_label"]),
-                         ("Plot Manifold Instead:", "Layout Method:"))
-        self.assertEqual(report["profile_defaults"], ["umap", 10])
+        self.assertEqual(report["label"], "Layout Method:")
+        self.assertEqual(report["profile_defaults"], [False, "umap", 10])
+        self.assertEqual(report["in_filter_row"], "filterRow")
+        # The switch and the row under the filters are gone.
+        self.assertEqual(report["old_switch"], [False, False, False])
 
-    def test_each_mode_shows_and_enables_its_own_fields(self):
+    def test_each_choice_shows_and_enables_its_own_fields(self):
         report = self.report
         self.assertEqual(report["physics"]["pages"][0], "Similarity Threshold:")
         self.assertEqual(report["umap"]["pages"][0], "UMAP Nearest Neighbors:")
@@ -366,21 +414,168 @@ class LayoutMethodTests(unittest.TestCase):
         pair = lambda value: [value, value]          # noqa: E731
         self.assertEqual(report["physics"]["enabled"], {key: pair(False) for key in report["physics"]["enabled"]})
         self.assertEqual(report["umap"]["enabled"], {"UMAP_NEIGHBORS": pair(True), "UMAP_MIN_DIST": pair(True),
-                                                      "PACMAP_NEIGHBORS": pair(False), "LAYOUT_METHOD": pair(True)})
+                                                      "PACMAP_NEIGHBORS": pair(False)})
         self.assertEqual(report["pacmap"]["enabled"], {"UMAP_NEIGHBORS": pair(False), "UMAP_MIN_DIST": pair(False),
-                                                        "PACMAP_NEIGHBORS": pair(True), "LAYOUT_METHOD": pair(True)})
+                                                        "PACMAP_NEIGHBORS": pair(True)})
         self.assertTrue(report["physics"]["tab_visible"])
         self.assertFalse(report["umap"]["tab_visible"])
         self.assertFalse(report["pacmap"]["tab_visible"])
+        self.assertEqual([report[name]["uses_manifold"] for name in ("physics", "umap", "pacmap")],
+                         [False, True, True])
+        # The dropdown is never greyed: it is how a layout is chosen.
+        for name in ("physics", "umap", "pacmap"):
+            self.assertEqual(report[name]["dropdown_enabled"], [True, True], name)
+
+    def test_each_choice_is_saved_as_the_two_settings(self):
+        report = self.report
+        # (UMAP_MODE, LAYOUT_METHOD, every route agrees)
+        self.assertEqual(report["default_saved"], [False, "umap", True])
+        self.assertEqual(report["umap_saved"], [True, "umap", True])
+        self.assertEqual(report["pacmap_saved"], [True, "pacmap", True])
+        self.assertEqual(report["collected"], ["pacmap", "21"])
+        # SSN leaves LAYOUT_METHOD as it last was.
+        self.assertEqual(report["ssn_after_pacmap"], [False, "pacmap", True])
+        self.assertEqual(report["ssn_after_umap"], [False, "umap", True])
+        self.assertEqual(report["after_defaults"], ["ssn", [False, "umap", True]])
+
+    def test_a_profile_is_applied_whatever_order_its_two_settings_arrive_in(self):
+        for mode, method, order, shown, saved in self.report["orders"]:
+            with self.subTest(mode=mode, method=method, order=order):
+                self.assertEqual(shown, method if mode else "ssn")
+                self.assertEqual(saved, [mode, method])
 
     def test_the_cache_identity_names_the_method_and_stays_three_dimensional(self):
         settings = self.report["cache_settings"]
         self.assertEqual((settings["umap_mode"], settings["layout_method"], settings["pacmap_neighbors"],
                           settings["layout_dimensions"]), (True, "pacmap", 21, 3))
-        self.assertEqual(self.report["collected"], ["pacmap", "21"])
+        # SSN is a physics cache whatever method it remembers.
+        ssn = self.report["ssn_cache"]
+        self.assertEqual((ssn["umap_mode"], ssn["layout_dimensions"], ssn["layout_method"]), (False, 3, "pacmap"))
 
-    def test_every_new_field_has_a_tip(self):
+    def test_the_one_tip_explains_all_three_choices(self):
         self.assertEqual(set(self.report["tips"].values()), {True})
+        self.assertEqual(self.report["tip_options"], ["ssn", "umap", "pacmap"])
+        self.assertTrue(self.report["no_umap_mode_tip"])
+        # The field it describes starts as SSN and holds both settings.
+        self.assertEqual(self.report["tip_facts"], ["SSN", "UMAP_MODE, LAYOUT_METHOD"])
+
+
+class LayoutMethodColumnTests(unittest.TestCase):
+    """Alignment Offset and Layout Method share the last column of the aligned rows.
+
+    Their labels start at one x, their fields share one left edge and one width, and the dropdown keeps room for
+    PaCMAP in full. Stacked, both span the row like the other fields.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.report = report_from(
+            """
+            from PySide6.QtCore import QPoint
+            from PySide6.QtWidgets import QComboBox, QLabel, QWidget
+            window.show()
+
+            def flush():
+                for _ in range(4):
+                    app.processEvents()
+
+            def resize_panel(width):
+                window.resize(width + 360, 850)
+                window.main_split.setSizes([width + 4, 326])
+                flush()
+                delta = width - window.tabs.currentWidget().width()
+                left, right = window.main_split.sizes()
+                window.main_split.setSizes([left + delta, right - delta])
+                flush()
+
+            window.tabs.setCurrentIndex(0)
+            page = window.tabs.currentWidget().widget()
+            x = lambda widget: widget.mapTo(page, QPoint(0, 0)).x()
+            right = lambda widget: widget.mapTo(page, QPoint(widget.width(), 0)).x()
+            offset, offset_label = window.spin_alignment_offset, window.lbl_alignment_offset
+            combo, combo_label = window.cb_layout_method, window.labels["LAYOUT_METHOD"]
+            reference = QComboBox(page)
+            reference.addItem("PaCMAP")
+            reference.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContents)
+            aligned = [window.findChild(QWidget, name) for name in
+                       ("alignmentModeRow", "alignmentReferenceRow", "filterRow")]
+            rows = []
+            for width in (1400, 1200, 1000, 800, 600, 1400):
+                resize_panel(width)
+                rows.append({
+                    "width": width,
+                    "stacked": bool(offset.parentWidget().property("stacked")),
+                    "label_x": [x(offset_label), x(combo_label)],
+                    "label_widths": [offset_label.width(), combo_label.width()],
+                    "label_fits": [offset_label.width() >= offset_label.sizeHint().width(),
+                                   combo_label.width() >= combo_label.sizeHint().width()],
+                    "field_x": [x(offset), x(combo)],
+                    "field_widths": [offset.width(), combo.width()],
+                    "field_rights": [right(offset), right(combo), right(window.line_ref)],
+                    "dropdown_room": combo.width() >= reference.sizeHint().width(),
+                })
+            natural = max(QLabel(offset_label.text()).sizeHint().width(), QLabel(combo_label.text()).sizeHint().width())
+            facts = {
+                "label_natural": natural,
+                "contents_length": [combo.minimumContentsLength(), namespace["LAYOUT_METHOD_MINIMUM_CHARACTERS"]],
+                "minimum": combo.minimumSizeHint().width(),
+                "needed": reference.sizeHint().width(),
+                "offset_minimum": offset.minimumSizeHint().width(),
+                "full_layout_minimum": [row.layout()._wide_width() for row in aligned],
+            }
+            window.resize(0, 850)
+            window.main_split.setSizes([sum(window.main_split.sizes()), 0])
+            flush()
+            facts["narrowest_widths"] = [row.width() for row in aligned]
+            facts["narrowest_stacked"] = [bool(row.property("stacked")) for row in aligned]
+            facts["at_window_minimum"] = window.width() == window.minimumWidth()
+            facts["narrowest_dropdown_room"] = combo.width() >= reference.sizeHint().width()
+            print("@@" + json.dumps({"rows": rows, "facts": facts}))
+            """
+        )
+
+    def test_the_labels_start_at_one_x_and_the_fields_share_a_left_edge_and_a_width_while_wide(self):
+        wide = [row for row in self.report["rows"] if not row["stacked"]]
+        self.assertTrue(wide)
+        for row in wide:
+            with self.subTest(width=row["width"]):
+                self.assertEqual(len(set(row["label_x"])), 1, row["label_x"])
+                self.assertEqual(len(set(row["label_widths"])), 1, row["label_widths"])
+                self.assertEqual(len(set(row["field_x"])), 1, row["field_x"])
+                self.assertEqual(len(set(row["field_widths"])), 1, row["field_widths"])
+                self.assertEqual(len(set(row["field_rights"][:2])), 1)
+                self.assertTrue(all(row["label_fits"]), row["label_fits"])
+                # Only as wide as it needs to be: the label, and the dropdown's minimum.
+                self.assertEqual(row["label_widths"][0], self.report["facts"]["label_natural"])
+                self.assertEqual(row["field_widths"][0], self.report["facts"]["minimum"])
+
+    def test_the_dropdown_shows_pacmap_in_full_at_every_width(self):
+        facts = self.report["facts"]
+        self.assertGreaterEqual(facts["minimum"], facts["needed"])
+        self.assertLess(facts["minimum"] - facts["needed"], 8)      # no more than needed
+        # It was given its own length before anything measured it, and kept it.
+        self.assertEqual(facts["contents_length"][0], facts["contents_length"][1])
+        self.assertGreaterEqual(facts["minimum"], facts["offset_minimum"])
+        for row in self.report["rows"]:
+            self.assertTrue(row["dropdown_room"], row["width"])
+        self.assertTrue(facts["narrowest_dropdown_room"])
+
+    def test_stacked_rows_span_the_row_with_both_fields(self):
+        stacked = [row for row in self.report["rows"] if row["stacked"]]
+        self.assertTrue(stacked)
+        for row in stacked:
+            with self.subTest(width=row["width"]):
+                self.assertEqual(len(set(row["field_rights"])), 1, row["field_rights"])
+                self.assertEqual(len(set(row["field_x"])), 1, row["field_x"])
+                self.assertTrue(all(row["label_fits"]))
+
+    def test_the_rows_stay_side_by_side_in_the_narrowest_window_without_the_report(self):
+        facts = self.report["facts"]
+        self.assertEqual(len(set(facts["full_layout_minimum"])), 1, facts["full_layout_minimum"])
+        for width in facts["narrowest_widths"]:
+            self.assertLessEqual(facts["full_layout_minimum"][0], width)
+        self.assertTrue(facts["at_window_minimum"])
+        self.assertEqual(facts["narrowest_stacked"], [False, False, False])
 
 
 class EmbeddingRootTests(unittest.TestCase):
@@ -1144,6 +1339,7 @@ class AlignmentOffsetTests(unittest.TestCase):
                     "label_fits": label.width() >= label.sizeHint().width(),
                     "offset_width": offset.width(),
                     "offset_minimum": offset.minimumSizeHint().width(),
+                    "dropdown_width": window.cb_layout_method.width(),
                     "rights": [right(offset), right(window.line_ref),
                                right(window.spin_min_occ)],
                 })
@@ -1175,12 +1371,14 @@ class AlignmentOffsetTests(unittest.TestCase):
                 if stacked:
                     self.assertEqual(len(set(row["rights"])), 1, row["rights"])
                 else:
-                    # Its minimum, which has room for a sign and a few digits.
-                    self.assertEqual(row["offset_width"], row["offset_minimum"])
+                    # As wide as the Layout Method dropdown under it, whose minimum (room for PaCMAP)
+                    # is wider than its own: room for a sign and a few digits.
+                    self.assertEqual(row["offset_width"], row["dropdown_width"])
+                    self.assertGreaterEqual(row["offset_width"], row["offset_minimum"])
 
     def test_rows_stay_side_by_side_in_the_narrowest_window_without_the_report(self):
         # The fields stay side by side down to the width they need, which the
-        # narrowest window has room for: 772 px with Windows' unhinted text.
+        # narrowest window has room for: 798 px with Windows' unhinted text.
         minima = self.report["full_layout_minimum"]
         self.assertEqual(len(set(minima)), 1, minima)
         for width in self.report["narrowest_widths"]:
@@ -1659,7 +1857,9 @@ class TextSizedControlsTests(unittest.TestCase):
 
     def test_every_switch_fits_both_texts_and_keeps_its_size(self):
         switches = self.report["switches"]
-        self.assertEqual(len(switches), 5)
+        # Layout Method is a dropdown, no switch, so there is one fewer than before it replaced
+        # the Plot Manifold Instead switch.
+        self.assertEqual(len(switches), 4)
         for switch in switches:
             with self.subTest(texts=switch["texts"]):
                 self.assertTrue(switch["toggle_switch"])

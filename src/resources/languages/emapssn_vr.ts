@@ -82,7 +82,7 @@
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <source>Uses a manifold method (UMAP or PaCMAP, chosen by Layout Method) to compute the 3D coordinates directly from each node&apos;s strongest edges, instead of simulating physics.</source>
+        <source>How the 3D coordinates are computed: SSN simulates physics, while UMAP and PaCMAP compute them directly from each node&apos;s strongest edges.</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
