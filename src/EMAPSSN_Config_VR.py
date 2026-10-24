@@ -28,9 +28,11 @@ if __name__ == "__main__":
     _bootstrap_vr.require_windows("The EMAP-SSN VR Configuration GUI")
 
 if __name__ == "__main__":
-    # Before any output: the desktop launcher and MCP give this process a log file or a pipe.
-    from utilities.Output_Streams import configure_output_streams
-    configure_output_streams()
+    # Before any output: keep what this process prints for its Console window, and pass it on to
+    # a pipe or file that is read (utilities.Console_Capture). A headless run, or --console, only
+    # gets UTF-8 streams.
+    from utilities.Console_Capture import start as start_console_capture
+    start_console_capture("vr-config")
 if __name__ == "__main__" and "--headless" in sys.argv:
     from utilities.Headless_Settings import main as headless_main
     raise SystemExit(headless_main("config"))
@@ -48,6 +50,7 @@ import traceback
 from pathlib import Path
 from utilities.Localization import QT_TRANSLATE_NOOP, JoinedMessage, Message, display_text
 from utilities.Terminal_Launcher import HoldMode, launch_in_terminal
+from utilities.Console_Capture import install_qt_message_handler
 from desktop.Desktop_App import (
     APPLICATION_VERSION,
     CONFIG_DISPLAY_NAME,
@@ -1527,7 +1530,9 @@ if __name__ == "__main__":
             if icon_path:
                 self.setWindowIcon(QIcon(icon_path))
                 
-            self.resize(1000, 650)
+            # 1000 px, and the room of the Console button in the language row (its icon and gap), so the
+            # form keeps the width it had before the button.
+            self.resize(1044, 650)
             
             self.central_widget = QWidget()
             self.setCentralWidget(self.central_widget)
@@ -5506,6 +5511,7 @@ if __name__ == "__main__":
 
     existing_qt_application = QApplication.instance()
     app = existing_qt_application or QApplication(sys.argv)
+    install_qt_message_handler()  # Qt's warnings reach the Console tagged; a no-op without a capture
     app.setApplicationVersion(APPLICATION_VERSION)
     try:
         install_translations(app, startup_language(), extra_catalogs=VR_TRANSLATION_CATALOGS)

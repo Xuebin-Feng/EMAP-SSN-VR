@@ -170,6 +170,10 @@ def run_gui_script(body, project_root=None, pseudo_translation=False):
         environment["SSN_PSEUDO_TRANSLATION"] = "1"
     # The language setting, too, comes from the throwaway project.
     environment["SSN_APP_SETTINGS_PATH"] = os.path.join(project_root, "app_settings.json")
+    # The entry point's first step keeps what the process prints for the Console window, in a log under the
+    # checkout's temp/logs: not for a script that only borrows the GUI's main block, or every test would write
+    # one there (and push the real logs out of the ten kept).
+    environment["SSN_NO_CONSOLE_CAPTURE"] = "1"
     # Whatever the GUI or `body` makes with tempfile (scripts call mkdtemp for their fixture
     # folders) lands in a folder removed after the run, not in the user's temporary folder.
     with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as scratch:
@@ -305,6 +309,65 @@ class ConfigWindowTests(unittest.TestCase):
             self.report["settings_file"].endswith("viewer_settings_vr.json"),
             self.report["settings_file"],
         )
+
+
+class ConsoleTests(unittest.TestCase):
+    """The Console: VR Config keeps what it prints for the Console window, and its language row has the button.
+
+    The window, its capture and the button are the main program's (utilities/Console_Capture.py,
+    desktop/Console_View.py, Desktop_App.language_selector_row), which VR Config shares; what
+    VR Config adds is that its entry point starts the capture, before anything prints, and
+    routes Qt's messages through it.
+    """
+
+    def test_the_entry_point_starts_the_capture_before_anything_else_prints(self):
+        import ast
+
+        path = os.path.join(VR_SRC, "EMAPSSN_Config_VR.py")
+        with open(path, encoding="utf-8") as handle:
+            source = handle.read()
+        calls = [
+            node for node in ast.walk(ast.parse(source))
+            if isinstance(node, ast.Call) and getattr(node.func, "id", None) == "start_console_capture"
+        ]
+        self.assertEqual([ast.literal_eval(call.args[0]) for call in calls], ["vr-config"])
+        # Ahead of every import the window needs, so what they print is kept too.
+        self.assertLess(source.index('start_console_capture("vr-config")'), source.index("# Import Libraries"))
+        # It replaces the plain UTF-8 setup; headless runs get that from start() itself.
+        self.assertNotIn("configure_output_streams()", source)
+        self.assertEqual(source.count("install_qt_message_handler()"), 1)
+
+    def test_a_script_that_borrows_the_guis_main_block_writes_no_log_into_the_checkout(self):
+        # run_gui_script runs the main block hundreds of times: each run would leave a console log
+        # in the checkout's temp/logs and push the real ones out of the ten that are kept.
+        logs = os.path.join(_bootstrap_vr.PROJECT_ROOT, "temp", "logs")
+
+        def listing():
+            return set(os.listdir(logs)) if os.path.isdir(logs) else set()
+
+        before = listing()
+        report = report_from('print("@@" + json.dumps({"title": window.windowTitle()}))')
+        self.assertTrue(report["title"])
+        self.assertEqual(listing() - before, set())
+
+    def test_the_language_row_has_the_console_button(self):
+        report = report_from(
+            """
+            from PySide6.QtWidgets import QPushButton
+            button = window.findChild(QPushButton, "consoleButton")
+            selector = window.language_selector
+            print("@@" + json.dumps({
+                "name": button.accessibleName() if button else None,
+                "text": button.text() if button else None,
+                "icon": bool(button and not button.icon().isNull()),
+                "tooltip": bool(button and button.toolTip()),
+                "beside_the_language": bool(button and button.parentWidget() is selector.parentWidget()),
+            }))
+            """
+        )
+        # Icon only, so the row stays narrow (desktop.Console_View.console_button).
+        self.assertEqual(report, {"name": "Console", "text": "", "icon": True, "tooltip": True,
+                                  "beside_the_language": True})
 
 
 class LayoutMethodTests(unittest.TestCase):
