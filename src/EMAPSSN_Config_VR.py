@@ -52,11 +52,13 @@ from utilities.Localization import QT_TRANSLATE_NOOP, JoinedMessage, Message, di
 from utilities.Terminal_Launcher import HoldMode, launch_in_terminal
 from utilities.Console_Capture import install_qt_message_handler
 from desktop.Desktop_App import (
+    APP_USER_MODEL_IDS,
     APPLICATION_VERSION,
     CONFIG_DISPLAY_NAME,
     VIEWER_DISPLAY_NAME,
     VIEWER_DESKTOP_FILE_NAME,
     configure_linux_qt_desktop_identity,
+    set_app_user_model_id,
 )
 from Layout_Cache_Generator import LayoutGenerationSettings
 import Player_Build_VR
@@ -5509,6 +5511,7 @@ if __name__ == "__main__":
         def save_only(self):
             self.save_settings()
 
+    set_app_user_model_id(APP_USER_MODEL_IDS["vr_config"])  # before the first window: the taskbar says EMAP-SSN
     existing_qt_application = QApplication.instance()
     app = existing_qt_application or QApplication(sys.argv)
     install_qt_message_handler()  # Qt's warnings reach the Console tagged; a no-op without a capture

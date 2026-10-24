@@ -350,6 +350,18 @@ class ConsoleTests(unittest.TestCase):
         self.assertTrue(report["title"])
         self.assertEqual(listing() - before, set())
 
+    def test_the_process_sets_its_own_taskbar_identity_before_its_first_window(self):
+        import ast
+
+        path = os.path.join(VR_SRC, "EMAPSSN_Config_VR.py")
+        with open(path, encoding="utf-8") as handle:
+            source = handle.read()
+        calls = [node for node in ast.walk(ast.parse(source)) if isinstance(node, ast.Call)
+                 and getattr(node.func, "id", None) == "set_app_user_model_id"]
+        self.assertEqual([ast.unparse(call.args[0]) for call in calls], ["APP_USER_MODEL_IDS['vr_config']"])
+        self.assertLess(source.index('set_app_user_model_id(APP_USER_MODEL_IDS["vr_config"])'),
+                        source.index("app = existing_qt_application or QApplication(sys.argv)"))
+
     def test_the_language_row_has_the_console_button(self):
         report = report_from(
             """
