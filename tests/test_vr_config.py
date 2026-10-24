@@ -312,10 +312,9 @@ class ConfigWindowTests(unittest.TestCase):
 
 
 class ConsoleTests(unittest.TestCase):
-    """The Console: VR Config keeps what it prints for the Console window, and its language row has the button.
+    """VR Config keeps what it prints (temp/logs), as the other windows do; it has no Console window or button.
 
-    The window, its capture and the button are the main program's (utilities/Console_Capture.py,
-    desktop/Console_View.py, Desktop_App.language_selector_row), which VR Config shares; what
+    The capture is the main program's (utilities/Console_Capture.py), which VR Config shares; what
     VR Config adds is that its entry point starts the capture, before anything prints, and
     routes Qt's messages through it.
     """
@@ -362,24 +361,22 @@ class ConsoleTests(unittest.TestCase):
         self.assertLess(source.index('set_app_user_model_id(APP_USER_MODEL_IDS["vr_config"])'),
                         source.index("app = existing_qt_application or QApplication(sys.argv)"))
 
-    def test_the_language_row_has_the_console_button(self):
+    def test_the_footer_has_no_console_button_and_the_dropdown_has_its_full_width(self):
         report = report_from(
             """
             from PySide6.QtWidgets import QPushButton
-            button = window.findChild(QPushButton, "consoleButton")
             selector = window.language_selector
+            row_parent = selector.parentWidget()
             print("@@" + json.dumps({
-                "name": button.accessibleName() if button else None,
-                "text": button.text() if button else None,
-                "icon": bool(button and not button.icon().isNull()),
-                "tooltip": bool(button and button.toolTip()),
-                "beside_the_language": bool(button and button.parentWidget() is selector.parentWidget()),
+                "console_buttons": len(window.findChildren(QPushButton, "consoleButton")),
+                "least": selector.minimumSizeHint().width(),
+                "preferred": selector.sizeHint().width(),
             }))
             """
         )
-        # Icon only, so the row stays narrow (desktop.Console_View.console_button).
-        self.assertEqual(report, {"name": "Console", "text": "", "icon": True, "tooltip": True,
-                                  "beside_the_language": True})
+        # VR Config shows no Console window: what it prints is kept in temp/logs, and the footer is the one it had.
+        self.assertEqual(report["console_buttons"], 0)
+        self.assertEqual(report["least"], report["preferred"])
 
 
 class LayoutMethodTests(unittest.TestCase):
