@@ -51,6 +51,7 @@ if VR_SRC not in sys.path:
     sys.path.insert(0, VR_SRC)
 
 import _bootstrap_vr  # noqa: E402
+from tests import DESKTOP_OPENERS  # noqa: E402
 
 #: This checkout's own settings files, which belong to whoever runs the suite.
 #: No GUI script may read or write them.
@@ -115,6 +116,13 @@ def run_gui_script(body, project_root=None, pseudo_translation=False):
         import json, os, runpy, sys
         os.environ["QT_QPA_PLATFORM"] = "offscreen"
         sys.path.insert(0, {vr_src!r})
+        # The main suite's guard: nothing the GUI does may open a folder, a page or a console.
+        if {openers!r}:
+            import importlib.util
+            _spec = importlib.util.spec_from_file_location("desktop_openers", {openers!r})
+            _openers_module = importlib.util.module_from_spec(_spec)
+            _spec.loader.exec_module(_openers_module)
+            _openers_module.install()
         import _bootstrap_vr  # puts the parent src tree on sys.path
         # The GUI derives its own paths from these two when it is loaded.
         _bootstrap_vr.PROJECT_ROOT = {project_root!r}
@@ -143,7 +151,7 @@ def run_gui_script(body, project_root=None, pseudo_translation=False):
             app.processEvents()
         """
     ).format(
-        vr_src=VR_SRC, project_root=project_root, opt_vr=working_directory
+        vr_src=VR_SRC, project_root=project_root, opt_vr=working_directory, openers=DESKTOP_OPENERS
     ) + textwrap.dedent(body) + textwrap.dedent(
         """
         window.close()
@@ -176,6 +184,9 @@ def run_gui_script(body, project_root=None, pseudo_translation=False):
         raise AssertionError(
             f"GUI subprocess failed:\n{result.stdout}\n{result.stderr}"
         )
+    if "Desktop openers reached" in result.stderr:
+        # The guard printed it as the process ended: the GUI asked the desktop to open something.
+        raise AssertionError(f"The GUI script reached the desktop:\n{result.stderr}")
     return result.stdout
 
 
