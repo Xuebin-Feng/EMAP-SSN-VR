@@ -16,11 +16,17 @@ REM limitations under the License.
 REM
 REM Visible desktop startup terminal for the EMAP-SSN VR Configuration GUI.
 REM
-REM The VR counterpart of the parent's src\bin\EMAPSSN_Desktop_Launcher.bat, and the target
-REM of the "EMAP-SSN VR" shortcut. The terminal stays visible only while there
-REM is something to report - dependency setup, or a startup failure - and
-REM closes itself as soon as the Qt window signals that it is on screen, so a
-REM healthy launch leaves no console behind.
+REM The VR counterpart of the parent's src\bin\EMAPSSN_Desktop_Launcher.bat. The terminal
+REM stays visible only while there is something to report - dependency setup, or a
+REM startup failure - and closes itself as soon as the Qt window signals that it is
+REM on screen, so a healthy launch leaves no console behind.
+REM
+REM The "EMAP-SSN VR" shortcut starts "EMAP-SSN.exe vr" instead (install_vr.bat), which
+REM shows the start-up splash through Desktop_Launcher_VR.py and opens no console at all.
+REM This file is its console path: the shortcut of an installation that could not build
+REM EMAP-SSN.exe, the first start (it creates the environment, which needs a console to
+REM show what it does), "EMAP-SSN.exe vr --console", and a launcher that failed before
+REM it showed anything. It does everything the splash does, in this console.
 setlocal EnableDelayedExpansion
 call :SANITIZE_MANAGED_ENVIRONMENT
 
@@ -93,7 +99,7 @@ if not exist "!STATE_DIR!" (
 )
 
 echo Launching the Qt window...
-"!VENV_PYTHON!" -u "!LAUNCH_MONITOR!" --launch-and-wait "!STATE_DIR!"
+"!VENV_PYTHON!" -u "!LAUNCH_MONITOR!" --launch-and-wait vr "!STATE_DIR!"
 set "LAUNCH_RESULT=!ERRORLEVEL!"
 if !LAUNCH_RESULT! equ 0 goto GUI_READY
 if !LAUNCH_RESULT! equ 20 goto GUI_EXITED

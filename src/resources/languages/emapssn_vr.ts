@@ -144,4 +144,19 @@
         <translation type="unfinished"></translation>
     </message>
 </context>
+<context>
+    <name>Splash</name>
+    <message>
+        <source>VR Configuration</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Checking VR hardware…</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>EMAP-SSN VR Configuration will still open, but a headset may not work on this machine.</source>
+        <translation type="unfinished"></translation>
+    </message>
+</context>
 </TS>

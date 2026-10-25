@@ -4,7 +4,7 @@
 <context>
     <name>Config</name>
     <message>
-        <location filename="../../../EMAPSSN_Config_VR.py" line="+70"/>
+        <location filename="../../../EMAPSSN_Config_VR.py" line="+76"/>
         <source>EMAP-SSN VR Configuration</source>
         <extracomment>This window configures the VR front end, so it names itself accordingly rather than borrowing the desktop program&apos;s display names.</extracomment>
         <translation type="unfinished">EMAP-SSN VR 配置</translation>
@@ -91,7 +91,7 @@ Serves as the layout cache to avoid recalculating layouts when reopening network
 作为布局缓存，重新打开网络时无需重新计算布局。</translation>
     </message>
     <message>
-        <location line="+2412"/>
+        <location line="+2413"/>
         <source>Folder containing the VR client (`EMAP-SSN-VR.exe`). Relative paths start in opt_vr.</source>
         <extracomment>Layout dimensionality is fixed: the VR viewer has no 2D mode, exactly as the desktop viewer has no 3D one. Settings that belong to the Python/VR client bridge. The desktop program has no equivalent, so they are declared here rather than in the shared schema. Settings the desktop viewer draws but the VR client does not. Keeping a control for them would invite tuning something with no effect: nothing in the VR runtime reads any of these, and no shared command does either. The bridge settings sit on the Visual Effects tab, so they share its profile group rather than forming one of their own.</extracomment>
         <translation type="unfinished">存放 VR 客户端（`EMAP-SSN-VR.exe`）的文件夹。相对路径从 opt_vr 开始。</translation>
@@ -244,7 +244,7 @@ Serves as the layout cache to avoid recalculating layouts when reopening network
 <context>
     <name>Message</name>
     <message>
-        <location line="-4756"/>
+        <location line="-4757"/>
         <source>No VR client is installed in this folder (vr_client.json is missing or unreadable). Save &amp; Run downloads the pinned release into player/, as install_vr.bat does; or choose the folder that holds EMAP-SSN-VR.exe.</source>
         <extracomment>VR Config&apos;s own texts are in opt_vr&apos;s catalog, emapssn_vr; the texts it shares with the desktop Config come from the main catalog. The window and taskbar icon is opt_vr&apos;s own logo, the parent&apos;s Config logo with a VR headset. The parent&apos;s Config logo stands in if it is missing. The VR client connection tooltip. The viewer passes VR Client Host and Port to the client it launches, so the two ends always agree; the endpoint recorded in the build is only where a client started by hand dials. The notes are Messages: str() is English, and the window shows display_text().</extracomment>
         <translation type="unfinished">此文件夹中没有安装 VR 客户端（vr_client.json 不存在或无法读取）。“保存并运行”会像 install_vr.bat 一样把指定版本下载到 player/ 中；也可以选择存放 EMAP-SSN-VR.exe 的文件夹。</translation>
@@ -265,6 +265,24 @@ Serves as the layout cache to avoid recalculating layouts when reopening network
         <location line="+2"/>
         <source>Started by hand, it dials its default {host}:{port} instead.</source>
         <translation type="unfinished">如果手动启动，它会改为连接默认的 {host}:{port}。</translation>
+    </message>
+</context>
+<context>
+    <name>Splash</name>
+    <message>
+        <location filename="../../../bin/Desktop_Launcher_VR.py" line="+75"/>
+        <source>VR Configuration</source>
+        <translation type="unfinished">VR 配置</translation>
+    </message>
+    <message>
+        <location line="+1"/>
+        <source>Checking VR hardware…</source>
+        <translation type="unfinished">正在检查 VR 硬件…</translation>
+    </message>
+    <message>
+        <location line="+1"/>
+        <source>EMAP-SSN VR Configuration will still open, but a headset may not work on this machine.</source>
+        <translation type="unfinished">EMAP-SSN VR 配置仍会打开，但头显在这台电脑上可能无法使用。</translation>
     </message>
 </context>
 </TS>

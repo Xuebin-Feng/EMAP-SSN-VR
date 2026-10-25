@@ -16,17 +16,21 @@
 """Tests for VR installation, environment validation and desktop launching.
 
 The VR front end reaches the user the same way the main program does: an
-installer writes a shortcut, the shortcut opens a visible terminal that
-validates the managed environment, and that terminal closes itself once the Qt
-window reports it is on screen. These tests pin the three things that are easy
-to break silently:
+installer writes a shortcut, the shortcut starts EMAP-SSN.exe (no console, a
+splash), and the batch file that used to be the shortcut's target is the
+console path: it validates the managed environment in a visible terminal that
+closes itself once the Qt window reports it is on screen. These tests pin the
+things that are easy to break silently:
 
 * the launchers reuse the parent's environment and locking rather than carrying
   a second copy of it,
 * the startup handshake uses the same file names and exit codes as upstream, so
   a change there is caught here instead of at a user's desktop, and
-* every VR entry point refuses to run off Windows.
+* every VR entry point refuses to run off Windows, and
+* the monitor is upstream's with the VR window registered.
 
+(The installer is test_vr_installer; the launch itself, the splash and its
+hardware step, is test_vr_launch_kind.)
 They are file- and API-level checks. The end-to-end launch needs a real Qt
 window and a real desktop session, so it is not asserted here.
 """
@@ -54,6 +58,7 @@ BIN_DIR = VR_SRC / "bin"
 INSTALLER = OPT_VR / "install_vr.bat"
 PORTABLE_LAUNCHER = BIN_DIR / "EMAPSSN_VR.bat"
 DESKTOP_LAUNCHER = BIN_DIR / "EMAPSSN_Desktop_Launcher_VR.bat"
+VR_LAUNCHER = BIN_DIR / "Desktop_Launcher_VR.py"
 UPSTREAM_LAUNCHER = PROJECT_ROOT / "src" / "bin" / "EMAPSSN.bat"
 
 
@@ -105,6 +110,7 @@ class WindowsOnlyTests(unittest.TestCase):
             VR_SRC / "EMAPSSN_Config_VR.py": "The EMAP-SSN VR Configuration GUI",
             VR_SRC / "EMAPSSN_Viewer_VR.py": "The EMAP-SSN VR Viewer",
             BIN_DIR / "Desktop_Launcher_Monitor_VR.py": "The EMAP-SSN VR desktop launcher",
+            VR_LAUNCHER: "The EMAP-SSN VR desktop launcher",
         }
         for path, component in entry_points.items():
             with self.subTest(entry_point=path.name):
@@ -274,25 +280,42 @@ class LauncherMonitorTests(unittest.TestCase):
         self.assertTrue(self.monitor.VR_CONFIG_SCRIPT.is_file())
 
     def test_policy_is_imported_from_upstream_not_copied(self):
-        # Every shared helper is the upstream object, so a fix there reaches
-        # the VR launcher without anyone remembering to port it.
+        # The VR monitor is upstream's monitor with one window registered: it defines no policy of its own, so
+        # a fix there reaches the VR launcher without anyone remembering to port it.
         self.assertIs(
             self.monitor.wait_for_startup_state, self.upstream.wait_for_startup_state
         )
         source = read(BIN_DIR / "Desktop_Launcher_Monitor_VR.py")
-        for helper in (
-            "_sanitize_managed_environment",
-            "_console_python",
+        self.assertIn("return upstream.main(argv)", source)
+        for copied in (
+            "def run_monitor",
+            "def launch_detached_monitor",
+            "def launch_and_wait",
             "_atomic_write",
             "_wait_for_dismissal",
             "_cleanup_success",
             "_open_error_terminal",
-            "_report_terminal_failure",
+            "_sanitize_managed_environment",
         ):
-            with self.subTest(helper=helper):
-                self.assertIn(f"upstream.{helper}", source)
+            with self.subTest(copied=copied):
+                self.assertNotIn(copied, source)
+
+    def registered(self):
+        self.addCleanup(self.upstream.EXTRA_APPLICATIONS.pop, "vr", None)
+        self.monitor.register()
+
+    def test_registering_gives_upstream_the_gui_its_folder_and_this_file_as_the_monitor_to_start(self):
+        self.assertNotIn("vr", self.upstream.EXTRA_APPLICATIONS)
+        self.registered()
+        application = self.upstream.EXTRA_APPLICATIONS["vr"]
+        self.assertEqual(application.script, VR_SRC / "EMAPSSN_Config_VR.py")
+        self.assertEqual(application.working_dir, OPT_VR)
+        self.assertEqual(application.monitor, (BIN_DIR / "Desktop_Launcher_Monitor_VR.py").resolve())
+        self.assertIn("vr", self.upstream.application_kinds())
+        self.assertEqual(self.monitor.KIND, "vr")
 
     def test_gui_child_runs_detached_from_the_startup_terminal(self):
+        self.registered()
         recorded = {}
 
         class FakePopen:
@@ -303,8 +326,8 @@ class LauncherMonitorTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as state_root:
             state_dir = Path(state_root) / "vr_state"
             with mock.patch.object(subprocess, "Popen", FakePopen):
-                self.monitor.launch_detached_monitor(
-                    state_dir, platform_name="win32"
+                self.upstream.launch_detached_monitor(
+                    "vr", state_dir, platform_name="win32"
                 )
 
         self.assertEqual(
@@ -312,6 +335,8 @@ class LauncherMonitorTests(unittest.TestCase):
             str((BIN_DIR / "Desktop_Launcher_Monitor_VR.py").resolve()),
             "the detached child must re-enter this module, not upstream's",
         )
+        # The kind comes first, as upstream's command line has it (the batch file passes it too).
+        self.assertEqual(recorded["command"][3], "vr")
         kwargs = recorded["kwargs"]
         self.assertEqual(
             kwargs["creationflags"],
@@ -319,26 +344,70 @@ class LauncherMonitorTests(unittest.TestCase):
         )
         self.assertEqual(kwargs["stdout"], subprocess.DEVNULL)
         self.assertEqual(kwargs["stderr"], subprocess.DEVNULL)
-        # EMAPSSN_Config_VR.py resolves relative directories against opt_vr, not the
-        # parent root the upstream monitor uses.
-        self.assertEqual(kwargs["cwd"], str(OPT_VR))
 
-    def test_ready_file_is_handed_to_the_gui(self):
-        source = read(BIN_DIR / "Desktop_Launcher_Monitor_VR.py")
-        self.assertIn('env["SSN_GUI_READY_FILE"] = str(ready_path)', source)
-        # The name is upstream's contract: Desktop_App pops this variable when
-        # the window becomes visible.
+    def test_the_gui_is_run_in_opt_vr_with_the_files_it_reports_through(self):
+        self.registered()
+        process = mock.Mock(pid=12345)
+        process.wait.return_value = 2  # the GUI ends in failure before it is ready: no terminal, no dialog
+        with tempfile.TemporaryDirectory() as state_root:
+            state = Path(state_root) / "vr_state"
+            with mock.patch.object(self.upstream.subprocess, "Popen", return_value=process) as popen:
+                self.assertEqual(self.upstream.run_monitor("vr", state), 2)
+            call = popen.call_args
+            command = call.args[0]
+            self.assertEqual(command[1:], ["-u", str(VR_SRC / "EMAPSSN_Config_VR.py")])
+            # EMAPSSN_Config_VR.py resolves relative directories against opt_vr, not the parent root the main
+            # program's own windows run in.
+            self.assertEqual(Path(call.kwargs["cwd"]), OPT_VR)
+            environment = call.kwargs["env"]
+            self.assertEqual(environment["SSN_GUI_READY_FILE"], str((state / "gui.ready").resolve()))
+            self.assertEqual(environment["SSN_STARTUP_STATUS_FILE"], str((state / "startup.status").resolve()))
+            for name in ("PYTHONHOME", "QT_PLUGIN_PATH"):
+                self.assertNotIn(name, environment)
+        # The name is upstream's contract: Desktop_App pops this variable when the window becomes visible.
         self.assertIn(
             "SSN_GUI_READY_FILE",
             read(PROJECT_ROOT / "src" / "desktop" / "Desktop_App.py"),
         )
 
+    def test_a_crash_after_the_window_opened_is_reported_the_way_the_caller_asked(self):
+        self.registered()
+        for report in ("terminal", "dialog"):
+            with self.subTest(report=report):
+                reports = []
+                process = mock.Mock(pid=12345)
+                process.wait.return_value = 3
+                with tempfile.TemporaryDirectory() as state_root:
+                    state = Path(state_root) / "vr_state"
+                    state.mkdir()
+                    (state / "gui.ready").write_text("ready\n", encoding="utf-8")
+                    (state / "terminal.dismissed").write_text("dismissed\n", encoding="utf-8")
+                    with mock.patch.object(self.upstream.subprocess, "Popen", return_value=process), mock.patch.object(
+                        self.upstream, "_open_error_terminal", side_effect=lambda log: reports.append(("terminal", log))
+                    ), mock.patch.object(
+                        self.upstream, "_report_application_failure",
+                        side_effect=lambda log: reports.append(("dialog", log)),
+                    ):
+                        self.assertEqual(self.upstream.run_monitor("vr", state, failure_report=report), 3)
+                self.assertEqual([kind for kind, _ in reports], [report])  # nothing opened for real
+
+    def test_the_command_line_is_upstreams_with_the_kind_first_and_refuses_other_words(self):
+        self.addCleanup(self.upstream.EXTRA_APPLICATIONS.pop, "vr", None)
+        with mock.patch.object(self.upstream, "run_monitor", return_value=0) as run:
+            self.assertEqual(self.monitor.main(["--failure-report", "dialog", "vr", "state"]), 0)
+        run.assert_called_once_with("vr", Path("state"), app_args=[], failure_report="dialog")
+        with mock.patch.object(self.upstream, "launch_and_wait", return_value=0) as wait:
+            self.assertEqual(self.monitor.main(["--launch-and-wait", "vr", "state"]), 0)
+        wait.assert_called_once_with("vr", Path("state"))
+        with self.assertRaises(SystemExit), mock.patch.object(sys, "stderr"):
+            self.monitor.main(["state"])  # the old command line, with no kind
+
     def test_state_file_names_match_upstream(self):
-        vr_source = read(BIN_DIR / "Desktop_Launcher_Monitor_VR.py")
         upstream_source = read(
             PROJECT_ROOT / "src" / "desktop" / "Desktop_Launcher_Monitor.py"
         )
         launcher_source = read(DESKTOP_LAUNCHER)
+        splash_launcher_source = read(PROJECT_ROOT / "src" / "desktop" / "Desktop_Launcher.py")
         for name in (
             "gui.ready",
             "terminal.dismissed",
@@ -346,10 +415,14 @@ class LauncherMonitorTests(unittest.TestCase):
             "application.log",
         ):
             with self.subTest(state_file=name):
-                self.assertIn(name, vr_source)
                 self.assertIn(name, upstream_source)
+                self.assertIn(name, splash_launcher_source)
         for name in ("terminal.dismissed", "application.exit", "application.log"):
             self.assertIn(name, launcher_source)
+
+    def test_the_batch_file_names_the_kind_to_the_monitor(self):
+        # Upstream's command line takes the kind before the state folder.
+        self.assertIn('--launch-and-wait vr "!STATE_DIR!"', read(DESKTOP_LAUNCHER))
 
 
 class SingleInstanceTests(unittest.TestCase):

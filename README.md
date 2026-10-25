@@ -53,9 +53,16 @@ like every other mirrored file here. It does two things:
   older or newer, is replaced, and `install_vr.bat --reinstall` replaces even
   the pinned one.
 - **Writes `EMAP-SSN VR.lnk`** beside this README and offers to copy it to
-  your Desktop. The shortcut sets the Python environment up on its first run,
-  exactly as the `EMAP-SSN` and `EMAP-SSN Tools` shortcuts do, so that first
-  launch takes noticeably longer than later ones.
+  your Desktop. The shortcut starts `EMAP-SSN.exe vr`, the main program's
+  launcher, which opens no console window. The installer builds that launcher
+  with the main program's `src\bin\Build_Launcher.bat` when it is missing or
+  older than its source (one built before `vr` was a window would open the
+  Configuration window instead), and where it cannot, the shortcut runs
+  `src\bin\EMAPSSN_Desktop_Launcher_VR.bat` in a console, as before. The
+  shortcut carries VR Config's taskbar identity, so its windows group under
+  it. It sets the Python environment up on its first run, exactly as the
+  `EMAP-SSN` and `EMAP-SSN Tools` shortcuts do, so that first launch takes
+  noticeably longer than later ones.
 
 Without network access, download the asset named in `player_release.json`
 from the repository's releases page yourself, then:
@@ -153,14 +160,23 @@ Double-click **EMAP-SSN VR**. That opens `src/EMAPSSN_Config_VR.py`, the
 **Save & Run**. The main program's Config GUI is a separate window for the
 desktop viewer and is never involved.
 
-The shortcut behaves exactly like the main program's. A startup terminal
-appears, validates the managed environment, and closes itself the moment the Qt
-window reports that it is on screen, so a healthy launch leaves no console
-behind; it stays visible only while there is something to read, such as
-dependency setup or a startup failure. Launching again raises the window that
-is already open instead of starting a second one, and because the VR window and
-the desktop Config window register different single-instance keys, both can be
-open at the same time.
+The shortcut behaves exactly like the main program's: no console window opens.
+The main program's start-up screen, named **VR Configuration** and drawn with the
+VR logo, shows the dependency check, **Checking VR hardware…** and the window
+being built, and closes once the window is on screen. A machine that cannot
+drive a headset (an unsupported GPU such as Intel Arc or integrated graphics, no
+OpenXR runtime, or a GPU the check cannot tell) gets a warning, not a refusal,
+because the Configuration window is useful without a headset: the start-up
+screen opens its details by itself with what the check printed, in the warning
+colour, the start goes on, and the screen stays at **Ready** until you press
+**Close**. That replaces the pause of the console launch. The first start, which
+creates the environment, `EMAP-SSN.exe vr --console`, and a launcher that fails
+before it shows anything use that console launch,
+`src\bin\EMAPSSN_Desktop_Launcher_VR.bat`, which does the same things in a
+visible terminal that closes itself once the window is up. Launching again
+raises the window that is already open instead of starting a second one, and
+because the VR window and the desktop Config window register different
+single-instance keys, both can be open at the same time.
 
 `opt_vr` owns no virtual environment. It imports the main program's `src` tree
 for everything scientific, so it runs in the parent's managed `.venv` — and
@@ -173,17 +189,22 @@ rather than two that can drift apart.
 |---|---|---|
 | `install_vr.bat` | installs the VR client, writes `EMAP-SSN VR.lnk` | `install.bat` |
 | `src/bin/Install_Client_VR.ps1` | downloads, checks and unpacks the pinned client | — |
-| `src/bin/EMAPSSN_Desktop_Launcher_VR.bat` | startup terminal; closes once the GUI is ready | `src/bin/EMAPSSN_Desktop_Launcher.bat` |
+| `src/bin/Desktop_Launcher_VR.py` | what `EMAP-SSN.exe vr` starts: the start-up screen, the checks, the hardware step | `src/desktop/Desktop_Launcher.py` |
+| `src/bin/EMAPSSN_Desktop_Launcher_VR.bat` | the console launch: startup terminal that closes once the GUI is ready | `src/bin/EMAPSSN_Desktop_Launcher.bat` |
 | `src/bin/EMAPSSN_VR.bat` | environment validation and repair, then the GUI | `src/bin/EMAPSSN.bat` |
-| `src/bin/Desktop_Launcher_Monitor_VR.py` | detached supervisor and startup handshake | `src/desktop/Desktop_Launcher_Monitor.py` |
+| `src/bin/Desktop_Launcher_Monitor_VR.py` | registers the VR window with upstream's supervisor and startup handshake | `src/desktop/Desktop_Launcher_Monitor.py` |
 | `src/bin/Single_Instance_Probe_VR.py` | raises an already-open VR window | `src/desktop/Single_Instance_Probe.py` |
 
-The two Python modules import the upstream policy instead of copying it —
-environment sanitizing, the atomic ready and exit files, the dismissal
-handshake, the error terminal. Only the app script and the single-instance key
-differ, which is why upstream owns no reference to
-`opt_vr/src/EMAPSSN_Config_VR.py`: that path is absent whenever the submodule
-is not checked out.
+The two Python modules use the upstream launcher and monitor instead of copying
+their policy — environment sanitizing, the splash, the atomic ready and exit
+files, the dismissal handshake, the error report. They only declare what is VR's:
+the window's script and folder, its single-instance key and taskbar identity, its
+name and art on the splash, its texts (`resources/languages/emapssn_vr`), the
+hardware check as a step of the start, and the batch file for the console launch.
+Upstream owns no reference to any of it, which is why it owns none to
+`opt_vr/src/EMAPSSN_Config_VR.py`: that path is absent whenever the submodule is
+not checked out. The one place the main program names `vr` is the small table in
+`src/bin/Launcher.cs` that says which script starts which window.
 
 Like the main program, the root holds no launcher of its own — the shortcut
 and `install_vr.bat` are the way in. To start the GUI without the shortcut,

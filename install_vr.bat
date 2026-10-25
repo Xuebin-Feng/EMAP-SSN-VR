@@ -19,8 +19,13 @@ REM Installation and Shortcut Generation Script for EMAP-SSN VR (opt_vr)
 REM =========================================================================
 REM The VR counterpart of the main program's install.bat. It installs the VR
 REM client that player_release.json pins into player\, generates one
-REM shortcut, "EMAP-SSN VR.lnk", pointing at the visible-startup desktop
-REM launcher, and optionally copies it to the Desktop.
+REM shortcut, "EMAP-SSN VR.lnk", and optionally copies it to the Desktop.
+REM The shortcut starts "EMAP-SSN.exe vr": the main program's launcher, a few
+REM kilobytes with no console window, which shows the start-up splash and then
+REM opens VR Configuration. If EMAP-SSN.exe is missing (or older than the source
+REM that gained "vr"), this installer builds it with the main program's
+REM src\bin\Build_Launcher.bat, which install.bat uses too; if it cannot be built,
+REM the shortcut runs the visible-startup batch file in a console, as before.
 REM
 REM The client is not tracked in git: src\bin\Install_Client_VR.ps1 downloads
 REM it from this repository's GitHub release and checks its SHA-256 before
@@ -34,9 +39,10 @@ REM There is no install.sh counterpart, by design: the VR client is a
 REM Windows build, so the VR front end is Windows-only. Run the parent
 REM project's installer for the cross-platform desktop program.
 REM
-REM This installer never writes into the parent checkout, and it does not
-REM create the Python environment - the generated shortcut does that on its
-REM first run, through the main program's own launcher.
+REM This installer writes nothing into the parent checkout but EMAP-SSN.exe (the
+REM launcher the main program's installer builds too), and it does not create the
+REM Python environment - the generated shortcut does that on its first run,
+REM through the main program's own launcher.
 REM =========================================================================
 setlocal EnableDelayedExpansion
 
@@ -93,11 +99,28 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "!OPT_VR_ROOT!\src\bin\Insta
 set "CLIENT_STATUS=!ERRORLEVEL!"
 echo.
 
-:: 4. Create a visible-startup Windows shortcut for the VR Configuration GUI.
-::    The launcher's terminal closes itself once the Qt window is on screen.
+:: 4. The launcher the shortcut starts: EMAP-SSN.exe in the parent project, which shows the start-up splash and
+::    opens no console window. The parent's installer builds it too; this one builds it when it is missing or
+::    older than its source (one built before "vr" was a kind of window would open the wrong window), with the
+::    same script. If it cannot be built, the shortcut runs the batch file in a console window, as before.
+set "LAUNCHER_EXE=!PROJECT_ROOT!\EMAP-SSN.exe"
+set "USE_LAUNCHER_EXE="
+echo.
+echo Checking the EMAP-SSN launcher...
+if exist "!PROJECT_ROOT!\src\bin\Build_Launcher.bat" (
+    call "!PROJECT_ROOT!\src\bin\Build_Launcher.bat" --if-needed
+    if !ERRORLEVEL! equ 0 set "USE_LAUNCHER_EXE=1"
+) else (
+    echo [INFO] The main program has no src\bin\Build_Launcher.bat, so it is older than this installer.
+)
+if not defined USE_LAUNCHER_EXE echo        The shortcut will open the launcher in a console window instead.
+
+:: 5. Create the Windows shortcut for the VR Configuration GUI. The taskbar groups the windows of the
+::    process with its AppUserModelID under the shortcut, with its name and icon: the one VR Config sets.
 echo Creating shortcut for EMAP-SSN VR...
-powershell -ExecutionPolicy Bypass -Command "$q = [char]34; $WshShell = New-Object -ComObject WScript.Shell; $Shortcut = $WshShell.CreateShortcut($env:OPT_VR_ROOT + '\EMAP-SSN VR.lnk'); $Shortcut.TargetPath = $env:WINDIR + '\System32\cmd.exe'; $Shortcut.Arguments = '/d /c ' + $q + $q + $env:OPT_VR_ROOT + '\src\bin\EMAPSSN_Desktop_Launcher_VR.bat' + $q + $q; $Shortcut.WorkingDirectory = $env:OPT_VR_ROOT; $Shortcut.Description = 'EMAP-SSN VR Configuration'; if ($env:VR_ICON) { $Shortcut.IconLocation = $env:VR_ICON }; $Shortcut.Save();"
+powershell -ExecutionPolicy Bypass -Command "$q = [char]34; $WshShell = New-Object -ComObject WScript.Shell; $Shortcut = $WshShell.CreateShortcut($env:OPT_VR_ROOT + '\EMAP-SSN VR.lnk'); if ($env:USE_LAUNCHER_EXE) { $Shortcut.TargetPath = $env:LAUNCHER_EXE; $Shortcut.Arguments = 'vr' } else { $Shortcut.TargetPath = $env:WINDIR + '\System32\cmd.exe'; $Shortcut.Arguments = '/d /c ' + $q + $q + $env:OPT_VR_ROOT + '\src\bin\EMAPSSN_Desktop_Launcher_VR.bat' + $q + $q }; $Shortcut.WorkingDirectory = $env:OPT_VR_ROOT; $Shortcut.Description = 'EMAP-SSN VR Configuration'; if ($env:VR_ICON) { $Shortcut.IconLocation = $env:VR_ICON }; $Shortcut.Save();"
 if exist "EMAP-SSN VR.lnk" (
+    if exist "!PROJECT_ROOT!\src\bin\Set_Shortcut_AppId.ps1" powershell -NoProfile -ExecutionPolicy Bypass -File "!PROJECT_ROOT!\src\bin\Set_Shortcut_AppId.ps1" -Lnk "!OPT_VR_ROOT!\EMAP-SSN VR.lnk" -AppId ca.utoronto.emapssn.vrconfig
     echo [OK] Created "EMAP-SSN VR.lnk" in !OPT_VR_ROOT!.
 ) else (
     echo [ERROR] The shortcut could not be created.
@@ -105,7 +128,7 @@ if exist "EMAP-SSN VR.lnk" (
     exit /b 1
 )
 
-:: 5. Optional: Copy the shortcut to the Desktop
+:: 6. Optional: Copy the shortcut to the Desktop
 echo.
 choice /M "Would you like to copy this shortcut to your Desktop"
 if %ERRORLEVEL% equ 1 (
