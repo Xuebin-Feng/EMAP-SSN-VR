@@ -125,6 +125,14 @@
 <context>
     <name>Message</name>
     <message>
+        <source>The VR viewer has no Console window: everything it prints is in this terminal, and the log file {path} keeps every line of the session.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>The VR viewer has no Console window: everything it prints is in this terminal.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
         <source>No VR client is installed in this folder (vr_client.json is missing or unreadable). Save &amp; Run downloads the pinned release into player/, as install_vr.bat does; or choose the folder that holds EMAP-SSN-VR.exe.</source>
         <extracomment>VR Config&apos;s own texts are in opt_vr&apos;s catalog, emapssn_vr; the texts it shares with the desktop Config come from the main catalog. The window and taskbar icon is opt_vr&apos;s own logo, the parent&apos;s Config logo with a VR headset. The parent&apos;s Config logo stands in if it is missing. The VR client connection tooltip. The viewer passes VR Client Host and Port to the client it launches, so the two ends always agree; the endpoint recorded in the build is only where a client started by hand dials. The notes are Messages: str() is English, and the window shows display_text().</extracomment>
         <translation type="unfinished"></translation>

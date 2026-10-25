@@ -350,6 +350,9 @@ refuses Qt and VisPy, and once by comparing the `viewer.<attr>` reads in its AST
 against the surface `src/EMAPSSN_Viewer_VR.py` actually provides. A command marked `redundant`
 has a local override that upstream could serve; one marked `broken` cannot be
 loaded at all, and `--check` exits non-zero so the test suite catches it.
+An override that is deliberate although upstream's module loads here, because what it says or does
+differs in this viewer, gives its reason in a module-level `OVERRIDE_REASON`, which the checker reads
+from the source: it is then reported as a deliberate override and not as redundant.
 
 Both probes are load-time only. A clean verdict means "imports, and only touches
 API this viewer has" — not that the behaviour is what you want. Deleting a
@@ -369,6 +372,8 @@ override needs a reason that survives being said out loud:
 | `print` | Upstream screen-grabs the canvas. A VR figure has to be rebuilt from the state arrays and projected onto a chosen plane, which is a different command. Disabled until that is designed. |
 | `alignment`, `embedding`, `run` | Upstream opens a Qt file dialog. Identical once the file is chosen, except that a Python script `run` names runs in the foreground here, where the desktop viewer runs it in the background to keep its window responsive; the path is an argument here. |
 | `export` | Upstream pops the system file manager through `desktop.Desktop_App`, which reaches PySide6. Otherwise a verbatim copy — keep it diffable. |
+| `console` | Upstream opens the desktop Viewer's Console window and, where there is none, refuses. This viewer is a terminal program: its terminal is its console, so the command says that, names the log file when the process keeps one (the main program's `Console_Capture`), and succeeds. Upstream's module loads here; the override is deliberate (`OVERRIDE_REASON`). |
+| `jobs` | The listing and the cancelling are upstream's command, run on this viewer's scheduler. What differs is its help, which upstream writes for a command queue, the Session card and windows this viewer has not, and a bare `jobs cancel`, which cancels the newest job here, where upstream cancels the newest queued command. Deliberate (`OVERRIDE_REASON`). |
 | `meta` | The web spreadsheet UI. Upload, download and column deletion are the main program's `Metadata_Core` functions, called directly. One addition: `meta download <file> <expression>` takes a trailing selection expression, which `Metadata_Core.download_metadata` has always accepted and the desktop command does not expose. The expression runs to the end of the line, so it may contain spaces (`meta download long.csv {Length > 500} & #cluster_1#`). |
 
 Anything not on that list is served from `src/commands`, so it cannot drift.
@@ -380,6 +385,23 @@ the metadata data model used to sit in `web_ui/meta_backend.py` behind a
 module-level PySide6 import, so `meta` here could not upload, download or delete
 without duplicating some four hundred lines. `meta_backend` re-exports every
 name, so the desktop viewer is unchanged.
+
+## Background jobs
+
+`logo` and `label` hand their slow work to `viewer.background_job_scheduler`, which is
+`src/Background_Job_Scheduler_VR.py`: the main program's scheduler loads Qt, so this is a Qt-free
+counterpart that gives a job the same things by the main program's own
+`utilities/Job_Cancellation`.
+
+- Jobs run one at a time, in order, on one daemon thread, in the lane the main scheduler names for
+  file jobs (`files`); an output is reserved from queueing until its job ends.
+- Each runs with a `JobHandle` bound to its thread, so the check points, partial-file notes and
+  `CancellableFile` of the shared commands work. `snapshot()`, `listing()` and `cancel_many()` are what
+  the shared `jobs` command reads: a waiting job is dropped, and a running one is told to stop and ends
+  at its next step, deleting what it had written.
+- Leaving the viewer calls `shutdown()`: it drops the waiting jobs, stops the running one, waits up to
+  2.5 seconds (the main scheduler's wait) and deletes the partial files a job that did not stop had
+  named, so no half-written file is left behind.
 
 ## Tests
 

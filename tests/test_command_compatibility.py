@@ -204,6 +204,31 @@ class ImportProbeTests(unittest.TestCase):
         self.assertFalse(cc._is_project_module("matplotlib"))
 
 
+class OverrideReasonTests(unittest.TestCase):
+    """A module says why it shadows a command upstream could serve, and the checker reads it from source."""
+
+    def test_the_reason_is_read_from_the_module_level_constant(self):
+        path = _module('"""Doc."""\nOVERRIDE_REASON = "its text is VR\'s own"\n\ndef run(viewer, args):\n    pass\n')
+        self.assertEqual(cc.declared_override_reason(path), "its text is VR's own")
+
+    def test_a_module_without_one_gives_none(self):
+        self.assertIsNone(cc.declared_override_reason(_module("def run(viewer, args):\n    pass\n")))
+
+    def test_only_a_module_level_text_counts(self):
+        for source in (
+            "def run(viewer, args):\n    OVERRIDE_REASON = 'inside'\n",
+            "OVERRIDE_REASON = ''\n",
+            "OVERRIDE_REASON = 42\n",
+            "OVERRIDE_REASON = ('a', 'b')\n",
+        ):
+            with self.subTest(source=source):
+                self.assertIsNone(cc.declared_override_reason(_module(source)))
+
+    def test_an_unreadable_module_gives_none(self):
+        self.assertIsNone(cc.declared_override_reason(os.path.join(_NEUTRAL.name, "missing.py")))
+        self.assertIsNone(cc.declared_override_reason(_module("def broken(:\n")))
+
+
 class VerdictTests(unittest.TestCase):
     """Verdict logic is pure, so it is tested without touching the filesystem."""
 
@@ -225,6 +250,28 @@ class VerdictTests(unittest.TestCase):
         report = self._report(upstream_path="up.py", local_path="local.py")
         self.assertEqual(report.state, cc.OVERRIDDEN)
         self.assertEqual(report.status, cc.REDUNDANT)
+
+    def test_an_override_that_gives_its_reason_is_not_redundant(self):
+        report = self._report(
+            upstream_path="up.py",
+            local_path="local.py",
+            override_reason="its help describes windows this viewer has not",
+        )
+        self.assertEqual(report.state, cc.OVERRIDDEN)
+        self.assertEqual(report.status, cc.OK)
+        self.assertEqual(
+            report.reason, "deliberate override: its help describes windows this viewer has not"
+        )
+        self.assertEqual(report.as_dict()["override_reason"], report.override_reason)
+
+    def test_a_reason_does_not_hide_a_broken_override(self):
+        report = self._report(
+            upstream_path="up.py",
+            local_path="local.py",
+            local_blocker=cc.Blocker("ValueError", kind=cc.ERROR),
+            override_reason="on purpose",
+        )
+        self.assertEqual(report.status, cc.BROKEN)
 
     def test_override_is_justified_when_upstream_needs_qt(self):
         report = self._report(
@@ -339,6 +386,17 @@ class CommandSetIntegrationTests(unittest.TestCase):
     def test_desktop_render_commands_are_detected(self):
         """zoom drives the VisPy camera, which the VR client replaces."""
         self.assertTrue(self.by_name["zoom"].upstream_missing)
+
+    def test_commands_that_differ_on_purpose_say_so_and_are_not_redundant(self):
+        """`console` and `jobs` load from upstream here, but their text and behaviour are VR's."""
+        for name in ("console", "jobs"):
+            with self.subTest(name=name):
+                report = self.by_name[name]
+                self.assertEqual(report.state, cc.OVERRIDDEN)
+                self.assertTrue(report.upstream_usable, "upstream's copy loads here: only the reason keeps this one")
+                self.assertTrue(report.override_reason)
+                self.assertEqual(report.status, cc.OK)
+                self.assertTrue(report.reason.startswith("deliberate override: "), report.reason)
 
     def test_table_renders(self):
         table = cc.render_table(self.reports)

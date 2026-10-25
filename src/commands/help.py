@@ -77,8 +77,10 @@ def _available_commands():
 #: first line, which is written for developers. A command missing from here
 #: falls back to its docstring.
 LOCAL_SUMMARIES = {
+    "console": "Say where this viewer's output is: the VR viewer has no Console window, and this terminal is its console.",
     "export": "Export sequence subsets (clusters, groups or #LABEL#) as FASTA files.",
     "help": "List the available commands, or describe one.",
+    "jobs": "List the background file jobs (logo, label) that wait or run, or cancel them. Every other command runs at once.",
     "meta": "Upload, download or delete node metadata columns.",
     "run": "Run the commands in a script file, one per line (.txt, or .py that prints them).",
 }

@@ -1805,7 +1805,8 @@ def start_server(host=None, port=None):
     except KeyboardInterrupt:
         print("Server shutting down.")
     finally:
-        # Queued label/logo jobs are dropped, as the desktop drops them at exit.
+        # Queued label/logo jobs are dropped and a running one is stopped, with the
+        # file it had begun deleted, as the desktop does at exit (a moment's wait).
         viewer.background_job_scheduler.shutdown()
         # Terminate the VR app if we launched it
         vr_proc = getattr(viewer, "vr_proc", None)

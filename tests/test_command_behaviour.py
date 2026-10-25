@@ -23,10 +23,13 @@ commands through the terminal's own dispatcher and check the effect: the
 packets queued for the client, the files written and the state restored.
 """
 
+import ast
 import atexit
+import inspect
 import io
 import json
 import os
+import re
 import shutil
 import socket
 import sys
@@ -35,6 +38,7 @@ import threading
 import time
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
+from types import SimpleNamespace
 from unittest import mock
 
 OPT_VR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -61,6 +65,16 @@ with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
     import Viewer_Command_Portal  # noqa: E402
 
 _bootstrap_vr.install_settings_alias(cfg)
+
+from utilities.Job_Cancellation import (  # noqa: E402
+    CancellableFile,
+    JobHandle,
+    cancel_requested,
+    current_job,
+    forget_partial_path,
+    note_partial_path,
+    raise_if_cancelled,
+)
 
 from tests.cache_fixtures import publish_cache, use_inputs  # noqa: E402
 from tests.test_opt_vr import build_viewer, run_command  # noqa: E402
@@ -561,6 +575,51 @@ class ArtifactTests(unittest.TestCase):
         self.finish()
         self.assertEqual(self.written("Sequence_Logos"), ["vr_logo.svg"])
 
+    def test_a_waiting_logo_job_is_listed_and_cancelled_and_frees_its_file(self):
+        release = threading.Event()
+        self.addCleanup(release.set)
+        scheduler = self.viewer.background_job_scheduler
+        with redirect_stdout(io.StringIO()):
+            scheduler.enqueue("test", "blocker", None, lambda _: release.wait(30) and {}, os.path.join(self.results, "blocker.txt"))
+        run_command(self.viewer, "logo [2-5] vr_logo.svg")
+        listing = run_command(self.viewer, "jobs")
+        self.assertRegex(listing, r"#2\s+waiting\s+logo -> vr_logo\.svg\s+\(files\)")
+        self.assertIn("2 jobs waiting or running", listing)
+        self.assertIn("Cancelled 1 job: #2 logo -> vr_logo.svg.", run_command(self.viewer, "jobs cancel 2"))
+        release.set()
+        self.finish()
+        self.assertEqual(self.written("Sequence_Logos"), [], "a cancelled job writes nothing")
+        self.assertIn("No commands wait or run", run_command(self.viewer, "jobs"))
+        run_command(self.viewer, "logo [2-5] vr_logo.svg")
+        self.finish()
+        self.assertEqual(self.written("Sequence_Logos"), ["vr_logo.svg"], "its file was free to use again")
+
+    def test_a_running_logo_job_stops_at_its_next_check_point_and_leaves_nothing(self):
+        """The shared worker's own check points reach the handle the scheduler bound to its thread."""
+        from utilities import Alignment_Profiles
+
+        real = Alignment_Profiles.calculate_logo_matrix
+        reached = threading.Event()
+
+        def waits_for_the_stop(*args, **kwargs):
+            reached.set()
+            wait_for(cancel_requested, 30)
+            return real(*args, **kwargs)
+
+        patcher = mock.patch.object(Alignment_Profiles, "calculate_logo_matrix", waits_for_the_stop)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        run_command(self.viewer, "logo [2-5] vr_logo.svg")
+        self.assertTrue(reached.wait(30), "the job did not start")
+        self.assertRegex(run_command(self.viewer, "jobs"), r"#1\s+running\s+logo -> vr_logo\.svg\s+\(files\)")
+        self.assertIn("Told 1 running job to stop: #1 logo -> vr_logo.svg.", run_command(self.viewer, "jobs cancel all"))
+        reports = self.finish()
+        self.assertIn("Background job #1 was stopped before it finished: logo -> vr_logo.svg", reports)
+        self.assertNotIn("completed", reports)
+        self.assertEqual(self.written("Sequence_Logos"), [], "no image and no partial file")
+        self.assertFalse(self.viewer.background_job_scheduler.is_output_path_reserved(
+            os.path.join(self.results, "Sequence_Logos", "vr_logo.svg")))
+
 
 class SchedulerTests(unittest.TestCase):
     """The scheduler's own contract, which `label` and `logo` rely on."""
@@ -612,6 +671,462 @@ class SchedulerTests(unittest.TestCase):
 
     def test_a_viewer_that_queues_nothing_starts_no_thread(self):
         self.assertIsNone(build_viewer().background_job_scheduler._thread)
+
+
+class JobControlFixture(unittest.TestCase):
+    """A scheduler, a folder for its outputs, and workers that run until the test lets them go."""
+
+    #: How long a test waits for a job to start.
+    STARTUP_SECONDS = 30.0
+
+    def make_scheduler(self):
+        """The scheduler under test; ``self.reports`` is what it said."""
+        self.reports = []
+        return Background_Job_Scheduler_VR.BackgroundJobScheduler(say=self.reports.append)
+
+    def setUp(self):
+        self.root = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.root, ignore_errors=True)
+        self.release = threading.Event()
+        self.ran = []
+        self.scheduler = self.make_scheduler()
+        # Cleanups run last in first out: the jobs are let go before the scheduler closes.
+        self.addCleanup(self.scheduler.shutdown, 0.2)
+        self.addCleanup(self.release.set)
+
+    def path(self, name):
+        return os.path.join(self.root, name)
+
+    def text(self):
+        return "\n".join(self.reports)
+
+    def enqueue(self, worker, name="out.txt", scheduler=None):
+        with redirect_stdout(io.StringIO()):
+            return (scheduler or self.scheduler).enqueue("test", f"test -> {name}", name, worker, self.path(name))
+
+    def recording(self, name):
+        return lambda payload: self.ran.append(name) or {}
+
+    def running_job(self, name, *, checks):
+        """Queue a job that runs until the test releases it, and wait for it to start; return its number.
+
+        With ``checks`` it reaches a check point between its steps and ends there when told to stop;
+        without, it goes on until released, as a job stuck in one long call does.
+        """
+        started = threading.Event()
+
+        def worker(payload):
+            started.set()
+            while not self.release.wait(0.005):
+                if checks:
+                    raise_if_cancelled()
+            return {"message": "done"}
+
+        job = self.enqueue(worker, name)
+        self.assertTrue(started.wait(self.STARTUP_SECONDS), "the job did not start")
+        return job
+
+    def wait_idle(self):
+        self.assertTrue(wait_for(lambda: self.scheduler.queue_depth == 0), "the jobs did not finish")
+
+
+class SchedulerJobControlTests(JobControlFixture):
+    """The scheduler gives a job what the main scheduler gives one: a handle, a line to cancel from, a clean close."""
+
+    def test_the_worker_runs_with_its_handle_bound_to_its_thread(self):
+        seen = []
+
+        def plain(payload):
+            seen.append(("plain", type(current_job()).__name__))
+            return {}
+
+        def with_handle(payload, job):
+            seen.append(("handle", job is current_job(), isinstance(job, JobHandle)))
+            return {}
+
+        self.enqueue(plain, "a.txt")
+        self.enqueue(with_handle, "b.txt")
+        self.wait_idle()
+        self.assertEqual(seen, [("plain", "JobHandle"), ("handle", True, True)])
+        self.assertIsNone(current_job(), "nothing stays bound to the thread that asked")
+
+    def test_snapshot_and_listing_tell_a_running_job_from_a_waiting_one(self):
+        running = self.running_job("run.txt", checks=False)
+        waiting = self.enqueue(self.recording("wait"), "wait.txt")
+        first, second = self.scheduler.snapshot()
+        self.assertEqual((first.job.job_id, first.running, first.position, first.stopping, first.lane),
+                         (running, True, 1, False, "files"))
+        self.assertIsNotNone(first.started_at)
+        self.assertEqual((second.job.job_id, second.running, second.position, second.started_at, second.lane),
+                         (waiting, False, 2, None, "files"))
+        self.assertEqual([(job.job_id, state) for job, state in self.scheduler.listing()],
+                         [(running, True), (waiting, False)])
+        self.assertEqual(self.scheduler.queue_depth, 2)
+        self.assertEqual([name for name, _title in self.scheduler.lanes()], ["files"])
+
+    def test_the_lane_and_the_wait_are_the_main_schedulers(self):
+        """The shared jobs command lists a job under its lane's name, and closing waits as long as the desktop's."""
+        with open(os.path.join(_bootstrap_vr.SRC_DIR, "Background_Job_Scheduler.py"), encoding="utf-8") as handle:
+            source = handle.read()
+        main = {}
+        for node in ast.parse(source).body:
+            if isinstance(node, ast.Assign) and isinstance(node.targets[0], ast.Name):
+                if node.targets[0].id in ("DEFAULT_LANE", "SHUTDOWN_WAIT_SECONDS"):
+                    main[node.targets[0].id] = ast.literal_eval(node.value)
+        self.assertEqual(main, {
+            "DEFAULT_LANE": Background_Job_Scheduler_VR.DEFAULT_LANE,
+            "SHUTDOWN_WAIT_SECONDS": Background_Job_Scheduler_VR.SHUTDOWN_WAIT_SECONDS,
+        })
+        self.assertEqual(inspect.signature(self.scheduler.shutdown).parameters["wait"].default,
+                         Background_Job_Scheduler_VR.SHUTDOWN_WAIT_SECONDS)
+        self.assertIn('self._lane(DEFAULT_LANE, Message("Files"))', source)
+        self.assertEqual(str(Background_Job_Scheduler_VR.LANE_TITLE), "Files")
+
+    def test_a_waiting_job_is_removed_at_once_and_never_runs(self):
+        running = self.running_job("run.txt", checks=False)
+        waiting = self.enqueue(self.recording("wait"), "wait.txt")
+        self.assertTrue(self.scheduler.is_output_path_reserved(self.path("wait.txt")))
+        self.assertEqual(self.scheduler.cancel_many([waiting]), [waiting])
+        self.assertEqual([job.job_id for job, _ in self.scheduler.listing()], [running])
+        self.assertFalse(self.scheduler.is_output_path_reserved(self.path("wait.txt")))
+        self.assertIn("Background job #2 was cancelled before it started: test -> wait.txt", self.text())
+        self.release.set()
+        self.wait_idle()
+        self.assertEqual(self.ran, [])
+
+    def test_a_running_job_is_told_to_stop_and_ends_at_its_next_check_point(self):
+        job = self.running_job("run.txt", checks=True)
+        self.assertEqual(self.scheduler.cancel_many([job]), [job])
+        self.wait_idle()
+        self.assertIn(f"Background job #{job} was stopped before it finished: test -> run.txt", self.text())
+        self.assertNotIn("completed", self.text())
+        self.assertFalse(self.scheduler.is_output_path_reserved(self.path("run.txt")))
+
+    def test_a_running_job_is_listed_as_stopping_until_it_ends_and_is_told_only_once(self):
+        job = self.running_job("run.txt", checks=False)
+        self.assertTrue(self.scheduler.cancel(job))
+        self.assertTrue(self.scheduler.snapshot()[0].stopping)
+        self.assertEqual(self.scheduler.cancel_many([job]), [], "a job already told to stop is not told again")
+        self.assertFalse(self.scheduler.cancel(job))
+
+    def test_a_job_with_no_check_point_left_completes_and_says_so(self):
+        job = self.running_job("run.txt", checks=False)
+        self.scheduler.cancel_many([job])
+        self.release.set()
+        self.wait_idle()
+        self.assertIn(f"Background job #{job} was told to stop but had no step left to stop at, and completed in", self.text())
+        self.assertNotIn("stopped before it finished", self.text())
+
+    def test_a_number_that_names_no_job_cancels_nothing(self):
+        job = self.running_job("run.txt", checks=True)
+        self.assertEqual(self.scheduler.cancel_many([job + 7]), [])
+        self.assertFalse(self.scheduler.cancel(job + 7))
+        self.assertFalse(self.scheduler.snapshot()[0].stopping)
+
+    def test_the_waiting_jobs_leave_before_the_running_one_is_told_to_stop(self):
+        """The running job may end at once; the job behind it must not start in between."""
+        running = self.running_job("run.txt", checks=True)
+        first = self.enqueue(self.recording("first"), "first.txt")
+        second = self.enqueue(self.recording("second"), "second.txt")
+        self.assertEqual(self.scheduler.cancel_many([running, first, second]), [running, first, second])
+        self.wait_idle()
+        self.assertEqual(self.ran, [])
+        self.assertEqual(self.scheduler.listing(), [])
+
+    def test_a_job_that_ends_stops_being_listed_and_frees_its_file(self):
+        self.enqueue(self.recording("a"), "a.txt")
+        self.wait_idle()
+        self.assertEqual(self.scheduler.snapshot(), [])
+        self.assertFalse(self.scheduler.is_output_path_reserved(self.path("a.txt")))
+
+
+class SchedulerCloseTests(JobControlFixture):
+    """Closing the viewer while a job writes: the job stops and no half-written file is left, within a bound."""
+
+    def writing_job(self, name, *, checks):
+        """A job that writes a partial file, names it to the scheduler, and renames it into place if it ever finishes.
+
+        With ``checks`` it writes through CancellableFile, as `logo` and `label` do, so every write is a
+        check point and its ``finally`` deletes the file; without, it ignores the stop and holds nothing open.
+        """
+        partial, target = self.path(f".{name}.partial"), self.path(name)
+        reached = threading.Event()
+
+        def worker(payload):
+            note_partial_path(partial)
+            try:
+                if checks:
+                    with CancellableFile.at(partial, "wb") as handle:
+                        handle.write(b"half")
+                        reached.set()
+                        while not self.release.wait(0.005):
+                            handle.write(b".")
+                else:
+                    with open(partial, "wb") as handle:
+                        handle.write(b"half")
+                    reached.set()
+                    self.release.wait(30)
+                os.replace(partial, target)
+                forget_partial_path(partial)
+            finally:
+                if checks and os.path.exists(partial):
+                    os.remove(partial)
+            return {"message": "done"}
+
+        self.enqueue(worker, name)
+        self.assertTrue(reached.wait(self.STARTUP_SECONDS), "the job did not start")
+        return partial, target
+
+    def test_a_job_that_checks_stops_at_once_and_its_partial_file_is_gone(self):
+        partial, target = self.writing_job("report.xlsx", checks=True)
+        self.assertTrue(os.path.exists(partial))
+        started = time.monotonic()
+        self.scheduler.shutdown()
+        self.assertLess(time.monotonic() - started, 1.5, "a job that checks stops long before the bound")
+        self.assertEqual(os.listdir(self.root), [])
+        self.assertEqual(self.scheduler.queue_depth, 0)
+
+    def test_a_job_that_ignores_the_stop_costs_the_wait_and_its_partial_file_is_deleted(self):
+        partial, target = self.writing_job("stuck.png", checks=False)
+        queued = self.enqueue(self.recording("queued"), "queued.png")
+        self.assertTrue(os.path.exists(partial))
+        started = time.monotonic()
+        self.scheduler.shutdown(wait=0.3)
+        elapsed = time.monotonic() - started
+        self.assertGreaterEqual(elapsed, 0.25, "it waited for the job to stop")
+        self.assertLess(elapsed, 2.0, "and no longer than the bound")
+        self.assertFalse(os.path.exists(partial), "the scheduler deleted the partial file the job named")
+        self.assertFalse(self.scheduler.is_output_path_reserved(self.path("queued.png")), "the queued job's file is free")
+        # What the job does when it finally gets on cannot put a file in place: its partial file is gone.
+        self.release.set()
+        self.assertTrue(wait_for(lambda: self.scheduler.queue_depth == 0))
+        self.assertFalse(os.path.exists(target))
+        self.assertEqual(self.ran, [], "the queued job never ran")
+        self.assertEqual(queued, 2)
+
+    def test_a_file_renamed_into_place_before_the_close_is_left_alone(self):
+        finished = self.path("finished.png")
+        renamed = threading.Event()
+
+        def worker(payload):
+            partial = self.path(".finished.partial")
+            note_partial_path(partial)
+            with open(partial, "wb") as handle:
+                handle.write(b"whole")
+            os.replace(partial, finished)
+            forget_partial_path(partial)
+            renamed.set()
+            self.release.wait(30)   # a later step that ignores the stop
+            return {}
+
+        self.enqueue(worker, "finished.png")
+        self.assertTrue(renamed.wait(self.STARTUP_SECONDS))
+        self.scheduler.shutdown(wait=0.2)
+        self.release.set()
+        with open(finished, "rb") as handle:
+            self.assertEqual(handle.read(), b"whole")
+        self.assertEqual(os.listdir(self.root), ["finished.png"])
+
+    def test_closing_drops_the_waiting_jobs_refuses_new_ones_and_twice_is_harmless(self):
+        self.running_job("run.txt", checks=True)
+        self.enqueue(self.recording("a"), "a.txt")
+        self.enqueue(self.recording("b"), "b.txt")
+        self.scheduler.shutdown()
+        self.assertEqual(self.ran, [])
+        self.assertEqual(self.scheduler.listing(), [])
+        for name in ("a.txt", "b.txt", "run.txt"):
+            self.assertFalse(self.scheduler.is_output_path_reserved(self.path(name)))
+        with self.assertRaises(RuntimeError):
+            self.enqueue(self.recording("late"), "late.txt")
+        self.scheduler.shutdown()
+
+    def test_closing_with_no_job_returns_at_once(self):
+        started = time.monotonic()
+        self.scheduler.shutdown()
+        self.assertLess(time.monotonic() - started, 0.5)
+
+    def test_a_job_stopped_by_the_close_reports_nothing_more(self):
+        self.running_job("run.txt", checks=True)
+        self.reports.clear()
+        self.scheduler.shutdown()
+        self.assertEqual(self.reports, [], "the viewer is closing: nobody is left to tell")
+
+
+class JobsCommandTests(JobControlFixture):
+    """`jobs` in the headless viewer lists and cancels the background file jobs, as it does on the desktop."""
+
+    def make_scheduler(self):
+        console = mock.patch.object(vr_viewer.CONSOLE, "message")
+        self.console = console.start()
+        self.addCleanup(console.stop)
+        self.viewer = build_viewer()
+        self.reports = []
+        return self.viewer.background_job_scheduler
+
+    def jobs(self, command="jobs"):
+        return run_command(self.viewer, command)
+
+    def reports_text(self):
+        return "\n".join(str(call.args[0]) for call in self.console.call_args_list)
+
+    def test_jobs_lists_a_running_and_a_waiting_job(self):
+        self.assertIn("No commands wait or run, and no file is being written.", self.jobs())
+        self.running_job("run.txt", checks=True)
+        self.enqueue(self.recording("wait"), "wait.txt")
+        output = self.jobs()
+        self.assertRegex(output, r"#1\s+running\s+test -> run\.txt\s+\(files\)")
+        self.assertRegex(output, r"#2\s+waiting\s+test -> wait\.txt\s+\(files\)")
+        self.assertIn("2 jobs waiting or running", output)
+        self.assertNotIn("No commands wait or run", output)
+
+    def test_jobs_cancel_removes_a_waiting_job(self):
+        self.running_job("run.txt", checks=False)
+        self.enqueue(self.recording("wait"), "wait.txt")
+        output = self.jobs("jobs cancel 2")
+        self.assertIn("Cancelled 1 job: #2 test -> wait.txt.", output)
+        self.assertNotIn("Told", output)
+        self.assertEqual([job.job_id for job, _ in self.scheduler.listing()], [1])
+        self.assertFalse(self.scheduler.is_output_path_reserved(self.path("wait.txt")))
+        self.release.set()
+        self.wait_idle()
+        self.assertEqual(self.ran, [])
+
+    def test_jobs_cancel_stops_a_running_job(self):
+        self.running_job("run.txt", checks=True)
+        output = self.jobs("jobs cancel #1")
+        self.assertIn("Told 1 running job to stop: #1 test -> run.txt.", output)
+        self.assertNotIn("Cancelled 1 job", output, "a running job is told to stop, not yet cancelled")
+        self.wait_idle()
+        self.assertIn("Background job #1 was stopped before it finished: test -> run.txt", self.reports_text())
+        self.assertIn("No commands wait or run", self.jobs())
+
+    def test_a_job_told_to_stop_is_listed_as_stopping_and_is_not_told_again(self):
+        self.running_job("run.txt", checks=False)
+        self.jobs("jobs cancel 1")
+        self.assertRegex(self.jobs(), r"#1\s+stopping\s+test -> run\.txt")
+        self.assertIn("Already stopping: #1 test -> run.txt.", self.jobs("jobs cancel 1"))
+
+    def test_jobs_cancel_all_cancels_the_waiting_jobs_and_stops_the_running_one(self):
+        self.running_job("run.txt", checks=True)
+        self.enqueue(self.recording("a"), "a.txt")
+        self.enqueue(self.recording("b"), "b.txt")
+        output = self.jobs("jobs cancel all")
+        self.assertIn("Cancelled 2 jobs: #2 test -> a.txt, #3 test -> b.txt.", output)
+        self.assertIn("Told 1 running job to stop: #1 test -> run.txt.", output)
+        self.wait_idle()
+        self.assertEqual(self.ran, [])
+        self.assertIn("No commands wait or run", self.jobs())
+
+    def test_a_bare_cancel_cancels_the_newest_job_since_there_is_no_queue(self):
+        self.running_job("run.txt", checks=False)
+        self.enqueue(self.recording("a"), "a.txt")
+        self.assertIn("Cancelled 1 job: #2 test -> a.txt.", self.jobs("jobs cancel"))
+        self.assertIn("Told 1 running job to stop: #1 test -> run.txt.", self.jobs("jobs cancel"))
+        self.assertIn("Already stopping: #1", self.jobs("jobs cancel"))
+
+    def test_a_bare_cancel_with_no_job_cancels_nothing(self):
+        self.assertIn("Nothing to cancel", self.jobs("jobs cancel"))
+        self.assertIn("Nothing to cancel", self.jobs("jobs cancel all"))
+
+    def test_a_number_that_names_no_job_cancels_nothing(self):
+        self.running_job("run.txt", checks=True)
+        output = self.jobs("jobs cancel 9")
+        self.assertIn("No job #9 waits or runs; nothing was cancelled.", output)
+        self.assertFalse(self.scheduler.snapshot()[0].stopping)
+
+    def test_a_cancelled_command_reports_the_outcome_as_a_command_does(self):
+        self.running_job("run.txt", checks=True)
+        context = RecordingContext()
+        with Viewer_Command_Portal.bind(context):
+            self.jobs("jobs cancel 1")
+        self.assertEqual([status for status, _ in context.reports if status], ["succeeded"])
+
+    def test_its_help_describes_this_viewer_not_the_desktop(self):
+        for command in ("jobs help", "jobs --help"):
+            with self.subTest(command=command):
+                output = self.jobs(command)
+                self.assertIn("This viewer runs every command at once", output)
+                self.assertIn("in this terminal", output)
+                for desktop in ("Session card", "Console window", "esmfold stop", "run stop", "subcluster", "Ctrl+Z"):
+                    self.assertNotIn(desktop, output)
+        context = RecordingContext()
+        with Viewer_Command_Portal.bind(context):
+            self.jobs("jobs help")
+        self.assertEqual([status for status, _ in context.reports if status], ["succeeded"])
+
+    def test_help_jobs_gives_the_vr_text(self):
+        output = self.jobs("help jobs")
+        self.assertIn("List the background file jobs (logo, label)", output)
+        self.assertIn("(VR-specific implementation)", output)
+        self.assertIn("Run 'jobs help' for its usage in this viewer.", output)
+        self.assertNotIn("Commands run one at a time in the order given", output)
+
+
+class ConsoleCommandTests(unittest.TestCase):
+    """`console` in the headless viewer says its terminal is the console, in place of a refusal."""
+
+    def setUp(self):
+        self.viewer = build_viewer()
+
+    def run_bound(self, command):
+        context = RecordingContext()
+        with Viewer_Command_Portal.bind(context):
+            output = run_command(self.viewer, command)
+        return output, [status for status, _ in context.reports if status]
+
+    def test_console_says_the_output_is_in_this_terminal(self):
+        output, statuses = self.run_bound("console")
+        self.assertIn("The VR viewer has no Console window: everything it prints is in this terminal.", output)
+        self.assertNotIn("no window of that kind", output)
+        self.assertNotIn("is not available", output)
+        self.assertEqual(statuses, ["succeeded"], "asking where the output is has an answer: it is no failure")
+
+    def test_it_names_the_log_file_when_the_process_keeps_one(self):
+        from utilities import Console_Capture
+
+        log = os.path.join("logs", "vr-viewer-20261024-120000-1.log")
+        with mock.patch.object(Console_Capture, "current", return_value=SimpleNamespace(log_path=log)):
+            output, statuses = self.run_bound("console")
+        self.assertIn(f"in this terminal, and the log file {log} keeps every line of the session.", output)
+        self.assertEqual(statuses, ["succeeded"])
+
+    def test_a_capture_with_no_log_names_none(self):
+        from utilities import Console_Capture
+
+        with mock.patch.object(Console_Capture, "current", return_value=SimpleNamespace(log_path=None)):
+            output, _ = self.run_bound("console")
+        self.assertNotIn("log file", output)
+        self.assertIn("everything it prints is in this terminal.", output)
+
+    def test_an_argument_is_refused_with_the_usage(self):
+        output, statuses = self.run_bound("console now")
+        self.assertIn("Error: console takes no arguments, not 'now'.", output)
+        self.assertIn("Usage: console", output)
+        self.assertEqual(statuses, ["failed"])
+
+    def test_its_help_describes_this_viewer_not_the_desktop(self):
+        for command in ("console help", "console -h"):
+            with self.subTest(command=command):
+                output, statuses = self.run_bound(command)
+                self.assertIn("The VR viewer has no Console window.", output)
+                self.assertIn("the terminal it was started from is its console", " ".join(output.split()))
+                for desktop in ("Opens the Console window", "sidebar", "20,000", "Errors are red"):
+                    self.assertNotIn(desktop, output)
+                self.assertEqual(statuses, ["succeeded"])
+
+    def test_help_console_gives_the_vr_text(self):
+        output = run_command(self.viewer, "help console")
+        self.assertIn("the VR viewer has no Console window, and this terminal is its console.", output)
+        self.assertIn("(VR-specific implementation)", output)
+        self.assertIn("Run 'console help' for its usage in this viewer.", output)
+        self.assertNotIn("Needs a Viewer that shows windows", output)
+        self.assertNotIn("Open the Console window", output)
+
+    def test_the_command_list_shows_it_as_vr_text(self):
+        listing = run_command(self.viewer, "help")
+        self.assertRegex(listing, r"(?m)^    console +Say where this viewer's output is")
+        self.assertRegex(listing, r"(?m)^    jobs +List the background file jobs")
+        self.assertNotRegex(listing, r"(?m)^  \* (console|jobs) ", "neither is listed as the main program's")
 
 
 class PacketQueueTests(unittest.TestCase):

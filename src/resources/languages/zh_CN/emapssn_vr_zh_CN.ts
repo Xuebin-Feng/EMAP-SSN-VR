@@ -266,6 +266,16 @@ Serves as the layout cache to avoid recalculating layouts when reopening network
         <source>Started by hand, it dials its default {host}:{port} instead.</source>
         <translation type="unfinished">如果手动启动，它会改为连接默认的 {host}:{port}。</translation>
     </message>
+    <message>
+        <location filename="../../../commands/console.py" line="+80"/>
+        <source>The VR viewer has no Console window: everything it prints is in this terminal, and the log file {path} keeps every line of the session.</source>
+        <translation type="unfinished">VR 查看器没有控制台窗口：它打印的所有内容都在此终端中，日志文件 {path} 保存了会话的每一行。</translation>
+    </message>
+    <message>
+        <location line="+6"/>
+        <source>The VR viewer has no Console window: everything it prints is in this terminal.</source>
+        <translation type="unfinished">VR 查看器没有控制台窗口：它打印的所有内容都在此终端中。</translation>
+    </message>
 </context>
 <context>
     <name>Splash</name>

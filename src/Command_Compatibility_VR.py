@@ -50,6 +50,12 @@ Run it directly for a report::
 ``--check`` enforces the one invariant that must always hold: every command the
 dispatcher can reach is loadable. Redundant overrides are reported but never
 fail the run, because deleting one is a judgement call rather than a fix.
+
+An override is redundant when upstream's copy loads here and uses only API the VR
+viewer has. A module that shadows such a command on purpose, because what it says or
+does differs in this viewer (``console``, ``jobs``), declares why with a module-level
+``OVERRIDE_REASON``, read from its source: the report then says "deliberate
+override" and the command is not called redundant.
 """
 
 from __future__ import annotations
@@ -395,6 +401,9 @@ class CommandReport:
     upstream_missing: tuple = ()
     local_blocker: Blocker | None = None
     local_missing: tuple = ()
+    #: Why the local copy exists although upstream's is usable, as the module itself
+    #: says it (``OVERRIDE_REASON``); None for a module that gives no reason.
+    override_reason: str | None = None
 
     @property
     def upstream_usable(self):
@@ -445,7 +454,7 @@ class CommandReport:
         # not be laundered into a clean verdict.
         if self.inconclusive:
             return DEPENDENCY
-        if self.state == OVERRIDDEN and self.upstream_usable:
+        if self.state == OVERRIDDEN and self.upstream_usable and not self.override_reason:
             return REDUNDANT
         return OK
 
@@ -464,6 +473,8 @@ class CommandReport:
             return f"inconclusive - upstream copy needs {self.upstream_blocker}"
         if self.status == REDUNDANT:
             return "upstream copy is compatible; local override adds nothing"
+        if self.state == OVERRIDDEN and self.override_reason and self.upstream_usable:
+            return f"deliberate override: {self.override_reason}"
         if self.state == SHARED:
             return "upstream copy is compatible"
         if self.state == LOCAL_ONLY:
@@ -484,7 +495,32 @@ class CommandReport:
             "upstream_missing": list(self.upstream_missing),
             "local_blocker": str(self.local_blocker) if self.local_blocker else None,
             "local_missing": list(self.local_missing),
+            "override_reason": self.override_reason,
         }
+
+
+def declared_override_reason(path):
+    """The reason a command module gives for shadowing a usable upstream one, or None.
+
+    A module whose behaviour is VR's own, though the main program's loads here too, says
+    so with a module-level ``OVERRIDE_REASON = "..."``; it is read from the source, as
+    the viewer API is, so nothing runs. Without one, an override upstream could serve is
+    redundant.
+    """
+    try:
+        tree = _parse(path)
+    except (OSError, SyntaxError, ValueError):
+        return None
+    for node in tree.body:
+        if (
+            isinstance(node, ast.Assign)
+            and any(isinstance(target, ast.Name) and target.id == "OVERRIDE_REASON" for target in node.targets)
+            and isinstance(node.value, ast.Constant)
+            and isinstance(node.value.value, str)
+            and node.value.value.strip()
+        ):
+            return node.value.value.strip()
+    return None
 
 
 def _command_modules(directory):
@@ -532,6 +568,9 @@ def analyse(names=None, surface=None):
                     tuple(sorted(required_viewer_attrs(local_path) - surface))
                     if local_path
                     else ()
+                ),
+                override_reason=(
+                    declared_override_reason(local_path) if local_path else None
                 ),
             )
         )
