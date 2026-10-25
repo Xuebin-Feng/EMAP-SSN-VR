@@ -21,12 +21,24 @@ command existed, so it printed "Unknown command: help".
 Descriptions are read from the main program's ``desktop/Command_Metadata.py``
 rather than duplicated here, so VR help text cannot drift from the desktop
 viewer's. That module is descriptive only and imports no handlers and no Qt.
+
+The main program has a ``help`` command of its own: it lists the desktop Viewer's
+commands and shows one command's help by running that command's own ``help``. This
+one describes the VR viewer's commands instead (the ones VR replaces say so, and
+the terminal's own words, exit and quit, are listed), reading each description
+without running any command.
+
+OVERRIDE_REASON is read by Command_Compatibility_VR, which would otherwise take this
+override for a redundant one: the main program's module loads in this process, and
+lists what this viewer does not have.
 """
 
 import ast
 import os
 
 import Command_Engine
+
+OVERRIDE_REASON = "it lists and describes the VR viewer's commands, which differ from the desktop Viewer's"
 
 try:
     from desktop.Command_Metadata import COMMAND_METADATA, get_command_metadata

@@ -388,8 +388,11 @@ class CommandSetIntegrationTests(unittest.TestCase):
         self.assertTrue(self.by_name["zoom"].upstream_missing)
 
     def test_commands_that_differ_on_purpose_say_so_and_are_not_redundant(self):
-        """`console` and `jobs` load from upstream here, but their text and behaviour are VR's."""
-        for name in ("console", "jobs"):
+        """`console`, `help` and `jobs` load from upstream here, but their text and behaviour are VR's.
+
+        The main program has a `help` of its own since the desktop Viewer gained one; the VR one lists VR's commands.
+        """
+        for name in ("console", "help", "jobs"):
             with self.subTest(name=name):
                 report = self.by_name[name]
                 self.assertEqual(report.state, cc.OVERRIDDEN)
