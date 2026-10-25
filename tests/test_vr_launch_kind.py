@@ -84,6 +84,21 @@ def read(path):
     return Path(path).read_text(encoding="utf-8", errors="replace")
 
 
+def use_short_socket_folder(test):
+    """POSIX: make Qt's temp folder short for a test that listens on a real local socket.
+
+    A local socket is a Unix socket file named ``<temp folder>/<name>``, and a Unix socket path may hold 103
+    characters on macOS (107 on Linux), which the test run's own temp folder (tests/session_folder.py in the
+    main program) overshoots: 112 to 120 and more. Qt reads TMPDIR whenever it makes the path, for the
+    server and for a launcher's connection alike. Windows' local sockets are named pipes, with no such limit.
+    """
+    if os.name == "nt":
+        return
+    folder = tempfile.mkdtemp(prefix="ssn-", dir="/tmp")
+    test.addCleanup(shutil.rmtree, folder, True)
+    test.enterContext(mock.patch.dict(os.environ, {"TMPDIR": folder}))
+
+
 class Registered(unittest.TestCase):
     """A test that starts with VR Configuration registered, and leaves nothing registered behind."""
 
@@ -131,12 +146,13 @@ class KindDeclarationTests(Registered):
 
     def test_a_listening_vr_window_is_brought_forward_and_configs_is_not_mistaken_for_it(self):
         with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as folder:
+            use_short_socket_folder(self)
             application = QApplication.instance() or QApplication([])
             name = Desktop_Launcher.single_instance_server_name(self.kind.application_id, folder)
             activated = []
             server = QLocalServer()
             QLocalServer.removeServer(name)
-            self.assertTrue(server.listen(name))
+            self.assertTrue(server.listen(name), server.errorString())
             self.addCleanup(server.close)
             server.newConnection.connect(lambda: activated.append(server.nextPendingConnection().readAll()))
             self.assertFalse(Desktop_Launcher.activate_existing_instance("viewer", folder))
@@ -581,11 +597,12 @@ class LaunchTests(LaunchCase):
         self.assertNotIn("step_1_started", launch.marks)
 
     def test_an_open_vr_window_is_brought_forward_and_nothing_else_starts(self):
+        use_short_socket_folder(self)
         name = Desktop_Launcher.single_instance_server_name("SSN_VR_Config", self.root)
         activated = []
         server = QLocalServer()
         QLocalServer.removeServer(name)
-        self.assertTrue(server.listen(name))
+        self.assertTrue(server.listen(name), server.errorString())
         self.addCleanup(server.close)
         server.newConnection.connect(lambda: activated.append(server.nextPendingConnection().readAll()))
         launch = self.launch()
