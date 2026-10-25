@@ -25,6 +25,7 @@ are not started here.
 """
 
 import dataclasses
+import json
 import os
 import shutil
 import sys
@@ -131,6 +132,18 @@ class KindDeclarationTests(Registered):
         self.assertEqual(kind.catalogs, ((CATALOG_DIR, "emapssn_vr"),))
         self.assertEqual(kind.batch_file, DESKTOP_LAUNCHER_BATCH)
         self.assertTrue(DESKTOP_LAUNCHER_BATCH.is_file())
+
+    def test_the_kind_declares_vr_configurations_own_theme_colour_setting_for_the_splash(self):
+        kinds = Desktop_Launcher.LAUNCH_KINDS
+        self.assertEqual(self.kind.theme_setting, "VR_CONFIG_THEME_COLOR")
+        self.assertEqual(VR.VR_CONFIG_THEME_SETTING, Desktop_App.VR_CONFIG_THEME_SETTING)  # the window's own name for it
+        self.assertEqual(self.kind.theme_setting, Desktop_App.VR_CONFIG_THEME_SETTING)
+        window = read(VR_SRC / "EMAPSSN_Config_VR.py")
+        self.assertIn("ThemeColorButton(VR_CONFIG_THEME_SETTING, color=theme_color())", window)  # saves under it
+        self.assertIn("configured_theme_color(VR_CONFIG_THEME_SETTING)", window)  # and reads it back
+        for name in ("viewer", "tools", "session"):
+            with self.subTest(other=name):
+                self.assertNotEqual(self.kind.theme_setting, kinds[name].theme_setting)
 
     def test_a_second_click_finds_the_window_by_the_key_it_registers_which_is_not_configs(self):
         import Single_Instance_Probe_VR as probe
@@ -463,6 +476,48 @@ class LaunchCase(unittest.TestCase):
         patcher.start()
         self.addCleanup(patcher.stop)
         return seen
+
+
+class SplashColourTests(LaunchCase):
+    """The splash of VR Configuration is in the theme colour VR Configuration has saved."""
+
+    def splash(self, settings):
+        path = self.root / "app_settings.json"
+        if settings is None:
+            path.unlink(missing_ok=True)
+        else:
+            path.write_text(settings if isinstance(settings, str) else json.dumps(settings), encoding="utf-8")
+        launch = self.launch()
+        launch.open_splash()
+        return launch.splash
+
+    def test_it_takes_vrs_own_colour_not_configs_or_toolss(self):
+        from desktop.Studio_Theme import theme_tokens
+
+        splash = self.splash({"CONFIG_THEME_COLOR": "teal", "TOOLS_THEME_COLOR": "orange", "VR_CONFIG_THEME_COLOR": "pink"})
+        self.assertEqual(splash.theme_color, "pink")
+        self.assertEqual(splash.scheme["accent"], theme_tokens("pink")["accent"])
+        self.assertEqual(splash.scheme["accent_soft"], theme_tokens("pink")["accent_soft"])
+        self.assertEqual(splash.kind, "vr")  # and its own name and art
+
+    def test_black_is_the_windows_black(self):
+        from desktop.Studio_Theme import theme_tokens
+
+        splash = self.splash({"VR_CONFIG_THEME_COLOR": "black", "CONFIG_THEME_COLOR": "red"})
+        self.assertEqual(splash.theme_color, "black")
+        self.assertEqual(splash.scheme["accent"], theme_tokens("black")["accent"])
+
+    def test_without_a_colour_of_its_own_it_is_purple_even_when_the_other_windows_have_one(self):
+        others = {"CONFIG_THEME_COLOR": "teal", "TOOLS_THEME_COLOR": "teal"}
+        cases = (("no file", None), ("not JSON", "{ nope"), ("only the others", others),
+                 ("unknown", {"VR_CONFIG_THEME_COLOR": "mauve", "CONFIG_THEME_COLOR": "teal"}),
+                 ("not a name", {"VR_CONFIG_THEME_COLOR": 7}))
+        for case, settings in cases:
+            with self.subTest(case=case):
+                splash = self.splash(settings)
+                self.assertEqual(splash.theme_color, "purple")
+                self.assertEqual(splash.scheme, Splash.SCHEME)
+                self.assertFalse(splash.error)
 
 
 class LaunchTests(LaunchCase):

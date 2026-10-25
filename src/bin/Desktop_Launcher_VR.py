@@ -13,7 +13,8 @@ and does the same things in the same order:
 
 1. brings the VR window forward and ends if one is already open (the probe of
    ``Single_Instance_Probe_VR.py``, as the batch file's, finds the same window by the same key);
-2. shows the splash, with VR Configuration's name and art;
+2. shows the splash, with VR Configuration's name and art, in the theme colour the window has saved
+   (VR_CONFIG_THEME_SETTING; purple where there is none);
 3. checks the managed environment (the main program's), and hands over to the visible console
    (``EMAPSSN_Desktop_Launcher_VR.bat``) if it needs setup or repair;
 4. checks the VR hardware (``Detect_GPU_VR.py``) as a step of its own. The Configuration window is useful
@@ -59,6 +60,12 @@ VR_CONFIG_APPLICATION_ID = "SSN_VR_Config"
 # launcher's and the window's windows under the "EMAP-SSN VR" shortcut, not under Config's.
 VR_CONFIG_APP_USER_MODEL_ID = "ca.utoronto.emapssn.vrconfig"
 
+# The app_settings.json setting that holds VR Configuration's theme colour (what the window reads with
+# desktop.Desktop_App.VR_CONFIG_THEME_SETTING; the launcher does not import Desktop_App, which loads the window's toolkit,
+# and tests keep the two in step). The splash takes its accents in that colour: the main program's launcher reads the
+# setting a kind names and passes the colour on, and names none itself.
+VR_CONFIG_THEME_SETTING = "VR_CONFIG_THEME_COLOR"
+
 # The 512 px copy of the VR logo the splash draws (the shipped one decodes to 75 MB).
 SPLASH_LOGO = BIN_DIR / "logos" / "splash_logo_vr_512.png"
 
@@ -94,6 +101,7 @@ VR_KIND = Desktop_Launcher.LaunchKind(
     steps=(HARDWARE_STEP,),
     app_user_model_id=VR_CONFIG_APP_USER_MODEL_ID,
     catalogs=CATALOGS,
+    theme_setting=VR_CONFIG_THEME_SETTING,
 )
 
 
