@@ -55,10 +55,12 @@ KIND = Desktop_Launcher_Monitor_VR.KIND
 # which loads the window's whole toolkit; tests keep the two in step.)
 VR_CONFIG_APPLICATION_ID = "SSN_VR_Config"
 
-# The taskbar identity of the VR window and of its shortcut (install_vr.bat gives the shortcut the same,
-# and desktop.Desktop_App.APP_USER_MODEL_IDS["vr_config"] is what the window sets), so Windows groups the
-# launcher's and the window's windows under the "EMAP-SSN VR" shortcut, not under Config's.
-VR_CONFIG_APP_USER_MODEL_ID = "ca.utoronto.emapssn.vrconfig"
+# The taskbar identity of the VR window (EMAPSSN_Config_VR.VR_CONFIG_APP_USER_MODEL_ID is what the window sets;
+# the launcher does not import it, which would load the window's toolkit, and tests keep the two in step), so
+# Windows groups the launcher's and the window's windows together, apart from Config's. It is not the ID of the
+# "EMAP-SSN VR" shortcut, which carries none: a shortcut with a window's ID would give its taskbar button the
+# shortcut's large icon.
+VR_CONFIG_APP_USER_MODEL_ID = "ca.utoronto.emapssn.vrconfig.window"
 
 # The app_settings.json setting that holds VR Configuration's theme colour (what the window reads with
 # desktop.Desktop_App.VR_CONFIG_THEME_SETTING; the launcher does not import Desktop_App, which loads the window's toolkit,

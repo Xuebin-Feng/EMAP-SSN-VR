@@ -115,12 +115,12 @@ if exist "!PROJECT_ROOT!\src\bin\Build_Launcher.bat" (
 )
 if not defined USE_LAUNCHER_EXE echo        The shortcut will open the launcher in a console window instead.
 
-:: 5. Create the Windows shortcut for the VR Configuration GUI. The taskbar groups the windows of the
-::    process with its AppUserModelID under the shortcut, with its name and icon: the one VR Config sets.
+:: 5. Create the Windows shortcut for the VR Configuration GUI. It carries no AppUserModelID: VR Config sets its
+::    own for its taskbar button (with the small icon), and a shortcut that carried it would give the button the
+::    shortcut's large one.
 echo Creating shortcut for EMAP-SSN VR...
 powershell -ExecutionPolicy Bypass -Command "$q = [char]34; $WshShell = New-Object -ComObject WScript.Shell; $Shortcut = $WshShell.CreateShortcut($env:OPT_VR_ROOT + '\EMAP-SSN VR.lnk'); if ($env:USE_LAUNCHER_EXE) { $Shortcut.TargetPath = $env:LAUNCHER_EXE; $Shortcut.Arguments = 'vr' } else { $Shortcut.TargetPath = $env:WINDIR + '\System32\cmd.exe'; $Shortcut.Arguments = '/d /c ' + $q + $q + $env:OPT_VR_ROOT + '\src\bin\EMAPSSN_Desktop_Launcher_VR.bat' + $q + $q }; $Shortcut.WorkingDirectory = $env:OPT_VR_ROOT; $Shortcut.Description = 'EMAP-SSN VR Configuration'; if ($env:VR_ICON) { $Shortcut.IconLocation = $env:VR_ICON }; $Shortcut.Save();"
 if exist "EMAP-SSN VR.lnk" (
-    if exist "!PROJECT_ROOT!\src\bin\Set_Shortcut_AppId.ps1" powershell -NoProfile -ExecutionPolicy Bypass -File "!PROJECT_ROOT!\src\bin\Set_Shortcut_AppId.ps1" -Lnk "!OPT_VR_ROOT!\EMAP-SSN VR.lnk" -AppId ca.utoronto.emapssn.vrconfig
     echo [OK] Created "EMAP-SSN VR.lnk" in !OPT_VR_ROOT!.
 ) else (
     echo [ERROR] The shortcut could not be created.

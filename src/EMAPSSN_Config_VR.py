@@ -53,12 +53,13 @@ from utilities.Terminal_Launcher import HoldMode, launch_in_terminal
 from utilities.Console_Capture import install_qt_message_handler
 from utilities import Desktop_Open, Startup_Status
 from desktop.Desktop_App import (
-    APP_USER_MODEL_IDS,
     APPLICATION_VERSION,
     CONFIG_DISPLAY_NAME,
     VIEWER_DISPLAY_NAME,
     VIEWER_DESKTOP_FILE_NAME,
+    TaskbarIdentity,
     configure_linux_qt_desktop_identity,
+    launcher_relaunch_command,
     set_app_user_model_id,
 )
 from Layout_Cache_Generator import LayoutGenerationSettings
@@ -75,6 +76,14 @@ DIRECTORY_PROFILE_DEFAULTS = {
 #: rather than borrowing the desktop program's display names.
 VR_CONFIG_DISPLAY_NAME = QT_TRANSLATE_NOOP("Config", "EMAP-SSN VR Configuration")
 VR_VIEWER_DISPLAY_NAME = "EMAP-SSN VR Viewer"  # The terminal's title, which stays English.
+
+#: The taskbar identity of this window and its process, which is not the ID of any shortcut, as the main program's
+#: (desktop.Desktop_App.APP_USER_MODEL_IDS says why), and not Config's, so the two windows group apart. The
+#: launcher sets the same ID for its process (Desktop_Launcher_VR.VR_CONFIG_APP_USER_MODEL_ID); tests keep them in step.
+VR_CONFIG_APP_USER_MODEL_ID = "ca.utoronto.emapssn.vrconfig.window"
+#: What EMAP-SSN.exe is asked for to start this window, and the batch file it falls back to (which takes no word).
+VR_LAUNCHER_WORD = "vr"
+VR_LAUNCHER_BATCH = Path(_bootstrap_vr.VR_SRC_DIR) / "bin" / "EMAPSSN_Desktop_Launcher_VR.bat"
 
 #: VR Config's own texts are in opt_vr's catalog, emapssn_vr; the texts it
 #: shares with the desktop Config come from the main catalog.
@@ -1532,7 +1541,10 @@ if __name__ == "__main__":
             icon_path = application_icon_path()
             if icon_path:
                 self.setWindowIcon(QIcon(icon_path))
-                
+                if icon_path.endswith(".ico"):  # the taskbar button shows this icon, not the large one of the desktop shortcut
+                    TaskbarIdentity(self, VR_CONFIG_APP_USER_MODEL_ID, icon_path, translate("Config", VR_CONFIG_DISPLAY_NAME),
+                                    launcher_relaunch_command(VR_LAUNCHER_WORD, VR_LAUNCHER_BATCH, ""))
+
             self.resize(1000, 650)
             
             self.central_widget = QWidget()
@@ -5504,7 +5516,7 @@ if __name__ == "__main__":
         def save_only(self):
             self.save_settings()
 
-    set_app_user_model_id(APP_USER_MODEL_IDS["vr_config"])  # before the first window: the taskbar says EMAP-SSN
+    set_app_user_model_id(VR_CONFIG_APP_USER_MODEL_ID)  # before the first window: the taskbar says EMAP-SSN
     existing_qt_application = QApplication.instance()
     app = existing_qt_application or QApplication(sys.argv)
     install_qt_message_handler()  # Qt's warnings reach the Console tagged; a no-op without a capture

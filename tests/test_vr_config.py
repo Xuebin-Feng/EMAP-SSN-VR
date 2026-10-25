@@ -357,9 +357,33 @@ class ConsoleTests(unittest.TestCase):
             source = handle.read()
         calls = [node for node in ast.walk(ast.parse(source)) if isinstance(node, ast.Call)
                  and getattr(node.func, "id", None) == "set_app_user_model_id"]
-        self.assertEqual([ast.unparse(call.args[0]) for call in calls], ["APP_USER_MODEL_IDS['vr_config']"])
-        self.assertLess(source.index('set_app_user_model_id(APP_USER_MODEL_IDS["vr_config"])'),
+        self.assertEqual([ast.unparse(call.args[0]) for call in calls], ["VR_CONFIG_APP_USER_MODEL_ID"])
+        self.assertLess(source.index("set_app_user_model_id(VR_CONFIG_APP_USER_MODEL_ID)"),
                         source.index("app = existing_qt_application or QApplication(sys.argv)"))
+
+    def test_the_window_gives_itself_the_small_icon_its_own_name_and_a_start_command_for_the_taskbar(self):
+        import ast
+
+        path = os.path.join(VR_SRC, "EMAPSSN_Config_VR.py")
+        with open(path, encoding="utf-8") as handle:
+            source = handle.read()
+        calls = [node for node in ast.walk(ast.parse(source)) if isinstance(node, ast.Call)
+                 and ast.unparse(node.func) == "TaskbarIdentity"]
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(
+            [ast.unparse(argument) for argument in calls[0].args],
+            ["self", "VR_CONFIG_APP_USER_MODEL_ID", "icon_path", "translate('Config', VR_CONFIG_DISPLAY_NAME)",
+             "launcher_relaunch_command(VR_LAUNCHER_WORD, VR_LAUNCHER_BATCH, '')"])
+        # The icon is the small one (ICON_CANDIDATES), never vr_logo_large.ico, which the shortcut uses for the desktop.
+        self.assertNotIn("_large", source)
+        self.assertIn('"vr_logo.ico"', source)
+        # The launcher knows the word and the batch file, which takes no word: as install_vr.bat's shortcut runs them.
+        with open(os.path.join(_bootstrap_vr.SRC_DIR, "bin", "Launcher.cs"), encoding="utf-8") as handle:
+            main_launcher = handle.read()
+        self.assertIn('VR_LAUNCHER_WORD = "vr"', source)
+        self.assertIn('new[] { "vr",', main_launcher)
+        self.assertTrue(os.path.isfile(os.path.join(VR_SRC, "bin", "EMAPSSN_Desktop_Launcher_VR.bat")))
+        self.assertIn('"bin" / "EMAPSSN_Desktop_Launcher_VR.bat"', source)
 
     def test_the_footer_has_no_console_button_and_the_dropdown_has_its_full_width(self):
         report = report_from(

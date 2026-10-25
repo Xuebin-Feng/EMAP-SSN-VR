@@ -13,8 +13,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""install_vr.bat: the "EMAP-SSN VR" shortcut starts EMAP-SSN.exe vr (no console, a splash), with VR's icon and the
-taskbar identity VR Config sets; the launcher is built, with the script the main installer uses, when it is missing
+"""install_vr.bat: the "EMAP-SSN VR" shortcut starts EMAP-SSN.exe vr (no console, a splash), with VR's large icon and
+no taskbar identity (VR Config sets its own, with the small icon); the launcher is built, with the script the main installer uses, when it is missing
 or older than its source (one built before "vr" was a window would open the wrong one); and a machine that cannot
 build it keeps the shortcut that runs the VR batch file in a console. The run tests use a scratch copy of the files
 the installer needs, a stand-in for the client download and no Desktop copy, and open no window."""
@@ -80,15 +80,18 @@ class InstallerTextTests(unittest.TestCase):
         # It runs before the shortcut that needs to know whether it worked.
         self.assertLess(self.text.index("Build_Launcher.bat"), self.text.index("$Shortcut.TargetPath"))
 
-    def test_the_shortcut_gets_the_taskbar_identity_the_window_sets(self):
+    def test_the_shortcut_carries_no_taskbar_identity_because_the_window_would_get_its_large_icon(self):
+        import re
+
         from desktop.Desktop_App import APP_USER_MODEL_IDS
 
-        self.assertIn(f"-AppId {APP_USER_MODEL_IDS['vr_config']}", self.text)
-        self.assertIn("!PROJECT_ROOT!\\src\\bin\\Set_Shortcut_AppId.ps1", self.text)
-        self.assertTrue((MAIN_BIN / "Set_Shortcut_AppId.ps1").is_file())
-        # Not Config's or Tools's: the VR window groups apart from them.
-        self.assertNotIn(APP_USER_MODEL_IDS["config"], self.text)
-        self.assertNotIn(APP_USER_MODEL_IDS["tools"], self.text)
+        self.assertNotIn("-AppId", self.text)
+        self.assertNotIn("Set_Shortcut_AppId", self.text)
+        window_id = re.search(r'^VR_CONFIG_APP_USER_MODEL_ID = "([^"]+)"', (VR_SRC / "EMAPSSN_Config_VR.py").read_text(encoding="utf-8"), re.M).group(1)
+        self.assertNotIn(window_id, self.text)
+        for app_id in APP_USER_MODEL_IDS.values():
+            self.assertNotIn(app_id, self.text)
+        self.assertIn("vr_logo_large.ico", self.text)  # the shortcut keeps the large icon, for the desktop
 
     def test_the_shortcut_is_still_named_and_iconed_as_before(self):
         self.assertIn("'\\EMAP-SSN VR.lnk'", self.text)
@@ -111,7 +114,7 @@ class InstallerRunTests(unittest.TestCase):
         root = Path(folder.name) / "project root"
         main_bin = root / "src" / "bin"
         (main_bin / "logos").mkdir(parents=True)
-        for name in ("Launcher.cs", "Set_Shortcut_AppId.ps1", "Build_Launcher.bat"):
+        for name in ("Launcher.cs", "Build_Launcher.bat"):
             shutil.copyfile(MAIN_BIN / name, main_bin / name)
         (main_bin / "EMAPSSN.bat").write_text("@echo off\r\n", encoding="utf-8")  # only its presence is checked
         shutil.copyfile(MAIN_BIN / "logos" / "viewer_logo_large.ico", main_bin / "logos" / "viewer_logo_large.ico")
@@ -153,9 +156,7 @@ class InstallerRunTests(unittest.TestCase):
         header = struct.unpack_from("<I", data, 0x3C)[0]
         return struct.unpack_from("<H", data, header + 24 + 68)[0]
 
-    def test_it_builds_the_launcher_and_points_the_shortcut_at_it_for_vr_with_the_vr_icon_and_id(self):
-        from desktop.Desktop_App import APP_USER_MODEL_IDS
-
+    def test_it_builds_the_launcher_and_points_the_shortcut_at_it_for_vr_with_the_vr_icon_and_no_id(self):
         root = self.tree()
         done = self.install(root)
         self.assertIn("Built EMAP-SSN.exe", done.stdout, done.stdout + done.stderr)
@@ -167,8 +168,7 @@ class InstallerRunTests(unittest.TestCase):
         self.assertEqual(found["ARGS"], "vr")
         self.assertEqual(Path(found["CWD"]), root / "opt_vr")
         self.assertTrue(found["ICON"].lower().endswith("vr_logo_large.ico,0"), found["ICON"])
-        self.assertEqual(found["AUMID"], APP_USER_MODEL_IDS["vr_config"])
-        self.assertNotEqual(found["AUMID"], APP_USER_MODEL_IDS["config"])
+        self.assertEqual(found["AUMID"], "")  # a window whose ID it carried would get its large icon in the taskbar
         # Nothing else was made in the parent, and the Desktop copy was declined.
         self.assertEqual(sorted(path.name for path in root.iterdir()), ["EMAP-SSN.exe", "opt_vr", "src"])
         self.assertEqual(sorted(path.name for path in (root / "opt_vr").iterdir()),
@@ -193,9 +193,7 @@ class InstallerRunTests(unittest.TestCase):
         self.assertGreater((root / "EMAP-SSN.exe").stat().st_mtime, old + 60)
         self.assertEqual(self.shortcut(root / "opt_vr" / "EMAP-SSN VR.lnk")["ARGS"], "vr")
 
-    def test_without_the_compiler_the_shortcut_runs_the_vr_batch_file_in_a_console_as_before_with_its_id(self):
-        from desktop.Desktop_App import APP_USER_MODEL_IDS
-
+    def test_without_the_compiler_the_shortcut_runs_the_vr_batch_file_in_a_console_as_before(self):
         root = self.tree()
         with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as empty:
             (Path(empty) / "System32").mkdir()
@@ -207,7 +205,7 @@ class InstallerRunTests(unittest.TestCase):
         self.assertTrue(found["TARGET"].lower().endswith("cmd.exe"), found["TARGET"])
         self.assertIn("EMAPSSN_Desktop_Launcher_VR.bat", found["ARGS"])
         self.assertTrue(found["ARGS"].startswith("/d /c "), found["ARGS"])
-        self.assertEqual(found["AUMID"], APP_USER_MODEL_IDS["vr_config"])
+        self.assertEqual(found["AUMID"], "")
 
     def test_a_stale_launcher_that_cannot_be_replaced_does_not_become_the_shortcuts_target(self):
         root = self.tree()

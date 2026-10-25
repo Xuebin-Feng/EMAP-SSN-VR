@@ -175,13 +175,16 @@ class KindDeclarationTests(Registered):
                 application.processEvents()
             self.assertEqual(len(activated), 1)
 
-    def test_the_launcher_and_the_shortcut_and_the_window_share_one_taskbar_identity_that_is_not_configs(self):
+    def test_the_launcher_and_the_window_share_one_taskbar_identity_that_is_not_configs_or_the_shortcuts(self):
         identity = self.kind.app_user_model_id
-        self.assertEqual(identity, Desktop_App.APP_USER_MODEL_IDS["vr_config"])
-        self.assertIn('set_app_user_model_id(APP_USER_MODEL_IDS["vr_config"])', read(VR_SRC / "EMAPSSN_Config_VR.py"))
-        self.assertIn(f"-AppId {identity}", read(OPT_VR / "install_vr.bat"))
-        self.assertNotEqual(identity, Desktop_App.APP_USER_MODEL_IDS["config"])
-        self.assertNotEqual(identity, Desktop_App.APP_USER_MODEL_IDS["tools"])
+        window = read(VR_SRC / "EMAPSSN_Config_VR.py")
+        self.assertIn(f'VR_CONFIG_APP_USER_MODEL_ID = "{identity}"', window)
+        self.assertIn("set_app_user_model_id(VR_CONFIG_APP_USER_MODEL_ID)", window)
+        self.assertNotIn(identity, read(OPT_VR / "install_vr.bat"))  # a shortcut with it would give the window its large icon
+        # The earlier installer gave the shortcut this one, which is still on desktops: with it the window gets the large icon.
+        self.assertNotEqual(identity, "ca.utoronto.emapssn.vrconfig")
+        self.assertNotIn(identity, Desktop_App.APP_USER_MODEL_IDS.values())
+        self.assertNotIn("vr_config", Desktop_App.APP_USER_MODEL_IDS)  # VR declares its own; the main program names no VR
 
     def test_the_hardware_check_is_the_script_the_batch_file_runs_in_the_same_way(self):
         step = VR.HARDWARE_STEP
