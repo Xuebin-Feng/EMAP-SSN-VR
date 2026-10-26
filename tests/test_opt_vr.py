@@ -801,6 +801,58 @@ class ExportCacheNameTests(unittest.TestCase):
                 [cache.headers[1], cache.headers[3]],
             )
 
+    def exported(self, command, groups):
+        """(output, {file below the analysis folder: its text}) of one export in a fresh results folder."""
+        shutil.rmtree(os.path.join(self.root, "results"), ignore_errors=True)
+        viewer, _ = self.open_saved(groups, ["LEIDEN_1.0", 2])
+        output = run_command(viewer, command)
+        files = {}
+        for path in self.written():
+            with open(os.path.join(self.root, path), encoding="utf-8") as handle:
+                files["/".join(path.split("/")[3:])] = handle.read()
+        return output, files
+
+    def test_a_bare_label_exports_what_the_label_in_hashes_does(self):
+        groups = [{"alpha"}, {"beta", "alpha"}, set(), set(), set()]
+        for hashed, bare in (
+            ("export #alpha# #cluster_0#", "export alpha cluster_0"),
+            ("export #beta#", "export BETA"),
+            ("export #alpha# #cluster_0# #alpha#", "export alpha #cluster_0# Cluster_0 #alpha#"),
+        ):
+            with self.subTest(command=bare):
+                _, expected = self.exported(hashed, groups)
+                self.assertTrue(expected)
+                self.assertEqual(self.exported(bare, groups)[1], expected)
+
+    def test_the_keywords_keep_their_meaning_beside_a_group_with_that_name(self):
+        groups = [{"alpha"}, {"groups"}, set(), set(), set()]
+        by_keyword = self.exported("export groups", groups)[1]
+        self.assertEqual(sorted(path.rsplit("/", 1)[1] for path in by_keyword), ["alpha.fasta", "groups.fasta"])
+        self.assertEqual(self.exported("export group", groups)[1], by_keyword)
+        self.assertEqual(
+            sorted(path.rsplit("/", 1)[1] for path in self.exported("export #groups#", groups)[1]),
+            ["groups.fasta"],
+        )
+        # cluster is clusters, as group is groups.
+        self.assertEqual(self.exported("export cluster", groups)[1], self.exported("export clusters", groups)[1])
+
+    def test_what_is_no_label_is_refused_before_anything_is_written(self):
+        groups = [{"alpha"}, set(), set(), set(), set()]
+        for command, message in (
+            ("export {Length>5}", "Unrecognized export target '{Length>5}'"),
+            ("export alpha $sele$", "Unrecognized export target '$sele$'"),
+            ("export alpha -x", "Unrecognized export target '-x'"),
+            ("export alpha help", "Unrecognized export target 'help'"),
+            ("export missing", "does not exist"),
+            ("export alpha missing", "does not exist"),
+            ("export groups alpha", "cannot be combined"),
+            ("export group:alpha", "Legacy export group:NAME"),
+        ):
+            with self.subTest(command=command):
+                output, files = self.exported(command, groups)
+                self.assertIn(message, output)
+                self.assertEqual(files, {})
+
 
 class MetadataCommandTests(unittest.TestCase):
     """`meta` runs the desktop viewer's own implementation, not a copy."""
