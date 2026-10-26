@@ -982,6 +982,13 @@ class MetadataCommandTests(unittest.TestCase):
             run_command(self.viewer, "meta delete all"),
         )
 
+    def test_delete_takes_a_name_in_braces_as_the_bare_name(self):
+        run_command(self.viewer, "meta extra.csv")
+        self.assertIn("not found: {Nope}", run_command(self.viewer, "meta delete {Nope}"))
+        self.assertIn("Organism", self.viewer.metadata)
+        self.assertIn("Deleted metadata columns: Organism", run_command(self.viewer, "meta delete {organism}"))
+        self.assertNotIn("Organism", self.viewer.metadata)
+
     def test_display_is_still_an_acknowledged_no_op(self):
         output = run_command(self.viewer, "meta display Length")
         self.assertIn("no on-canvas HUD", output)
