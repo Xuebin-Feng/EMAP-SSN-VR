@@ -59,10 +59,12 @@ like every other mirrored file here. It does two things:
   older than its source (one built before `vr` was a window would open the
   Configuration window instead), and where it cannot, the shortcut runs
   `src\bin\EMAPSSN_Desktop_Launcher_VR.bat` in a console, as before. The
-  shortcut carries VR Config's taskbar identity, so its windows group under
-  it. It sets the Python environment up on its first run, exactly as the
-  `EMAP-SSN` and `EMAP-SSN Tools` shortcuts do, so that first launch takes
-  noticeably longer than later ones.
+  shortcut carries no taskbar identity (AppUserModelID) and has VR's large
+  icon: VR Config and its start-up screen set an identity of their own, with
+  the small icon, for their taskbar button, and a shortcut that carried it
+  would give that button the large one. It sets the Python environment up on
+  its first run, exactly as the `EMAP-SSN` and `EMAP-SSN Tools` shortcuts do,
+  so that first launch takes noticeably longer than later ones.
 
 Without network access, download the asset named in `player_release.json`
 from the repository's releases page yourself, then:
