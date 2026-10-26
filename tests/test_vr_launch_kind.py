@@ -118,6 +118,7 @@ class Registered(unittest.TestCase):
         self.addCleanup(Desktop_Launcher.LAUNCH_KINDS.pop, "vr", None)
         self.addCleanup(Splash.SUBTITLES.pop, "vr", None)
         self.addCleanup(Splash.LOGO_FILES.pop, "vr", None)
+        self.addCleanup(Splash.TASKBARS.pop, "vr", None)
         self.addCleanup(Desktop_Launcher_Monitor.EXTRA_APPLICATIONS.pop, "vr", None)
         self.kind = VR.register()
 
@@ -193,6 +194,21 @@ class KindDeclarationTests(Registered):
         self.assertNotIn(identity, Desktop_App.APP_USER_MODEL_IDS.values())
         self.assertNotIn("vr_config", Desktop_App.APP_USER_MODEL_IDS)  # VR declares its own; the main program names no VR
 
+    def test_the_splash_has_the_vr_windows_small_icon_id_and_start_command_so_the_two_are_one_group(self):
+        taskbar = Splash.TASKBARS["vr"]
+        window = read(VR_SRC / "EMAPSSN_Config_VR.py")
+        self.assertEqual(taskbar.app_id, self.kind.app_user_model_id)  # the ID the window and the launcher's process set
+        self.assertEqual(taskbar.icon, VR.TASKBAR_ICON)
+        self.assertEqual(VR.TASKBAR_ICON, BIN_DIR / "logos" / "vr_logo.ico")  # the small one: the shortcut has vr_logo_large.ico
+        self.assertTrue(VR.TASKBAR_ICON.is_file())
+        self.assertIn('os.path.join(_bootstrap_vr.VR_SRC_DIR, "bin", "logos", "vr_logo.ico"),', window)  # the window's first choice
+        # The window's start command is EMAP-SSN.exe vr, or opt_vr's batch file (which takes no word) where that is not built.
+        self.assertIn('VR_LAUNCHER_WORD = "vr"', window)
+        self.assertIn('VR_LAUNCHER_BATCH = Path(_bootstrap_vr.VR_SRC_DIR) / "bin" / "EMAPSSN_Desktop_Launcher_VR.bat"', window)
+        self.assertIn('launcher_relaunch_command(VR_LAUNCHER_WORD, VR_LAUNCHER_BATCH, "")', window)
+        self.assertEqual(taskbar.relaunch, Desktop_App.launcher_relaunch_command("vr", DESKTOP_LAUNCHER_BATCH, ""))
+        self.assertEqual(VR.KIND, "vr")
+
     def test_the_hardware_check_is_the_script_the_batch_file_runs_in_the_same_way(self):
         step = VR.HARDWARE_STEP
         self.assertEqual(step.label, "Checking VR hardware…")
@@ -266,6 +282,29 @@ class SplashTextsTests(Registered):
         window.show()
         application.processEvents()
         window.grab()  # it draws
+
+    def test_the_splash_is_titled_as_the_window_is_and_sets_its_identity_on_its_own_taskbar_button(self):
+        QApplication.instance() or QApplication([])
+        Splash.load_fonts(None)
+        with mock.patch.object(Splash, "TaskbarIdentity") as identity:
+            window = Splash.SplashWindow("vr")
+        self.addCleanup(window.deleteLater)
+        self.assertEqual(window.windowTitle(), "EMAP-SSN VR Configuration")
+        self.assertIn('QT_TRANSLATE_NOOP("Config", "EMAP-SSN VR Configuration")', read(VR_SRC / "EMAPSSN_Config_VR.py"))
+        taskbar = VR.taskbar()
+        identity.assert_called_once_with(window, taskbar.app_id, str(taskbar.icon), "EMAP-SSN VR Configuration", taskbar.relaunch)
+        self.assertFalse(window.windowIcon().isNull())
+
+    def test_the_title_is_the_windows_own_name_in_chinese_too(self):
+        QApplication.instance() or QApplication([])
+        translators = [Splash.install_catalog("zh_CN"), *Splash.install_extra_catalogs("zh_CN", self.kind.catalogs)]
+        try:
+            self.assertEqual(Splash.window_name("vr"), QCoreApplication.translate("Config", "EMAP-SSN VR Configuration"))
+            self.assertEqual(Splash.window_name("vr"), "EMAP-SSN VR 配置")
+        finally:
+            for translator in translators:
+                if translator is not None:
+                    QCoreApplication.removeTranslator(translator)
 
     def test_the_texts_are_in_vrs_catalog_under_the_splash_context_and_not_in_the_main_one(self):
         texts = {VR.SUBTITLE, VR.CHECKING_HARDWARE, VR.HARDWARE_WARNING}

@@ -44,6 +44,7 @@ import _bootstrap_vr  # noqa: E402  (puts the parent src tree on sys.path)
 
 import Desktop_Launcher_Monitor_VR  # noqa: E402
 from desktop import Desktop_Launcher, Splash  # noqa: E402
+from desktop.Taskbar_Identity import launcher_relaunch_command  # noqa: E402  (ctypes and QtCore: the splash's own import)
 from utilities import Startup_Status as Status  # noqa: E402
 
 # The launcher kind of this window, as EMAP-SSN.exe and the batch file name it.
@@ -70,6 +71,10 @@ VR_CONFIG_THEME_SETTING = "VR_CONFIG_THEME_COLOR"
 
 # The 512 px copy of the VR logo the splash draws (the shipped one decodes to 75 MB).
 SPLASH_LOGO = BIN_DIR / "logos" / "splash_logo_vr_512.png"
+
+# The small icon of the VR window, which its window and its taskbar button show (EMAPSSN_Config_VR.ICON_CANDIDATES; the large
+# one is the shortcut's): the splash has a taskbar button too, with this icon and the window's ID and start command.
+TASKBAR_ICON = BIN_DIR / "logos" / "vr_logo.ico"
 
 # The visible-console launch: the first start (it sets the environment up), --console, and a launcher failure.
 BATCH_FILE = BIN_DIR / "EMAPSSN_Desktop_Launcher_VR.bat"
@@ -107,10 +112,16 @@ VR_KIND = Desktop_Launcher.LaunchKind(
 )
 
 
+def taskbar():
+    """What the splash is to the Windows taskbar: the window's own icon, ID and start command (it sets the same three), so
+    the splash and the window are one group, and the button is the window's when the splash closes."""
+    return Splash.Taskbar(TASKBAR_ICON, VR_CONFIG_APP_USER_MODEL_ID, launcher_relaunch_command(KIND, BATCH_FILE, ""))
+
+
 def register():
     """Add VR Configuration to the main program's launcher, splash and monitor; returns its launcher kind."""
     Desktop_Launcher_Monitor_VR.register()
-    Splash.register_kind(KIND, SUBTITLE, SPLASH_LOGO)
+    Splash.register_kind(KIND, SUBTITLE, SPLASH_LOGO, taskbar())
     return Desktop_Launcher.register_kind(VR_KIND)
 
 

@@ -199,7 +199,8 @@ The two Python modules use the upstream launcher and monitor instead of copying
 their policy — environment sanitizing, the splash, the atomic ready and exit
 files, the dismissal handshake, the error report. They only declare what is VR's:
 the window's script and folder, its single-instance key and taskbar identity, its
-name and art on the splash, its texts (`resources/languages/emapssn_vr`), the
+name and art on the splash (and its small icon and taskbar identity there, which put
+the splash's taskbar button in the window's group), its texts (`resources/languages/emapssn_vr`), the
 hardware check as a step of the start, and the batch file for the console launch.
 Upstream owns no reference to any of it, which is why it owns none to
 `opt_vr/src/EMAPSSN_Config_VR.py`: that path is absent whenever the submodule is
