@@ -374,7 +374,12 @@ class LauncherMonitorTests(unittest.TestCase):
         self.registered()
         for report in ("terminal", "dialog"):
             with self.subTest(report=report):
-                reports = []
+                reports, codes = [], []
+
+                def dialog(log_path, return_code=None):  # upstream's signature: the dialog says how the window ended
+                    reports.append(("dialog", log_path))
+                    codes.append(return_code)
+
                 process = mock.Mock(pid=12345)
                 process.wait.return_value = 3
                 with tempfile.TemporaryDirectory() as state_root:
@@ -384,12 +389,10 @@ class LauncherMonitorTests(unittest.TestCase):
                     (state / "terminal.dismissed").write_text("dismissed\n", encoding="utf-8")
                     with mock.patch.object(self.upstream.subprocess, "Popen", return_value=process), mock.patch.object(
                         self.upstream, "_open_error_terminal", side_effect=lambda log: reports.append(("terminal", log))
-                    ), mock.patch.object(
-                        self.upstream, "_report_application_failure",
-                        side_effect=lambda log: reports.append(("dialog", log)),
-                    ):
+                    ), mock.patch.object(self.upstream, "_report_application_failure", side_effect=dialog):
                         self.assertEqual(self.upstream.run_monitor("vr", state, failure_report=report), 3)
                 self.assertEqual([kind for kind, _ in reports], [report])  # nothing opened for real
+                self.assertEqual(codes, [3] if report == "dialog" else [])  # the dialog is told the window's exit status
 
     def test_the_command_line_is_upstreams_with_the_kind_first_and_refuses_other_words(self):
         self.addCleanup(self.upstream.EXTRA_APPLICATIONS.pop, "vr", None)
