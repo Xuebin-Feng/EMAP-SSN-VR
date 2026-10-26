@@ -266,7 +266,7 @@ in the VR runtime reads them and no shared command does either:
 | Removed | Why |
 |---|---|
 | `TEXT_SIZE`, `TEXT_COLOR` | no HUD text is drawn in the headset |
-| `FEWER_EDGES_WHILE_MOVING`, `LOW_RESOURCE_ANIMATIONS`, `LOW_RESOURCE_DRAWING`, `LOW_RESOURCE_WEBSERVER`, `SHOW_FPS` | Low Resource Mode and the frame rate: optimisations of the desktop Viewer's canvas, sidebar, slider and web pages; the VR client does the drawing |
+| `FEWER_EDGES_WHILE_MOVING`, `LOW_RESOURCE_ANIMATIONS`, `LOW_RESOURCE_DRAWING`, `LOW_RESOURCE_WEBSERVER`, `SHOW_FPS` | Low Resource Mode and the frame rate: optimisations of the desktop Viewer's canvas, zoom, slider and web pages; the VR client does the drawing |
 
 `NEIGHBOR_COLOR` has no control of its own either: `Settings` republishes
 `INITIAL_NODE_COLOR` under that name and it wins, so a second control would
@@ -376,7 +376,8 @@ override needs a reason that survives being said out loud:
 | `alignment`, `embedding`, `run` | Upstream opens a Qt file dialog. Identical once the file is chosen, except that a Python script `run` names runs in the foreground here, where the desktop viewer runs it in the background to keep its window responsive; the path is an argument here. |
 | `export` | Upstream pops the system file manager through `desktop.Desktop_App`, which reaches PySide6. Otherwise a verbatim copy — keep it diffable. |
 | `console` | Upstream opens the desktop Viewer's Console window and, where there is none, refuses. This viewer is a terminal program: its terminal is its console, so the command says that, names the log file when the process keeps one (the main program's `Console_Capture`), and succeeds. Upstream's module loads here; the override is deliberate (`OVERRIDE_REASON`). |
-| `jobs` | The listing and the cancelling are upstream's command, run on this viewer's scheduler. What differs is its help, which upstream writes for a command queue, the Session card and windows this viewer has not, and a bare `jobs cancel`, which cancels the newest job here, where upstream cancels the newest queued command. Deliberate (`OVERRIDE_REASON`). |
+| `jobs` | The listing and the cancelling are upstream's command, run on this viewer's scheduler. What differs is its help, which upstream writes for a command queue, the Session card and windows this viewer has not. Deliberate (`OVERRIDE_REASON`). |
+| `help` | Upstream lists the desktop Viewer's commands and shows one by running that command's own `help`. This viewer's `help` describes its own commands (saying which ones VR replaces) and the terminal's `exit` and `quit`, without running any command. Deliberate (`OVERRIDE_REASON`). |
 | `meta` | The web spreadsheet UI. Upload, download and column deletion are the main program's `Metadata_Core` functions, called directly. One addition: `meta download <file> <expression>` takes a trailing selection expression, which `Metadata_Core.download_metadata` has always accepted and the desktop command does not expose. The expression runs to the end of the line, so it may contain spaces (`meta download long.csv {Length > 500} & #cluster_1#`). |
 
 Anything not on that list is served from `src/commands`, so it cannot drift.
