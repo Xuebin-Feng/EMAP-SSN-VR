@@ -393,14 +393,17 @@ class LauncherMonitorTests(unittest.TestCase):
 
     def test_the_command_line_is_upstreams_with_the_kind_first_and_refuses_other_words(self):
         self.addCleanup(self.upstream.EXTRA_APPLICATIONS.pop, "vr", None)
-        with mock.patch.object(self.upstream, "run_monitor", return_value=0) as run:
-            self.assertEqual(self.monitor.main(["--failure-report", "dialog", "vr", "state"]), 0)
-        run.assert_called_once_with("vr", Path("state"), app_args=[], failure_report="dialog")
-        with mock.patch.object(self.upstream, "launch_and_wait", return_value=0) as wait:
-            self.assertEqual(self.monitor.main(["--launch-and-wait", "vr", "state"]), 0)
-        wait.assert_called_once_with("vr", Path("state"))
-        with self.assertRaises(SystemExit), mock.patch.object(sys, "stderr"):
-            self.monitor.main(["state"])  # the old command line, with no kind
+        # The command line is not Windows-specific, and the guard (which WindowsOnlyTests pins) is not what this tests:
+        # elsewhere it is let through, so the parsing still runs on every system.
+        with mock.patch.object(_bootstrap_vr, "is_windows", return_value=True):
+            with mock.patch.object(self.upstream, "run_monitor", return_value=0) as run:
+                self.assertEqual(self.monitor.main(["--failure-report", "dialog", "vr", "state"]), 0)
+            run.assert_called_once_with("vr", Path("state"), app_args=[], failure_report="dialog")
+            with mock.patch.object(self.upstream, "launch_and_wait", return_value=0) as wait:
+                self.assertEqual(self.monitor.main(["--launch-and-wait", "vr", "state"]), 0)
+            wait.assert_called_once_with("vr", Path("state"))
+            with self.assertRaises(SystemExit), mock.patch.object(sys, "stderr"):
+                self.monitor.main(["state"])  # the old command line, with no kind
 
     def test_state_file_names_match_upstream(self):
         upstream_source = read(

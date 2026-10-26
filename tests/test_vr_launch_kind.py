@@ -22,6 +22,10 @@ at Ready until Close is pressed. The launch tests run the main program's real La
 project (a fake dependency check, a fake hardware check, a fake window, the real monitor scripts) with the splash drawn
 nowhere, and no process they start has a window; the real window, the real hardware check and the real look of the splash
 are not started here.
+
+VR is Windows-only: the launcher's entry point and the VR monitor refuse to run anywhere else (_bootstrap_vr.require_windows).
+Elsewhere the tests that run the chain through the monitor, or that expect the batch file's command, are skipped; the others
+run on every system.
 """
 
 import dataclasses
@@ -51,6 +55,9 @@ import _bootstrap_vr  # noqa: E402
 
 PROJECT_ROOT = Path(_bootstrap_vr.PROJECT_ROOT)
 
+WINDOWS_ONLY = unittest.skipUnless(
+    sys.platform == "win32", "the VR launcher and its monitor run on Windows only (require_windows)"
+)
 
 
 def load_modules():
@@ -206,13 +213,14 @@ class KindDeclarationTests(Registered):
                 self.assertNotEqual(Detect_GPU_VR.EXIT_CODES[verdict], 0)
 
     def test_the_vr_batch_file_is_the_console_launch_and_gets_the_kind_like_configs_does(self):
-        command = Desktop_Launcher.visible_console_command(PROJECT_ROOT, "vr")
+        command = Desktop_Launcher.visible_console_command(PROJECT_ROOT, "vr", "win32")  # the Windows form, on any system
         self.assertEqual(command[1:3], ["/d", "/c"])
         self.assertEqual(Path(command[3]), DESKTOP_LAUNCHER_BATCH)
         self.assertEqual(command[4], "vr")
-        self.assertEqual(Desktop_Launcher.visible_console_command(PROJECT_ROOT, "viewer")[3],
+        self.assertEqual(Desktop_Launcher.visible_console_command(PROJECT_ROOT, "viewer", "win32")[3],
                          str(PROJECT_ROOT / Desktop_Launcher.BATCH_FILE))  # Config's is still Config's
 
+    @WINDOWS_ONLY
     def test_the_console_option_runs_it_in_this_console_with_no_splash(self):
         with mock.patch.object(Desktop_Launcher.subprocess, "call", return_value=4) as call, mock.patch.object(
             Desktop_Launcher, "QApplication"
@@ -223,9 +231,9 @@ class KindDeclarationTests(Registered):
         self.assertEqual(call.call_args.args[0][4], "vr")
 
     def test_a_launcher_failure_before_anything_shows_is_the_stubs_cue_for_the_console(self):
-        with mock.patch.object(Desktop_Launcher, "main", side_effect=RuntimeError("boom")), mock.patch.object(
-            Desktop_Launcher.sys, "stderr"
-        ):
+        with mock.patch.object(_bootstrap_vr, "is_windows", return_value=True), mock.patch.object(
+            Desktop_Launcher, "main", side_effect=RuntimeError("boom")
+        ), mock.patch.object(Desktop_Launcher.sys, "stderr"):  # the Windows guard is not what this tests
             self.assertEqual(VR.main(["vr"]), Desktop_Launcher.EXIT_FALLBACK)
         self.assertEqual(Desktop_Launcher.EXIT_FALLBACK, 3)
 
@@ -524,6 +532,7 @@ class SplashColourTests(LaunchCase):
 
 
 class LaunchTests(LaunchCase):
+    @WINDOWS_ONLY
     def test_a_machine_that_can_drive_a_headset_starts_with_a_step_on_the_bar_and_the_splash_closes_itself(self):
         seen = self.watch_statuses()
         launch = self.launch(environment={"FAKE_WINDOW_STAY": "0.1"})
@@ -543,6 +552,7 @@ class LaunchTests(LaunchCase):
         self.assertEqual(launch.splash.kind, "vr")
         self.assertFalse(launch.splash.error)
 
+    @WINDOWS_ONLY
     def test_the_window_runs_in_opt_vr_through_the_vr_monitor_and_its_output_is_in_the_details(self):
         launch = self.launch(environment={"FAKE_WINDOW_STAY": "5"})
         launch.begin()
@@ -583,12 +593,15 @@ class LaunchTests(LaunchCase):
         self.assertEqual(splash.details.kind_of(end), "info")     # nor is the window's own
         self.finish_at_ready(launch)
 
+    @WINDOWS_ONLY
     def test_an_unsupported_gpu_is_a_warning_the_details_open_with_the_output_in_the_warning_colour(self):
         self.a_machine_that_cannot(str(Detect_GPU_VR.EXIT_CODES[Detect_GPU_VR.UNSUPPORTED_GPU]))
 
+    @WINDOWS_ONLY
     def test_a_missing_openxr_runtime_is_the_same_warning(self):
         self.a_machine_that_cannot(str(Detect_GPU_VR.EXIT_CODES[Detect_GPU_VR.NO_RUNTIME]))
 
+    @WINDOWS_ONLY
     def test_a_gpu_it_cannot_tell_is_the_same_warning(self):
         self.a_machine_that_cannot(str(Detect_GPU_VR.EXIT_CODES[Detect_GPU_VR.UNKNOWN]))
 
@@ -611,6 +624,7 @@ class LaunchTests(LaunchCase):
         self.assertEqual(self.codes, [0])
         self.assertIn("finished", launch.marks)
 
+    @WINDOWS_ONLY
     def test_a_check_that_cannot_run_is_a_warning_too_and_the_window_still_opens(self):
         (self.root / "opt_vr" / "src" / "Detect_GPU_VR.py").unlink()  # python cannot open the file
         launch = self.launch(environment={"FAKE_WINDOW_STAY": "8"})
@@ -621,6 +635,7 @@ class LaunchTests(LaunchCase):
         self.assertIn("EMAP-SSN VR Configuration will still open", text)
         self.finish_at_ready(launch)
 
+    @WINDOWS_ONLY
     def test_a_reader_who_hides_the_details_has_the_splash_close_at_ready_as_it_does_for_anyone(self):
         launch = self.launch(environment={"FAKE_HARDWARE_EXIT": "10", "FAKE_WINDOW_STAY": "0.1", "FAKE_WINDOW_DELAY": "1.5"})
         self.run_until(launch, lambda: "step_1_ended" in launch.marks)
@@ -633,6 +648,7 @@ class LaunchTests(LaunchCase):
         self.assertEqual(self.codes, [0])
         self.assertNotIn("ready_kept_open", launch.marks)
 
+    @WINDOWS_ONLY
     def test_a_dependency_check_that_needs_setup_hands_over_to_the_vr_batch_file_and_runs_no_step(self):
         launch = self.launch(environment={"FAKE_CHECK_EXIT": "10"})
         self.assertEqual(self.run_launch(launch), 0)
@@ -644,6 +660,7 @@ class LaunchTests(LaunchCase):
         self.assertNotIn("monitor_started", launch.marks)
         self.assertEqual(list((self.root / "temp").glob("vr_*")), [])
 
+    @WINDOWS_ONLY
     def test_a_missing_managed_python_hands_over_to_it_before_any_check_runs(self):
         launch = Launch("vr", self.root, python=self.root / ".venv" / "nothing.exe", uv="uv", show=False, popen=mock.Mock())
         launch.finished.connect(lambda code: None)
@@ -683,6 +700,7 @@ class LaunchTests(LaunchCase):
         self.assertIn("launch_in_progress", launch.marks)
         self.assertIsNone(launch.splash)
 
+    @WINDOWS_ONLY
     def test_a_window_that_fails_before_it_is_ready_is_the_error_view_not_a_warning(self):
         launch = self.launch(environment={"FAKE_WINDOW": "fail"})
         launch.begin()
