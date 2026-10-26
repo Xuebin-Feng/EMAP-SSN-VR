@@ -462,8 +462,11 @@ That contract carries nothing else, so a command whose change is not a colour,
 size, visibility or transform still succeeds but never reaches the headset:
 node shapes (`color` with a shape, `reset shapes`), node positions after the
 headset connects (`reset network`, undoing a layout change) and the selection
-(`select`). The terminal says so after such a command succeeds, for example
-`(Not shown in the headset: the VR protocol does not carry the selection.)`.
+(`select`). The client also draws every node opaque, so a change of a colour's
+alpha (`color` with `50%`, `cluster`'s translucent noise) is not shown either.
+The terminal says so after such a command succeeds, for example
+`(Not shown in the headset: the selection.)` or
+`(Not shown in the headset: transparency.)`.
 The commands and what they cannot show are the `HEADSET_LIMITS` table in
 `src/Command_Engine.py`; the viewer's `process_command` applies it, so no
 upstream command carries VR-specific code for it.

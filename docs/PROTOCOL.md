@@ -197,15 +197,25 @@ Each of these needs a coordinated change to both server and client to lift.
 6. **Every update resends the whole state.** Every change resends all
    colours, sizes and visibility as JSON text: about 0.8 MB for a
    13,000-node network, with no delta encoding.
+7. **The reference client ignores the alpha channel.** The protocol carries
+   it (the fourth float of each colour), but the node shader
+   (`player/source/shaders/node_impostor.gdshader`) uses only the RGB, so
+   every node is drawn opaque. A translucent node, such as noise after
+   `cluster` (alpha 0.4) or anything given an alpha by `color`, looks like an
+   opaque one in the headset. Sizes are shown.
 
-Limitations 1 to 3 mean a terminal command can succeed without the headset
-showing its change. The VR terminal ends the output of such a command with a
-note, for example `(Not shown in the headset: the VR protocol does not carry
-node shapes.)`. It does so for `select` (the selection), for `color` and
-`reset` (node shapes, and `reset network`'s positions) and for `undo` and
-`redo` (shapes, and positions), and only when the command succeeded and
-changed that state. The table is `HEADSET_LIMITS` in `src/Command_Engine.py`;
-lifting a limitation means removing its row.
+Limitations 1 to 3 and 7 mean a terminal command can succeed without the
+headset showing its change. The VR terminal ends the output of such a command
+with a note, for example `(Not shown in the headset: node shapes.)` or
+`(Not shown in the headset: transparency.)`. It does so for `select` (the
+selection), for `color` and `reset` (node shapes, `reset network`'s positions,
+and transparency), for `undo` and `redo` (shapes, positions and transparency)
+and for `cluster`, `subcluster` and `spectrum` (transparency), and only when
+the command succeeded and changed that state. Changing the RGB of a colour
+without its alpha is shown and gets no note. The table is `HEADSET_LIMITS` in
+`src/Command_Engine.py`; a row may name a function that picks the part of the
+viewer's attribute to watch, as the alpha rows do; lifting a limitation means
+removing its row.
 
 ## Tools and tests
 

@@ -253,30 +253,49 @@ def command_artifact(viewer, path):
 
 # --- Changes the headset cannot show --------------------------------
 # The VR protocol sends the headset colours, sizes, visibility and the
-# transform, and nothing else (docs/PROTOCOL.md, "Known limitations"). A
-# command that changes anything else still succeeds, so the terminal says what
-# the headset will not show. It is said here, around the viewer's dispatch of
-# each command, so no upstream command needs VR-specific code.
+# transform, and nothing else (docs/PROTOCOL.md, "Known limitations"), and the
+# reference client draws every node opaque, so the alpha of a colour is not
+# shown either. A command that changes anything else still succeeds, so the
+# terminal says what the headset will not show. It is said here, around the
+# viewer's dispatch of each command, so no upstream command needs VR-specific
+# code.
 
-#: command -> ((viewer attribute it can change, what the protocol does not carry), ...)
+
+def _alpha_channel(colors):
+    """The alpha of every node's colour, the part of current_colors the headset does not show."""
+    return colors[:, 3]
+
+
+#: command -> ((viewer attribute it can change, what the headset does not show of it
+#: [, a function that picks the part of the attribute the headset does not show]), ...)
 HEADSET_LIMITS = {
     "select": (("selected_indices", "the selection"),),
-    "color": (("current_shapes", "node shapes"),),
+    "color": (
+        ("current_shapes", "node shapes"),
+        ("current_colors", "transparency", _alpha_channel),
+    ),
     "reset": (
         ("current_shapes", "node shapes"),
         ("pos", "node position changes after the headset connects"),
+        ("current_colors", "transparency", _alpha_channel),
     ),
     "undo": (
         ("current_shapes", "node shapes"),
         ("pos", "node position changes after the headset connects"),
+        ("current_colors", "transparency", _alpha_channel),
     ),
     "redo": (
         ("current_shapes", "node shapes"),
         ("pos", "node position changes after the headset connects"),
+        ("current_colors", "transparency", _alpha_channel),
     ),
+    # These recolor nodes too, and give the nodes of noise a 40 % alpha.
+    "cluster": (("current_colors", "transparency", _alpha_channel),),
+    "subcluster": (("current_colors", "transparency", _alpha_channel),),
+    "spectrum": (("current_colors", "transparency", _alpha_channel),),
 }
 
-HEADSET_NOTE = "(Not shown in the headset: the VR protocol does not carry {what}.)"
+HEADSET_NOTE = "(Not shown in the headset: {what}.)"
 
 # The outcome the command being dispatched has reported: the latest status,
 # except that a failure or cancellation stays, as the portal's records keep it.
@@ -293,6 +312,18 @@ def _copy_of(value):
     return value.copy() if hasattr(value, "copy") else value
 
 
+def _watched_part(viewer, row):
+    """What a HEADSET_LIMITS row watches in the viewer now, as a copy.
+
+    That is the row's attribute, or when the row has a function, the part of the
+    attribute that function picks. An attribute the viewer lacks is None.
+    """
+    value = getattr(viewer, row[0], None)
+    if len(row) > 2 and value is not None:
+        value = row[2](value)
+    return _copy_of(value)
+
+
 @contextmanager
 def headset_notes(viewer, command_name):
     """Around one command's run: if it succeeded having changed what the
@@ -302,7 +333,7 @@ def headset_notes(viewer, command_name):
     does one whose change the headset does show.
     """
     watched = HEADSET_LIMITS.get(command_name, ())
-    before = {attribute: _copy_of(getattr(viewer, attribute, None)) for attribute, _ in watched}
+    before = [_watched_part(viewer, row) for row in watched]
     record = {"status": None}
     token = _DISPATCH.set(record)
     try:
@@ -312,8 +343,8 @@ def headset_notes(viewer, command_name):
     if record["status"] != "succeeded":
         return
     unshown = [
-        what for attribute, what in watched
-        if not np.array_equal(before[attribute], getattr(viewer, attribute, None))
+        row[1] for row, was in zip(watched, before)
+        if not np.array_equal(was, _watched_part(viewer, row))
     ]
     if unshown:
         print(HEADSET_NOTE.format(what=" and ".join(unshown)))

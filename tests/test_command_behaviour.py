@@ -360,18 +360,18 @@ class UndoStepTests(unittest.TestCase):
 
 
 class HeadsetNoteTests(unittest.TestCase):
-    """A command that succeeds but changes what the protocol cannot carry says so.
+    """A command that succeeds but changes what the headset does not show says so.
 
-    The note is added where the viewer dispatches a command, from the
-    HEADSET_LIMITS table, so none of the upstream commands knows about it.
+    That is what the protocol cannot carry and the alpha of a colour, which the
+    reference client ignores. The note is added where the viewer dispatches a
+    command, from the HEADSET_LIMITS table, so none of the upstream commands
+    knows about it.
     """
 
-    SELECTION = "(Not shown in the headset: the VR protocol does not carry the selection.)"
-    SHAPES = "(Not shown in the headset: the VR protocol does not carry node shapes.)"
-    POSITIONS = (
-        "(Not shown in the headset: the VR protocol does not carry node position "
-        "changes after the headset connects.)"
-    )
+    SELECTION = "(Not shown in the headset: the selection.)"
+    SHAPES = "(Not shown in the headset: node shapes.)"
+    POSITIONS = "(Not shown in the headset: node position changes after the headset connects.)"
+    TRANSPARENCY = "(Not shown in the headset: transparency.)"
 
     def setUp(self):
         self.viewer = build_viewer()
@@ -427,7 +427,7 @@ class HeadsetNoteTests(unittest.TestCase):
         self.assertEqual(output.count("Not shown in the headset"), 1)
         self.assertTrue(
             output.rstrip().endswith(
-                "(Not shown in the headset: the VR protocol does not carry node shapes "
+                "(Not shown in the headset: node shapes "
                 "and node position changes after the headset connects.)"
             ),
             output,
@@ -460,11 +460,86 @@ class HeadsetNoteTests(unittest.TestCase):
         with mock.patch.object(Command_Engine, "HEADSET_LIMITS", patched):
             output = run_command(self.viewer, "color red #cluster_0#")
         self.assertTrue(
-            output.rstrip().endswith(
-                "(Not shown in the headset: the VR protocol does not carry node colours.)"
-            ),
+            output.rstrip().endswith("(Not shown in the headset: node colours.)"),
             output,
         )
+
+    def test_a_row_may_watch_only_part_of_an_attribute(self):
+        # The third item of a row picks the part of the attribute that is watched.
+        patched = {**Command_Engine.HEADSET_LIMITS, "color": (
+            ("current_colors", "the blue channel", lambda colors: colors[:, 2]),
+        )}
+        with mock.patch.object(Command_Engine, "HEADSET_LIMITS", patched):
+            # The nodes start with a blue channel of 1, which this color keeps.
+            self.assertNotIn(
+                "Not shown in the headset", run_command(self.viewer, "color #00ffff #cluster_0#")
+            )
+            output = run_command(self.viewer, "color #ff0000 #cluster_0#")
+        self.assertTrue(output.rstrip().endswith("(Not shown in the headset: the blue channel.)"), output)
+
+    def test_an_alpha_the_headset_does_not_show_is_noted_and_a_colour_is_not(self):
+        output = run_command(self.viewer, "color #cluster_0# <red,50%>")
+        self.assertIn("Applied: 5 nodes (red, 50%)", output)
+        self.assertTrue(output.rstrip().endswith(self.TRANSPARENCY), output)
+
+        # A colour alone leaves the alpha, translucent nodes included, where it was.
+        for command in ("color #cluster_0# blue", "color #cluster_0# <green>", "color #cluster_0# #112233"):
+            with self.subTest(command=command):
+                output = run_command(self.viewer, command)
+                self.assertIn("Applied: 5 nodes", output)
+                self.assertNotIn("Not shown in the headset", output)
+        np.testing.assert_allclose(self.viewer.current_colors[:5, 3], 0.5)
+
+        # The same alpha again changes nothing, and a node outside the target is untouched.
+        self.assertNotIn("Not shown in the headset", run_command(self.viewer, "color #cluster_0# 50%"))
+        self.assertNotIn("Not shown in the headset", run_command(self.viewer, "color #cluster_1# 100%"))
+
+        output = run_command(self.viewer, "color #cluster_0# 100%")
+        self.assertTrue(output.rstrip().endswith(self.TRANSPARENCY), output)
+
+    def test_an_alpha_and_a_shape_are_noted_together(self):
+        output = run_command(self.viewer, "color #cluster_0# <40%,star>")
+        self.assertEqual(output.count("Not shown in the headset"), 1)
+        self.assertTrue(
+            output.rstrip().endswith("(Not shown in the headset: node shapes and transparency.)"), output
+        )
+
+    def test_an_alpha_in_an_eight_digit_hex_is_noted(self):
+        self.assertTrue(
+            run_command(self.viewer, "color #cluster_0# #ff000080").rstrip().endswith(self.TRANSPARENCY)
+        )
+
+    def test_a_refused_alpha_gets_no_note(self):
+        output = run_command(self.viewer, "color #cluster_0# <50%,20%>")
+        self.assertIn("two items of one kind", output)
+        self.assertNotIn("Not shown in the headset", output)
+
+    def test_reset_notes_a_restored_alpha(self):
+        viewer = self.viewer
+        run_command(viewer, "color #cluster_0# 30%")
+        self.assertTrue(run_command(viewer, "reset colors").rstrip().endswith(self.TRANSPARENCY))
+        np.testing.assert_array_equal(viewer.current_colors[:, 3], np.ones(viewer.n_nodes))
+        self.assertNotIn("Not shown in the headset", run_command(viewer, "reset colors"))
+
+    def test_undo_and_redo_note_a_restored_alpha(self):
+        viewer = self.viewer
+        run_command(viewer, "color #cluster_0# 30%")
+        self.assertTrue(run_command(viewer, "undo").rstrip().endswith(self.TRANSPARENCY))
+        self.assertTrue(run_command(viewer, "redo").rstrip().endswith(self.TRANSPARENCY))
+
+    def test_a_command_that_recolors_with_an_alpha_is_noted(self):
+        # cluster gives noise a 40 % alpha, and subcluster and spectrum recolor nodes too.
+        for command in ("cluster", "subcluster", "spectrum"):
+            self.assertEqual(
+                Command_Engine.HEADSET_LIMITS[command],
+                (("current_colors", "transparency", Command_Engine._alpha_channel),),
+            )
+        viewer = self.viewer
+        with redirect_stdout(io.StringIO()) as output:
+            with Command_Engine.headset_notes(viewer, "cluster"):
+                Command_Engine.command_succeeded(viewer, "done")
+                viewer.current_colors[0, 3] = 0.4
+        self.assertTrue(output.getvalue().rstrip().endswith(self.TRANSPARENCY), output.getvalue())
 
     def test_each_line_of_a_script_is_noted_as_typed(self):
         with tempfile.TemporaryDirectory() as folder:
