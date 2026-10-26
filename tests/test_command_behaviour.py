@@ -664,7 +664,7 @@ class ArtifactTests(unittest.TestCase):
         release.set()
         self.finish()
         self.assertEqual(self.written("Sequence_Logos"), [], "a cancelled job writes nothing")
-        self.assertIn("No commands wait or run", run_command(self.viewer, "jobs"))
+        self.assertIn("No background job waits or runs", run_command(self.viewer, "jobs"))
         run_command(self.viewer, "logo [2-5] vr_logo.svg")
         self.finish()
         self.assertEqual(self.written("Sequence_Logos"), ["vr_logo.svg"], "its file was free to use again")
@@ -1045,14 +1045,14 @@ class JobsCommandTests(JobControlFixture):
         return "\n".join(str(call.args[0]) for call in self.console.call_args_list)
 
     def test_jobs_lists_a_running_and_a_waiting_job(self):
-        self.assertIn("No commands wait or run, and no file is being written.", self.jobs())
+        self.assertIn("No background job waits or runs.", self.jobs())
         self.running_job("run.txt", checks=True)
         self.enqueue(self.recording("wait"), "wait.txt")
         output = self.jobs()
         self.assertRegex(output, r"#1\s+running\s+test -> run\.txt\s+\(files\)")
         self.assertRegex(output, r"#2\s+waiting\s+test -> wait\.txt\s+\(files\)")
         self.assertIn("2 jobs waiting or running", output)
-        self.assertNotIn("No commands wait or run", output)
+        self.assertNotIn("No background job waits or runs", output)
 
     def test_jobs_cancel_removes_a_waiting_job(self):
         self.running_job("run.txt", checks=False)
@@ -1073,7 +1073,7 @@ class JobsCommandTests(JobControlFixture):
         self.assertNotIn("Cancelled 1 job", output, "a running job is told to stop, not yet cancelled")
         self.wait_idle()
         self.assertIn("Background job #1 was stopped before it finished: test -> run.txt", self.reports_text())
-        self.assertIn("No commands wait or run", self.jobs())
+        self.assertIn("No background job waits or runs", self.jobs())
 
     def test_a_job_told_to_stop_is_listed_as_stopping_and_is_not_told_again(self):
         self.running_job("run.txt", checks=False)
@@ -1090,9 +1090,9 @@ class JobsCommandTests(JobControlFixture):
         self.assertIn("Told 1 running job to stop: #1 test -> run.txt.", output)
         self.wait_idle()
         self.assertEqual(self.ran, [])
-        self.assertIn("No commands wait or run", self.jobs())
+        self.assertIn("No background job waits or runs", self.jobs())
 
-    def test_a_bare_cancel_cancels_the_newest_job_since_there_is_no_queue(self):
+    def test_a_bare_cancel_cancels_the_newest_job(self):
         self.running_job("run.txt", checks=False)
         self.enqueue(self.recording("a"), "a.txt")
         self.assertIn("Cancelled 1 job: #2 test -> a.txt.", self.jobs("jobs cancel"))
@@ -1106,7 +1106,7 @@ class JobsCommandTests(JobControlFixture):
     def test_a_number_that_names_no_job_cancels_nothing(self):
         self.running_job("run.txt", checks=True)
         output = self.jobs("jobs cancel 9")
-        self.assertIn("No job #9 waits or runs; nothing was cancelled.", output)
+        self.assertIn("No background job #9 waits or runs; nothing was cancelled.", output)
         self.assertFalse(self.scheduler.snapshot()[0].stopping)
 
     def test_a_cancelled_command_reports_the_outcome_as_a_command_does(self):
@@ -1134,7 +1134,7 @@ class JobsCommandTests(JobControlFixture):
         self.assertIn("List the background file jobs (logo, label)", output)
         self.assertIn("(VR-specific implementation)", output)
         self.assertIn("Run 'jobs help' for its usage in this viewer.", output)
-        self.assertNotIn("Commands run one at a time in the order given", output)
+        self.assertNotIn("is not a background job", output)
 
 
 class ConsoleCommandTests(unittest.TestCase):

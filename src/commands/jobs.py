@@ -6,17 +6,13 @@
 
 The listing and the cancelling are the main program's ``jobs`` command, run as it is on
 this viewer's background job scheduler (Background_Job_Scheduler_VR), which gives it what
-it reads: snapshot() and cancel_many(). This module shadows the main command for what
-differs here, and for nothing else:
-
-* **Its help.** The main command describes the desktop Viewer: a queue of commands that
-  run one after another, the Session card that lists the jobs and moves a waiting one, the
-  Console window, and the folding workers. None of that exists in this process, so
-  ``jobs help`` and ``help jobs`` say what does: every command runs at once, and the
-  jobs are the file jobs.
-* **A bare ``jobs cancel``.** On the desktop it cancels the newest command in the queue,
-  and a file job is cancelled by its number or with ``all``. This viewer has no queue, so
-  the same words would cancel nothing while a job runs; here they cancel the newest job.
+it reads: snapshot() and cancel_many(). This module shadows the main command for its help,
+and for nothing else: the main help describes the desktop Viewer, with the slow commands
+that hold the ones after them, undo that takes one back, the Session card that lists the
+jobs and moves a waiting one, the Console window, and the folding workers. None of that
+exists in this process, so ``jobs help`` and ``help jobs`` say what does: every command runs
+at once, and the jobs are the file jobs. A bare ``jobs cancel`` cancels the newest job here
+as it does on the desktop, so the main command needs no help with it.
 
 It runs at once, as the main command does.
 
@@ -31,7 +27,7 @@ import sys
 import _bootstrap_vr
 import Command_Engine
 
-OVERRIDE_REASON = "its help describes a command queue and windows this viewer has not; runs the main command"
+OVERRIDE_REASON = "its help describes slow commands, undo, the Session card and windows this viewer has not; runs the main command"
 
 _UPSTREAM = "_upstream_commands_jobs"
 
@@ -107,10 +103,4 @@ def run(viewer, args):
             viewer.console_text.text = "Help information printed to the terminal"
         Command_Engine.command_succeeded(viewer, 'Help information printed to the terminal.')
         return
-    upstream = _upstream()
-    if len(args) == 1 and args[0].lower() == 'cancel':
-        # No queue here: the newest job, which is the last of the line, is what "newest" means.
-        jobs = upstream._file_jobs(viewer)
-        if jobs:
-            args = ['cancel', str(jobs[-1][0].job_id)]
-    upstream.run(viewer, args)
+    _upstream().run(viewer, args)
