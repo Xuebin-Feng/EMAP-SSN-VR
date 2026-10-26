@@ -2766,13 +2766,18 @@ class VRSettingsSourceTests(unittest.TestCase):
         configuration - an absolute path is honoured as written, and the next
         test pins that - so reading the live file made this assert the user's
         setup instead of the resolution rule.
+
+        What follows an alias is written with the platform's own separator,
+        so the test holds on Windows (a backslash, as a Windows settings file
+        has it) and elsewhere alike: a backslash inside a POSIX path is part
+        of a file name, not a separator, and the resolver rightly keeps it.
         """
         relative = {
             "CACHE_FILE_DIR": "Cache_Files_VR",
-            "SAVED_LAYOUT_DIR": r"$cache_file$\Saved_Layouts",
+            "SAVED_LAYOUT_DIR": os.sep.join(("$cache_file$", "Saved_Layouts")),
             "INPUT_FILE_DIR": "Input_Files",
             "ANALYSIS_RESULT_DIR": "Analysis_Results",
-            "NODE_FASTA_FILE": r"$input_file$\Sequence_Sets\set.fasta",
+            "NODE_FASTA_FILE": os.sep.join(("$input_file$", "Sequence_Sets", "set.fasta")),
             "VR_APP_DIR": "player",
         }
         values = self._settings_from(relative)
