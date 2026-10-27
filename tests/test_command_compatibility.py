@@ -468,6 +468,7 @@ class ResolutionTests(unittest.TestCase):
             for report in self.reports
             if report.state in (cc.OVERRIDDEN, cc.LOCAL_ONLY)
         ]
+        self.assertTrue(overridden, "expected at least one overridden or local-only command")
         for name in overridden:
             module, origin = self._origin(name)
             self.assertEqual(
@@ -475,11 +476,15 @@ class ResolutionTests(unittest.TestCase):
             )
             self.assertTrue(callable(getattr(module, "run", None)), name)
 
-    def test_no_stale_bytecode_shadows_a_shared_command(self):
-        """Deleting a .py leaves __pycache__ behind; make sure it stays inert."""
+    def test_no_orphaned_bytecode_is_left_in_the_local_command_cache(self):
+        """A hygiene check: deleting a command's .py leaves its .pyc in __pycache__.
+
+        Python never imports a .pyc from __pycache__ whose source is gone, so an
+        orphan shadows nothing; this keeps the cache from collecting them.
+        """
         cache = os.path.join(cc.LOCAL_COMMAND_DIR, "__pycache__")
         if not os.path.isdir(cache):
-            return
+            self.skipTest(f"no bytecode cache at {cache}")
         local = set(cc._command_modules(cc.LOCAL_COMMAND_DIR))
         orphaned = sorted(
             entry

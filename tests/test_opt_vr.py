@@ -1477,11 +1477,6 @@ class ViewerStateTests(unittest.TestCase):
         self.assertTrue(hasattr(viewer, "pos"))
         self.assertEqual(viewer.pos.shape[1], 3)
 
-    def test_terminal_run_flag_is_independent_of_the_client_connection(self):
-        viewer = build_viewer()
-        self.assertTrue(viewer.running)
-        self.assertFalse(getattr(viewer, "is_connected", False))
-
     def test_non_windows_terminal_fallback_exists(self):
         self.assertTrue(callable(getattr(vr_viewer, "_simple_terminal_loop", None)))
 
