@@ -384,8 +384,16 @@ class CommandSetIntegrationTests(unittest.TestCase):
         self.assertEqual(report.upstream_blocker.kind, cc.GUI)
 
     def test_desktop_render_commands_are_detected(self):
-        """zoom drives the VisPy camera, which the VR client replaces."""
-        self.assertTrue(self.by_name["zoom"].upstream_missing)
+        """Upstream zoom drives the desktop camera through Viewer_Zoom (Qt), which the VR client replaces, so VR keeps its own zoom.
+
+        The test pins the outcome, not which probe finds the coupling: the upstream copy is not
+        usable here, so VR's own zoom stays, needs no OVERRIDE_REASON, and reports ok.
+        """
+        report = self.by_name["zoom"]
+        self.assertFalse(report.upstream_usable)
+        self.assertEqual(report.state, cc.OVERRIDDEN)
+        self.assertEqual(report.status, cc.OK)
+        self.assertTrue(report.reason)
 
     def test_commands_that_differ_on_purpose_say_so_and_are_not_redundant(self):
         """`console`, `help` and `jobs` load from upstream here, but their text and behaviour are VR's.
