@@ -267,6 +267,7 @@ in the VR runtime reads them and no shared command does either:
 |---|---|
 | `TEXT_SIZE`, `TEXT_COLOR` | no HUD text is drawn in the headset |
 | `FEWER_EDGES_WHILE_MOVING`, `LOW_RESOURCE_ANIMATIONS`, `LOW_RESOURCE_DRAWING`, `LOW_RESOURCE_WEBSERVER`, `SHOW_FPS` | Low Resource Mode and the frame rate: optimisations of the desktop Viewer's canvas, zoom, slider and web pages; the VR client does the drawing |
+| `AUTO_EDGE_ALPHA` | Edge Opacity's Auto switch: the desktop Viewer's edge layer draws each edge's opacity by its score, and the VR client draws every edge at the one Edge Opacity |
 
 `NEIGHBOR_COLOR` has no control of its own either: `Settings` republishes
 `INITIAL_NODE_COLOR` under that name and it wins, so a second control would
