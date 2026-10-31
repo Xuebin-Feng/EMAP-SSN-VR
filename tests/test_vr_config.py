@@ -3828,6 +3828,143 @@ class CacheDiscoveryRaceTests(unittest.TestCase):
         )
 
 
+class ScoreKindCacheDiscoveryTests(unittest.TestCase):
+    """The window looks for the cache folder the generator makes, EFI networks included.
+
+    A BLAST network of EFI alignment scores records score_kind, and the
+    generator's manifest (Cache_Manifest.build_manifest_for_files) carries it
+    in its compatibility fields; a network without it holds E-values and
+    keeps the identity it always had. Each CacheHashWorker hashes only when
+    the script finishes it, as in CacheDiscoveryRaceTests.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.report = report_from(
+            """
+            import tempfile
+            from pathlib import Path
+            import h5py
+            import numpy as np
+
+            cache_manifest = namespace["cache_manifest"]
+            window_globals = window._request_cache_discovery.__globals__
+            workers = []
+
+            class DeferredHashWorker(window_globals["CacheHashWorker"]):
+                def start(self):
+                    workers.append(self)
+
+            window_globals["CacheHashWorker"] = DeferredHashWorker
+
+            work = Path(tempfile.mkdtemp(dir=os.getcwd()))
+            (work / "a.fasta").write_text(">a1\\nMKTAYIAK\\n>a2\\nMKTAYIAR\\n", encoding="utf-8")
+            # The same network twice; only the second says its scores are EFI alignment scores.
+            for name, score_kind in (("evalue.h5", None), ("efi.h5", "efi_alignment_score")):
+                with h5py.File(work / name, "w") as network:
+                    network.attrs["model_name"] = "BLAST"
+                    if score_kind:
+                        network.attrs["score_kind"] = score_kind
+                    network.create_dataset("headers", data=[b"a1", b"a2"])
+                    network.create_dataset("i", data=np.asarray([0], dtype=np.uint16))
+                    network.create_dataset("j", data=np.asarray([1], dtype=np.uint16))
+                    network.create_dataset("score", data=np.asarray([1e-30]))
+
+            gui = namespace["ConfigGUI"]()
+            settings = gui._cache_setting_values()
+            layouts = work / "layouts"
+            # What the generator publishes for each network: one folder each.
+            generated = {}
+            for name, folder in (("evalue.h5", "as_evalue"), ("efi.h5", "as_efi")):
+                manifest = cache_manifest.build_manifest_for_files(
+                    work / "a.fasta", work / name, **settings
+                )
+                cache_manifest.write_manifest_atomic(layouts / folder, manifest)
+                generated[name] = manifest
+            gui.inputs["SAVED_LAYOUT_DIR"].setText(str(layouts))
+            gui.inputs["FASTA_DIR"].setText(str(work))
+            gui.inputs["HDF5_DIR"].setText(str(work))
+            gui.cb_fasta.setCurrentText("a.fasta")
+            assert gui.cb_fasta.currentText() == "a.fasta"
+
+            build_compatibility = cache_manifest.build_compatibility
+            sequence_hash = cache_manifest.fingerprint_file(work / "a.fasta")["sha256"]
+            report = {}
+            for name in ("evalue.h5", "efi.h5"):
+                asked = []
+
+                def recording(*args, **kwargs):
+                    asked.append(build_compatibility(*args, **kwargs))
+                    return asked[-1]
+
+                gui.cb_hdf5.setCurrentText(name)
+                assert gui.cb_hdf5.currentText() == name, name
+                with mock.patch.object(
+                    cache_manifest, "build_compatibility", side_effect=recording
+                ):
+                    # Hash and report on this thread, as the worker's own would.
+                    workers[-1].run()
+                    app.processEvents()
+                network_hash = cache_manifest.fingerprint_file(work / name)["sha256"]
+                report[name] = {
+                    "asked": len(asked),
+                    "window_id": cache_manifest.calculate_manifest_id(asked[-1]),
+                    "generator_id": generated[name]["manifest_id"],
+                    # The id with no score kind passed: every E-value network's, before EFI.
+                    "unkinded_id": cache_manifest.calculate_manifest_id(
+                        build_compatibility(sequence_hash, network_hash, "blast", **settings)
+                    ),
+                    "records_kind": "score_kind" in generated[name]["compatibility"],
+                    "tracker": gui.lbl_cache_tracker.text(),
+                    "folder": os.path.basename(gui.current_cache_folder or ""),
+                }
+            # Both networks are hashed now, so choosing either again needs no worker.
+            for name in ("evalue.h5", "efi.h5"):
+                hashing = len(workers)
+                gui.cb_hdf5.setCurrentText(name)
+                assert gui.cb_hdf5.currentText() == name, name
+                report[name]["again"] = {
+                    "started": len(workers) - hashing,
+                    "tracker": gui.lbl_cache_tracker.text(),
+                    "folder": os.path.basename(gui.current_cache_folder or ""),
+                }
+            gui.close()
+            gui.deleteLater()
+            app.processEvents()
+            print("@@" + json.dumps(report))
+            """
+        )
+
+    def test_an_efi_network_gets_the_manifest_id_its_generator_gives_it(self):
+        case = self.report["efi.h5"]
+        self.assertTrue(case["asked"], "the window built no identity for the network")
+        self.assertEqual(case["window_id"], case["generator_id"])
+        self.assertTrue(case["records_kind"])
+        # Not the id it would have as an E-value network.
+        self.assertNotEqual(case["window_id"], case["unkinded_id"])
+
+    def test_the_window_finds_the_folder_made_for_an_efi_network(self):
+        case = self.report["efi.h5"]
+        self.assertEqual(case["tracker"], "Compatible Folder: as_efi")
+        self.assertEqual(case["folder"], "as_efi")
+
+    def test_the_folder_is_found_again_from_the_hashes_already_taken(self):
+        for name, folder in (("evalue.h5", "as_evalue"), ("efi.h5", "as_efi")):
+            with self.subTest(name):
+                self.assertEqual(self.report[name]["again"], {
+                    "started": 0, "tracker": f"Compatible Folder: {folder}", "folder": folder,
+                })
+
+    def test_an_evalue_network_keeps_the_manifest_id_it_always_had(self):
+        case = self.report["evalue.h5"]
+        self.assertTrue(case["asked"], "the window built no identity for the network")
+        self.assertEqual(case["window_id"], case["generator_id"])
+        self.assertEqual(case["window_id"], case["unkinded_id"])
+        self.assertFalse(case["records_kind"])
+        self.assertEqual(case["tracker"], "Compatible Folder: as_evalue")
+        self.assertEqual(case["folder"], "as_evalue")
+
+
 class ProjectRootFolderTests(unittest.TestCase):
     """The window uses the main program's folders, at the project root,
     except its own cache folder; only its settings file and the VR client
