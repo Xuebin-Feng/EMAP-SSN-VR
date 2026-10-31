@@ -801,6 +801,35 @@ class ExportCacheNameTests(unittest.TestCase):
                 [cache.headers[1], cache.headers[3]],
             )
 
+    def test_efi_and_evalue_networks_of_one_set_export_to_folders_of_their_own(self):
+        import h5py
+
+        for score_kind in (None, "efi_alignment_score"):
+            viewer, cache = self.open_saved([set()] * 5, ["LEIDEN_1.0", 2])
+            # The session is open; export reads only the network's metadata.
+            with h5py.File(cache.network, "w") as handle:
+                handle.attrs["model_name"] = "BLAST"
+                if score_kind:
+                    handle.attrs["score_kind"] = score_kind
+                handle.create_dataset(
+                    "headers",
+                    data=np.asarray(cache.headers, dtype=object),
+                    dtype=h5py.string_dtype(encoding="utf-8"),
+                )
+                handle.create_dataset("i", data=np.asarray([0], dtype=np.uint16))
+                handle.create_dataset("j", data=np.asarray([1], dtype=np.uint16))
+                handle.create_dataset("score", data=np.asarray([1e-30]))
+            self.assertIn("Exported 1 files", run_command(viewer, "export clusters"))
+
+        # The E-value folder is named as it always was; the EFI one adds "-EFI".
+        self.assertEqual(
+            self.written(),
+            [
+                "results/Sequence_Export/set_[BLAST-EFI]/Score0.45_LEIDEN_1.0_Min2/Cluster_0.fasta",
+                "results/Sequence_Export/set_[BLAST]/Score0.45_LEIDEN_1.0_Min2/Cluster_0.fasta",
+            ],
+        )
+
     def exported(self, command, groups):
         """(output, {file below the analysis folder: its text}) of one export in a fresh results folder."""
         shutil.rmtree(os.path.join(self.root, "results"), ignore_errors=True)
