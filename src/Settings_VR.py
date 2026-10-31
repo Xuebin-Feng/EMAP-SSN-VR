@@ -85,11 +85,8 @@ VR_DEFAULTS = {
     "VR_APP_DIR": Player_Build_VR.DEFAULT_CLIENT_DIR,
     # --- Alignment ----------------------------------------------------
     "GAP_CHARS": ["-", "."],
-    # --- Directories without an upstream profile entry ----------------
+    # --- Directory without an upstream profile entry ------------------
     "HISTORY_DIR": os.path.join("$cache_file$", "History"),
-    "LOGO_DIR": os.path.join("$analysis_result$", "Sequence_Logos"),
-    "CLUSTER_ALIGNMENT_DIR": os.path.join("$analysis_result$", "Cluster_Alignments"),
-    "CLUSTER_LABEL_DIR": os.path.join("$analysis_result$", "Cluster_Labels"),
     # --- Layout ---------------------------------------------------------
     # The VR viewer is three dimensional by definition, so this is not a
     # user choice: it is a property of which viewer was launched. The
@@ -273,6 +270,9 @@ def load_settings() -> dict:
     # the per-launch snapshot the VR Config GUI hands the viewer, which is
     # exactly the choice the user just made in the GUI.
     for key, value in _read_json(_settings_path()).items():
+        # A folder an older version saved and nothing reads: not loaded.
+        if key in _bootstrap_vr.DEPRECATED_DIRECTORY_KEYS:
+            continue
         values[key] = _coerce(key, value)
     # Settings saved for the Unity client name its old folder.
     values["VR_APP_DIR"] = Player_Build_VR.migrate_client_dir(values["VR_APP_DIR"])

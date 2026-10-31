@@ -73,6 +73,18 @@ UTILITIES_DIR = os.path.join(SRC_DIR, "utilities")
 #: VR's 3D layouts and profiles stay apart from the desktop program's
 #: Cache_Files.
 VR_CACHE_FILE_DIR = "Cache_Files_VR"
+#: Folder settings that older versions saved and nothing reads any more. VR
+#: Config sets them aside when it loads its settings file, so a save does not
+#: write them back, and Settings_VR leaves them out of what the viewer loads:
+#: both read this one list, which is why it lives here.
+DEPRECATED_DIRECTORY_KEYS = frozenset({
+    "LOGO_DIR",
+    "CLUSTER_ALIGNMENT_DIR",
+    "CLUSTER_LABEL_DIR",
+    "SEQUENCE_EXPORT_DIR",
+    "PRINT_SAVE_DIR",
+    "STRUCTURES_DIR",
+})
 
 
 def _require_parent_checkout() -> None:

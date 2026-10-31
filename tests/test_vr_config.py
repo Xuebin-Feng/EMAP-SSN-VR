@@ -2705,6 +2705,57 @@ class ConfigPersistenceTests(unittest.TestCase):
         # Proof that Save wrote somewhere: otherwise the check above means nothing.
         self.assertTrue(os.path.isfile(self.vr_settings), "Save wrote no VR settings")
 
+    def test_a_saved_file_naming_retired_folders_drops_them_on_save(self):
+        """Folder settings nothing reads any more are set aside when VR Config
+        loads its file, so a save does not write them back. Everything else
+        in the file is kept."""
+        retired = sorted({"LOGO_DIR", "CLUSTER_ALIGNMENT_DIR", "CLUSTER_LABEL_DIR"}
+                         | _bootstrap_vr.DEPRECATED_DIRECTORY_KEYS)
+        os.makedirs(os.path.dirname(self.vr_settings))
+        with open(self.vr_settings, "w", encoding="utf-8") as handle:
+            json.dump({
+                **{key: "$analysis_result$/Old_" + key for key in retired},
+                "VR_HOST": "10.0.0.5", "VR_PORT": 6123, "INPUT_FILE_DIR": "My_Inputs",
+            }, handle)
+        report = report_from(
+            f"""
+            retired = {retired!r}
+            loaded = window._read_custom_settings()
+            module_level = [key for key in retired if key in namespace]
+            profile = {{key: "legacy/path" for key in retired}}
+            profile["INPUT_FILE_DIR"] = "Profile_Inputs"
+            normalized = window._normalize_profile_data("directories", profile)
+            folder = window._saved_config_root() / "directories"
+            folder.mkdir(parents=True)
+            (folder / "old.json").write_text(json.dumps(profile), encoding="utf-8")
+            named = window._named_profile_data("directories", "old")
+            saved = window.save_settings()
+            print("@@" + json.dumps({{
+                "loaded": sorted(loaded), "module_level": module_level,
+                "normalized": sorted(normalized), "profile_dir": normalized["INPUT_FILE_DIR"],
+                "named": sorted(named), "named_dir": named["INPUT_FILE_DIR"],
+                "saved": saved, "tip": window.tip_panel.text(),
+                "custom": sorted(window._custom_settings),
+            }}))
+            """,
+            project_root=self.project,
+        )
+        self.assertTrue(report["saved"], report["tip"])
+        # The loader that feeds Save, the module-level one, and both profile readers.
+        self.assertEqual(set(report["loaded"]) & set(retired), set())
+        self.assertEqual(report["module_level"], [])
+        self.assertEqual(set(report["normalized"]) & set(retired), set())
+        self.assertEqual(set(report["named"]) & set(retired), set())
+        self.assertEqual(report["profile_dir"], "Profile_Inputs")
+        self.assertEqual(report["named_dir"], "Profile_Inputs")
+        self.assertEqual(set(report["custom"]) & set(retired), set())
+        with open(self.vr_settings, encoding="utf-8") as handle:
+            saved = json.load(handle)
+        self.assertEqual(set(saved) & set(retired), set())
+        self.assertEqual(saved["VR_HOST"], "10.0.0.5")
+        self.assertIn(str(saved["VR_PORT"]), ("6123", "6123.0"))
+        self.assertEqual(saved["INPUT_FILE_DIR"], "My_Inputs")
+
     @staticmethod
     def fingerprint(path):
         """The file's bytes and modification time, or None once it is gone."""
@@ -2818,13 +2869,46 @@ class VRSettingsSourceTests(unittest.TestCase):
             "EMBED_DIR": ("Embeddings",),
             "SAVED_CONFIG_DIR": ("Cache_Files_VR", "Saved_Config"),
             "HISTORY_DIR": ("Cache_Files_VR", "History"),
-            "CLUSTER_ALIGNMENT_DIR": ("Analysis_Results", "Cluster_Alignments"),
         }.items():
             with self.subTest(key=key):
                 self.assertEqual(os.path.normcase(os.path.normpath(values[key])),
                                  os.path.normcase(os.path.join(root, *parts)))
         self.assertEqual(os.path.normcase(values["VR_APP_DIR"]),
                          os.path.normcase(os.path.join(_bootstrap_vr.OPT_VR_DIR, "player")))
+
+    def test_the_retired_folder_settings_are_not_defaults_any_more(self):
+        """LOGO_DIR, CLUSTER_ALIGNMENT_DIR and CLUSTER_LABEL_DIR named folders
+        nothing reads: the commands name their own, as module constants."""
+        import Settings_VR
+        from desktop.Viewer_State import DEFAULTS
+
+        values = self._settings_from({})
+        for key in ("LOGO_DIR", "CLUSTER_ALIGNMENT_DIR", "CLUSTER_LABEL_DIR"):
+            with self.subTest(key=key):
+                self.assertIn(key, _bootstrap_vr.DEPRECATED_DIRECTORY_KEYS)
+                self.assertNotIn(key, Settings_VR.VR_DEFAULTS)
+                self.assertNotIn(key, values)
+        # The one list both loaders drop, so no default can be one of its keys.
+        retired = _bootstrap_vr.DEPRECATED_DIRECTORY_KEYS
+        self.assertTrue(retired.isdisjoint(DEFAULTS))
+        self.assertTrue(retired.isdisjoint(Settings_VR.VR_DEFAULTS))
+        self.assertIn("HISTORY_DIR", Settings_VR.VR_DEFAULTS, "the folder that stays")
+
+    def test_a_saved_file_naming_retired_folders_loads_without_them(self):
+        """An older settings file still holds them; the viewer neither keeps
+        them nor loses what else the file says."""
+        retired = {"LOGO_DIR", "CLUSTER_ALIGNMENT_DIR", "CLUSTER_LABEL_DIR"} | _bootstrap_vr.DEPRECATED_DIRECTORY_KEYS
+        document = {key: os.path.join("$analysis_result$", "Old_" + key) for key in retired}
+        document.update({"VR_PORT": "6123", "HISTORY_DIR": "My_History"})
+        values = self._settings_from(document)
+        for key in retired:
+            with self.subTest(key=key):
+                self.assertNotIn(key, values)
+        self.assertEqual(values["VR_PORT"], 6123)
+        self.assertEqual(os.path.normcase(values["HISTORY_DIR"]),
+                         os.path.normcase(os.path.join(_bootstrap_vr.PROJECT_ROOT, "My_History")))
+        self.assertEqual(os.path.normcase(values["CACHE_FILE_DIR"]),
+                         os.path.normcase(os.path.join(_bootstrap_vr.PROJECT_ROOT, "Cache_Files_VR")))
 
     def test_absolute_directories_are_left_alone(self):
         """An external data store is a supported choice, not a mistake."""
