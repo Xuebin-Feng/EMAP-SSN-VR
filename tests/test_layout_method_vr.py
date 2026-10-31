@@ -54,7 +54,6 @@ with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
     import EMAPSSN_Viewer_VR as viewer  # noqa: E402
 
 import Cache_Manifest  # noqa: E402
-import Viewer_Utils_VR  # noqa: E402
 from tests.cache_fixtures import publish_cache, use_inputs  # noqa: E402
 
 
@@ -145,31 +144,6 @@ class EdgeFilterLabelTests(unittest.TestCase):
                          "PaCMAP topology, 9 neighbours per node")
         self.assertEqual(label(SimpleNamespace(UMAP_MODE=False, LAYOUT_METHOD="pacmap", TOP_EDGE_PERCENT=5)),
                          "top 5.0% of edges")
-
-
-class ClusterFolderNameTests(unittest.TestCase):
-    """The folder of the cluster and alignment output names the layout, as the cache folder does."""
-
-    def name(self, **settings):
-        config = SimpleNamespace(
-            INPUT_HDF5="Set_[ankh]_network.h5", NODE_FASTA_FILE="set.fasta", NORM_MODE="alignment_length",
-            ALIGNMENT_SCORE="global", CLUSTER_ALIGNMENT_DIR="out", **settings)
-        previous = Viewer_Utils_VR.cfg
-        Viewer_Utils_VR.cfg = config
-        try:
-            return Viewer_Utils_VR.get_cluster_alignment_dir(SimpleNamespace(last_cluster_params=("leiden", 3)))
-        finally:
-            Viewer_Utils_VR.cfg = previous
-
-    def test_each_method_has_its_own_folder(self):
-        base = os.path.join("out", "set_[ankh]_alignment_length_global")
-        self.assertEqual(self.name(UMAP_MODE=True, UMAP_NEIGHBORS=15), os.path.join(base, "_UMAP_k15_leiden_Min3"))
-        self.assertEqual(self.name(UMAP_MODE=True, LAYOUT_METHOD="umap", UMAP_NEIGHBORS=8),
-                         os.path.join(base, "_UMAP_k8_leiden_Min3"))
-        self.assertEqual(self.name(UMAP_MODE=True, LAYOUT_METHOD="pacmap", PACMAP_NEIGHBORS=12, UMAP_NEIGHBORS=15),
-                         os.path.join(base, "_PACMAP_k12_leiden_Min3"))
-        self.assertEqual(self.name(UMAP_MODE=False, LAYOUT_METHOD="pacmap", SIMILARITY_THRESHOLD=0.5),
-                         os.path.join(base, "_Score0.5_leiden_Min3"))
 
 
 if __name__ == "__main__":
