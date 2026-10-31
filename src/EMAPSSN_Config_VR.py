@@ -2648,7 +2648,7 @@ if __name__ == "__main__":
                     ),
                 ),
                 "SIMILARITY_THRESHOLD": Tip(
-                    translate("Config", "Minimum similarity score threshold (identity fraction, normalized score, or -Log10 E-Value) to retain an edge."),
+                    translate("Config", "Minimum similarity score threshold (identity fraction, normalized score, -Log10 E-Value or EFI alignment score) to retain an edge."),
                     details=(translate("Config", "Edges below this cutoff are filtered out and excluded from physics simulation and rendering."),),
                 ),
                 "TOP_EDGE_PERCENT": Tip(
