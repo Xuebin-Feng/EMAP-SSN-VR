@@ -341,7 +341,7 @@ class SessionRestoreTests(unittest.TestCase):
 class HelpTextTests(unittest.TestCase):
     def test_a_stub_is_summarised_for_users(self):
         output = run_command(make_viewer(), "help")
-        for name in ("agent", "esmfold", "print", "zoom"):
+        for name in ("agent", "esmfold", "print", "tree", "zoom"):
             with self.subTest(command=name):
                 # Local commands are listed as "    <name>  <summary>".
                 line = next(row for row in output.splitlines() if row.split()[:1] == [name])

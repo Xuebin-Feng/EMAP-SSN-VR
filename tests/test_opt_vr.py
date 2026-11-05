@@ -1185,7 +1185,7 @@ class DisabledCommandTests(unittest.TestCase):
                 self.statuses.append(status)
 
         viewer = build_viewer()
-        for name in ("agent", "esmfold", "zoom", "print"):
+        for name in ("agent", "esmfold", "tree", "zoom", "print"):
             with self.subTest(command=name):
                 outcomes = Outcomes()
                 with Viewer_Command_Portal.bind(outcomes):

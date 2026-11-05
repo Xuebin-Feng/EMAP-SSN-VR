@@ -371,7 +371,7 @@ override needs a reason that survives being said out loud:
 
 | Override | Why it cannot be shared |
 | --- | --- |
-| `agent`, `esmfold` | Driven end-to-end through the Viewer web server, which is out of scope for this port. Stubs that explain, instead of an AttributeError inside a web backend. |
+| `agent`, `esmfold`, `tree` | Driven end-to-end through the Viewer web server, which is out of scope for this port (`tree` opens a browser page, and upstream's module cannot even be loaded without PySide6). Stubs that explain, instead of an AttributeError inside a web backend. |
 | `zoom` | Drives a VisPy camera on a canvas this process has no equivalent of; the headset owns the viewpoint. |
 | `print` | Upstream screen-grabs the canvas. A VR figure has to be rebuilt from the state arrays and projected onto a chosen plane, which is a different command. Disabled until that is designed. |
 | `alignment`, `embedding`, `run` | Upstream opens a Qt file dialog. Identical once the file is chosen, except that a Python script `run` names runs in the foreground here, where the desktop viewer runs it in the background to keep its window responsive; the path is an argument here. |
