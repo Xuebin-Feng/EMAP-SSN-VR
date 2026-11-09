@@ -654,7 +654,7 @@ class HeadlessViewer:
             return False
 
         try:
-            with Command_Engine.headset_notes(self, command_name):
+            with Command_Engine.headset_notes(self):
                 module.run(self, args)
         except Exception as error:
             print(f"Command Error: {error}")
@@ -1119,7 +1119,7 @@ def _simple_terminal_loop(viewer):
             print("\nExiting terminal...")
             viewer.running = False
             raise KeyboardInterrupt
-        if command.lower() in ("exit", "quit"):
+        if command.lower() in Command_Engine.TERMINAL_COMMANDS:
             viewer.running = False
             return
         if command:
@@ -1196,7 +1196,7 @@ def terminal_loop(viewer):
                 break
 
             cmd = "".join(cmd_chars).strip()
-            if cmd.lower() in ("exit", "quit"):
+            if cmd.lower() in Command_Engine.TERMINAL_COMMANDS:
                 viewer.running = False
                 return
             if cmd:

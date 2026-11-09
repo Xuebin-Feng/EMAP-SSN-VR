@@ -40,6 +40,10 @@ could disagree with what the viewer is showing.
 """
 
 import Command_Engine
+from desktop.Command_Metadata import entry
+
+# What `help` says of this command (read from the source, without importing it).
+CATALOG_ENTRY = entry('Export sequence subsets (clusters, groups or #LABEL#) as FASTA files.')
 import os
 import re
 import EMAPSSN_Config as cfg

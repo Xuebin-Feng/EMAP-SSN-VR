@@ -251,14 +251,24 @@ def command_artifact(viewer, path):
     report(artifact=path, viewer=viewer)
 
 
+#: Words the terminal loop handles itself, before any command module is looked
+#: up. A run script cannot use them: process_command reports them as unknown.
+#: The loop tests for them, and `help` lists them.
+TERMINAL_COMMANDS = {
+    "exit": "Shut the viewer down. Works at the prompt only, not in a run script.",
+    "quit": "Same as exit.",
+}
+
+
 # --- Changes the headset cannot show --------------------------------
 # The VR protocol sends the headset colours, sizes, visibility and the
 # transform, and nothing else (docs/PROTOCOL.md, "Known limitations"), and the
 # reference client draws every node opaque, so the alpha of a colour is not
 # shown either. A command that changes anything else still succeeds, so the
-# terminal says what the headset will not show. It is said here, around the
-# viewer's dispatch of each command, so no upstream command needs VR-specific
-# code.
+# terminal says what the headset will not show. The table below is of the
+# viewer's state, not of commands: every command is watched alike, around the
+# viewer's dispatch of it, so no command is named and a command that changes
+# such state as a side effect is noted too.
 
 
 def _alpha_channel(colors):
@@ -266,34 +276,15 @@ def _alpha_channel(colors):
     return colors[:, 3]
 
 
-#: command -> ((viewer attribute it can change, what the headset does not show of it
-#: [, a function that picks the part of the attribute the headset does not show]), ...)
-HEADSET_LIMITS = {
-    "select": (("selected_indices", "the selection"),),
-    "color": (
-        ("current_shapes", "node shapes"),
-        ("current_colors", "transparency", _alpha_channel),
-    ),
-    "reset": (
-        ("current_shapes", "node shapes"),
-        ("pos", "node position changes after the headset connects"),
-        ("current_colors", "transparency", _alpha_channel),
-    ),
-    "undo": (
-        ("current_shapes", "node shapes"),
-        ("pos", "node position changes after the headset connects"),
-        ("current_colors", "transparency", _alpha_channel),
-    ),
-    "redo": (
-        ("current_shapes", "node shapes"),
-        ("pos", "node position changes after the headset connects"),
-        ("current_colors", "transparency", _alpha_channel),
-    ),
-    # These recolor nodes too, and give the nodes of noise a 40 % alpha.
-    "cluster": (("current_colors", "transparency", _alpha_channel),),
-    "subcluster": (("current_colors", "transparency", _alpha_channel),),
-    "spectrum": (("current_colors", "transparency", _alpha_channel),),
-}
+#: (viewer attribute the headset cannot show, what to call it
+#: [, a function that picks the part of the attribute it cannot show]), in the
+#: order the notes are printed.
+HEADSET_LIMITS = (
+    ("current_shapes", "node shapes"),
+    ("pos", "node position changes after the headset connects"),
+    ("selected_indices", "the selection"),
+    ("current_colors", "transparency", _alpha_channel),
+)
 
 HEADSET_NOTE = "(Not shown in the headset: {what}.)"
 
@@ -325,14 +316,15 @@ def _watched_part(viewer, row):
 
 
 @contextmanager
-def headset_notes(viewer, command_name):
+def headset_notes(viewer):
     """Around one command's run: if it succeeded having changed what the
-    headset cannot show, end its output with a note saying so.
+    headset cannot show (HEADSET_LIMITS, whichever command it was), end its
+    output with a note saying so.
 
     A command that raised, failed or was cancelled gets no note, and neither
     does one whose change the headset does show.
     """
-    watched = HEADSET_LIMITS.get(command_name, ())
+    watched = HEADSET_LIMITS
     before = [_watched_part(viewer, row) for row in watched]
     record = {"status": None}
     token = _DISPATCH.set(record)

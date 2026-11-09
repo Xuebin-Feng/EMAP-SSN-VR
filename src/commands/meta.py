@@ -54,6 +54,10 @@ The expression runs to the end of the line, so it may hold spaces, as
 import os
 
 import Command_Engine
+from desktop.Command_Metadata import entry
+
+# What `help` says of this command (read from the source, without importing it).
+CATALOG_ENTRY = entry('Upload, download or delete node metadata columns.')
 import Settings_VR as cfg
 from Metadata_Core import (
     MetadataColumnDeleteError,

@@ -20,6 +20,10 @@ override for a redundant one: the main program's module loads in this process, a
 does not do this.
 """
 import Command_Engine
+from desktop.Command_Metadata import entry
+
+# What `help` says of this command (read from the source, without importing it).
+CATALOG_ENTRY = entry("Say where this viewer's output is: the VR viewer has no Console window, and this terminal is its console.")
 from utilities.Localization import JoinedMessage, Message
 
 OVERRIDE_REASON = "the VR viewer has no Console window; its terminal is the console"

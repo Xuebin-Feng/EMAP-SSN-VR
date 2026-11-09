@@ -37,24 +37,26 @@ import ast
 import os
 
 import Command_Engine
+from desktop.Command_Metadata import entry
+
+# What `help` says of this command (read from the source, without importing it).
+CATALOG_ENTRY = entry('List the available commands, or describe one.')
 
 OVERRIDE_REASON = "it lists and describes the VR viewer's commands, which differ from the desktop Viewer's"
 
 try:
-    from desktop.Command_Metadata import COMMAND_METADATA, get_command_metadata
+    from desktop.Command_Metadata import COMMAND_METADATA, declarations, get_command_metadata
 except Exception:  # pragma: no cover - only if the parent checkout is broken
     COMMAND_METADATA = {}
+
+    def declarations(name):
+        return None
 
     def get_command_metadata(name):
         raise KeyError(name)
 
 
-#: Words the terminal loop handles itself, before any command module is looked
-#: up. A run script cannot use them: process_command reports them as unknown.
-TERMINAL_COMMANDS = {
-    "exit": "Shut the viewer down. Works at the prompt only, not in a run script.",
-    "quit": "Same as exit.",
-}
+TERMINAL_COMMANDS = Command_Engine.TERMINAL_COMMANDS
 
 
 def _available_commands():
@@ -85,19 +87,6 @@ def _available_commands():
     return found
 
 
-#: One-line summaries for VR commands, read in place of the module docstring's
-#: first line, which is written for developers. A command missing from here
-#: falls back to its docstring.
-LOCAL_SUMMARIES = {
-    "console": "Say where this viewer's output is: the VR viewer has no Console window, and this terminal is its console.",
-    "export": "Export sequence subsets (clusters, groups or #LABEL#) as FASTA files.",
-    "help": "List the available commands, or describe one.",
-    "jobs": "List the background file jobs (logo, label) that wait or run, or cancel them. Every other command runs at once.",
-    "meta": "Upload, download or delete node metadata columns.",
-    "run": "Run the commands in a script file, one per line (.txt, or .py that prints them).",
-}
-
-
 def _local_docstring(name):
     """First line of a local command module's docstring, read without importing.
 
@@ -118,8 +107,16 @@ def _local_docstring(name):
 
 
 def _local_summary(name):
-    """A VR command's own one-liner: the table's, else its docstring's first line."""
-    return LOCAL_SUMMARIES.get(name) or _local_docstring(name)
+    """A VR command's own one-liner: its CATALOG_ENTRY's summary, else its docstring's first line.
+
+    The entry is read from the module's source by the main program's reader, which
+    looks in this folder first, so a command declares it here as the main program's do.
+    """
+    declared = declarations(name)
+    entry = getattr(declared, "catalog_entry", None)
+    if entry and entry.get("summary"):
+        return entry["summary"]
+    return _local_docstring(name)
 
 
 def _summary(name, is_local=False):
@@ -139,7 +136,7 @@ def _summary(name, is_local=False):
     try:
         return get_command_metadata(name)["summary"]
     except Exception:
-        return LOCAL_SUMMARIES.get(name, "")
+        return ""
 
 
 def _describe(name, is_local=False):
@@ -163,8 +160,7 @@ def _describe(name, is_local=False):
     try:
         metadata = get_command_metadata(name)
     except Exception:
-        local = LOCAL_SUMMARIES.get(name)
-        lines.append(f"  {local}" if local else "  (no description available)")
+        lines.append("  (no description available)")
         return "\n".join(lines)
 
     lines.append(f"  {metadata['summary']}")

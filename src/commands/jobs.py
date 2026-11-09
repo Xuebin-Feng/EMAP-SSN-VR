@@ -26,6 +26,10 @@ import sys
 
 import _bootstrap_vr
 import Command_Engine
+from desktop.Command_Metadata import entry
+
+# What `help` says of this command (read from the source, without importing it).
+CATALOG_ENTRY = entry('List the background file jobs (logo, label) that wait or run, or cancel them. Every other command runs at once.')
 
 OVERRIDE_REASON = "its help describes slow commands, undo, the Session card and windows this viewer has not; runs the main command"
 

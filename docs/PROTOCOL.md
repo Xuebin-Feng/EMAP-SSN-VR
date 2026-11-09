@@ -207,15 +207,18 @@ Each of these needs a coordinated change to both server and client to lift.
 Limitations 1 to 3 and 7 mean a terminal command can succeed without the
 headset showing its change. The VR terminal ends the output of such a command
 with a note, for example `(Not shown in the headset: node shapes.)` or
-`(Not shown in the headset: transparency.)`. It does so for `select` (the
-selection), for `color` and `reset` (node shapes, `reset network`'s positions,
-and transparency), for `undo` and `redo` (shapes, positions and transparency)
-and for `cluster`, `subcluster` and `spectrum` (transparency), and only when
-the command succeeded and changed that state. Changing the RGB of a colour
-without its alpha is shown and gets no note. The table is `HEADSET_LIMITS` in
-`src/Command_Engine.py`; a row may name a function that picks the part of the
-viewer's attribute to watch, as the alpha rows do; lifting a limitation means
-removing its row.
+`(Not shown in the headset: transparency.)`. The note follows any command: the
+viewer watches the state the headset cannot show (node shapes, positions,
+the selection and the alpha of every colour) around every command it runs, and
+says so when a command that succeeded changed one of them, whichever command
+it was and whether it meant to (`hide` drops the hidden nodes from the
+selection, and `undo` restores whatever it restores). A command that failed,
+was cancelled or raised gets no note, and neither does one that left all of it
+as it was. Changing the RGB of a colour without its alpha is shown and gets no
+note. The table is `HEADSET_LIMITS` in `src/Command_Engine.py`: viewer
+attributes, not commands, so no command is named; a row may name a function
+that picks the part of the attribute to watch, as the alpha row does; lifting a
+limitation means removing its row.
 
 ## Tools and tests
 

@@ -472,9 +472,13 @@ alpha (`color` with `50%`, `cluster`'s translucent noise) is not shown either.
 The terminal says so after such a command succeeds, for example
 `(Not shown in the headset: the selection.)` or
 `(Not shown in the headset: transparency.)`.
-The commands and what they cannot show are the `HEADSET_LIMITS` table in
-`src/Command_Engine.py`; the viewer's `process_command` applies it, so no
-upstream command carries VR-specific code for it.
+The note follows any command that changes something the headset cannot show,
+not only the commands named here: the viewer's `process_command` watches the
+node shapes, the positions, the selection and the alpha of the colours around
+every command (the `HEADSET_LIMITS` table in `src/Command_Engine.py`, which
+lists viewer attributes and names no command), so no upstream command carries
+VR-specific code for it, and a command that changes one as a side effect, such
+as `hide` dropping nodes from the selection, is noted too.
 
 The client also records a default endpoint in `player/vr_client.json`, used
 only when it is started by hand. The Config GUI shows it in the tooltip of

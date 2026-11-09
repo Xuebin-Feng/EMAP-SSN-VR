@@ -50,6 +50,10 @@ import locale
 import os
 
 import Command_Engine
+from desktop.Command_Metadata import entry
+
+# What `help` says of this command (read from the source, without importing it).
+CATALOG_ENTRY = entry('Run the commands in a script file, one per line (.txt, or .py that prints them).')
 from Viewer_Command_Portal import MAX_SCRIPT_COMMANDS
 
 USAGE = (

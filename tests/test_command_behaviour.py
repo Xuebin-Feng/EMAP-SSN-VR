@@ -364,8 +364,8 @@ class HeadsetNoteTests(unittest.TestCase):
 
     That is what the protocol cannot carry and the alpha of a colour, which the
     reference client ignores. The note is added where the viewer dispatches a
-    command, from the HEADSET_LIMITS table, so none of the upstream commands
-    knows about it.
+    command, from HEADSET_LIMITS, a table of viewer attributes that names no
+    command: every command is watched alike, so none of them knows about it.
     """
 
     SELECTION = "(Not shown in the headset: the selection.)"
@@ -455,20 +455,21 @@ class HeadsetNoteTests(unittest.TestCase):
         self.assertNotIn("Not shown in the headset", run_command(self.viewer, "undo"))
         self.assertNotIn("Not shown in the headset", run_command(self.viewer, "redo"))
 
-    def test_the_table_decides_which_commands_are_noted(self):
-        patched = {**Command_Engine.HEADSET_LIMITS, "color": (("current_colors", "node colours"),)}
-        with mock.patch.object(Command_Engine, "HEADSET_LIMITS", patched):
-            output = run_command(self.viewer, "color red #cluster_0#")
-        self.assertTrue(
-            output.rstrip().endswith("(Not shown in the headset: node colours.)"),
-            output,
+    def test_the_rows_are_viewer_attributes_in_print_order_and_name_no_command(self):
+        self.assertEqual(
+            [(row[0], row[1]) for row in Command_Engine.HEADSET_LIMITS],
+            [
+                ("current_shapes", "node shapes"),
+                ("pos", "node position changes after the headset connects"),
+                ("selected_indices", "the selection"),
+                ("current_colors", "transparency"),
+            ],
         )
+        self.assertIsInstance(Command_Engine.HEADSET_LIMITS, tuple)
 
     def test_a_row_may_watch_only_part_of_an_attribute(self):
         # The third item of a row picks the part of the attribute that is watched.
-        patched = {**Command_Engine.HEADSET_LIMITS, "color": (
-            ("current_colors", "the blue channel", lambda colors: colors[:, 2]),
-        )}
+        patched = (("current_colors", "the blue channel", lambda colors: colors[:, 2]),)
         with mock.patch.object(Command_Engine, "HEADSET_LIMITS", patched):
             # The nodes start with a blue channel of 1, which this color keeps.
             self.assertNotIn(
@@ -476,6 +477,13 @@ class HeadsetNoteTests(unittest.TestCase):
             )
             output = run_command(self.viewer, "color #ff0000 #cluster_0#")
         self.assertTrue(output.rstrip().endswith("(Not shown in the headset: the blue channel.)"), output)
+
+    def test_headset_notes_takes_only_the_viewer(self):
+        with redirect_stdout(io.StringIO()) as output:
+            with Command_Engine.headset_notes(self.viewer):
+                Command_Engine.command_succeeded(self.viewer, "done")
+                self.viewer.current_colors[0, 3] = 0.4
+        self.assertTrue(output.getvalue().rstrip().endswith(self.TRANSPARENCY), output.getvalue())
 
     def test_an_alpha_the_headset_does_not_show_is_noted_and_a_colour_is_not(self):
         output = run_command(self.viewer, "color #cluster_0# <red,50%>")
@@ -527,19 +535,46 @@ class HeadsetNoteTests(unittest.TestCase):
         self.assertTrue(run_command(viewer, "undo").rstrip().endswith(self.TRANSPARENCY))
         self.assertTrue(run_command(viewer, "redo").rstrip().endswith(self.TRANSPARENCY))
 
-    def test_a_command_that_recolors_with_an_alpha_is_noted(self):
-        # cluster gives noise a 40 % alpha, and subcluster and spectrum recolor nodes too.
-        for command in ("cluster", "subcluster", "spectrum"):
-            self.assertEqual(
-                Command_Engine.HEADSET_LIMITS[command],
-                (("current_colors", "transparency", Command_Engine._alpha_channel),),
-            )
+    def test_cluster_and_spectrum_note_the_alpha_they_change(self):
+        viewer = self.viewer
+        # cluster gives the nodes of noise a 40 % alpha.
+        self.assertTrue(run_command(viewer, "cluster").rstrip().endswith(self.TRANSPARENCY))
+        viewer.current_colors[:, 3] = 0.5
+        output = run_command(viewer, "spectrum {Length}")
+        self.assertIn("Spectrum coloring applied", output)
+        self.assertTrue(output.rstrip().endswith(self.TRANSPARENCY), output)
+
+    def test_any_command_that_lowers_an_alpha_is_noted(self):
+        # The watch is the dispatcher's, so a command needs nothing of its own for it
+        # (distribution, which needs an alignment, recolors the same way).
         viewer = self.viewer
         with redirect_stdout(io.StringIO()) as output:
-            with Command_Engine.headset_notes(viewer, "cluster"):
-                Command_Engine.command_succeeded(viewer, "done")
-                viewer.current_colors[0, 3] = 0.4
+            with Command_Engine.headset_notes(viewer):
+                viewer.current_colors[:3, 3] = 0.2
+                Command_Engine.command_succeeded(viewer, "recolored")
         self.assertTrue(output.getvalue().rstrip().endswith(self.TRANSPARENCY), output.getvalue())
+
+    def test_a_command_that_changes_the_selection_as_a_side_effect_is_noted(self):
+        viewer = self.viewer
+        run_command(viewer, "select #cluster_0#")
+        # hide drops the hidden nodes from the selection.
+        output = run_command(viewer, "hide #cluster_0#")
+        self.assertIn("Hidden 5 nodes", output)
+        self.assertEqual(list(viewer.selected_indices), [])
+        self.assertTrue(output.rstrip().endswith(self.SELECTION), output)
+
+    def test_a_command_that_changes_nothing_watched_gets_no_note(self):
+        for command in ("color #cluster_0# red", "hide #cluster_1#", "hide reset"):
+            with self.subTest(command=command):
+                self.assertNotIn("Not shown in the headset", run_command(self.viewer, command))
+
+    def test_a_cancelled_command_gets_no_note(self):
+        viewer = self.viewer
+        with redirect_stdout(io.StringIO()) as output:
+            with Command_Engine.headset_notes(viewer):
+                Command_Engine.command_cancelled(viewer, "stopped")
+                viewer.selected_indices = [1]
+        self.assertEqual(output.getvalue(), "")
 
     def test_each_line_of_a_script_is_noted_as_typed(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -548,7 +583,8 @@ class HeadsetNoteTests(unittest.TestCase):
                 handle.write("select #cluster_0#\ncolor red #cluster_0#\nselect #cluster_1#\n")
             output = run_command(self.viewer, f"run {script}")
         self.assertIn("Batch execution completed: 3 commands run.", output)
-        self.assertEqual(output.count(self.SELECTION), 2)
+        # color leaves nothing selected, so it changes the selection too.
+        self.assertEqual(output.count(self.SELECTION), 3)
 
     def test_a_command_run_outside_the_dispatcher_prints_no_note(self):
         from commands import select
@@ -562,7 +598,7 @@ class HeadsetNoteTests(unittest.TestCase):
         viewer = self.viewer
         with redirect_stdout(io.StringIO()) as output:
             with self.assertRaises(RuntimeError):
-                with Command_Engine.headset_notes(viewer, "select"):
+                with Command_Engine.headset_notes(viewer):
                     Command_Engine.command_succeeded(viewer, "done")
                     viewer.selected_indices = [1]
                     raise RuntimeError("boom")
@@ -571,12 +607,35 @@ class HeadsetNoteTests(unittest.TestCase):
     def test_a_failure_after_a_success_keeps_the_command_failed(self):
         viewer = self.viewer
         with redirect_stdout(io.StringIO()) as output:
-            with Command_Engine.headset_notes(viewer, "select"):
+            with Command_Engine.headset_notes(viewer):
                 Command_Engine.command_succeeded(viewer, "part")
                 Command_Engine.command_failed(viewer, "rest")
                 Command_Engine.command_succeeded(viewer, "again")
                 viewer.selected_indices = [1]
         self.assertEqual(output.getvalue(), "")
+
+
+class HelpReadsDeclarationsTests(unittest.TestCase):
+    """`help` describes VR's own commands from what their modules declare."""
+
+    def test_each_vr_command_declares_the_summary_help_prints(self):
+        from commands import help as help_command
+        from desktop.Command_Metadata import declarations
+
+        self.assertFalse(hasattr(help_command, "LOCAL_SUMMARIES"))
+        viewer = build_viewer()
+        output = run_command(viewer, "help")
+        for name in ("console", "export", "help", "jobs", "meta", "run"):
+            with self.subTest(command=name):
+                summary = declarations(name).catalog_entry["summary"]
+                self.assertIn(summary, output)
+
+    def test_the_terminals_own_words_come_from_the_engine(self):
+        from commands import help as help_command
+
+        self.assertIs(help_command.TERMINAL_COMMANDS, Command_Engine.TERMINAL_COMMANDS)
+        output = run_command(build_viewer(), "help exit")
+        self.assertIn(Command_Engine.TERMINAL_COMMANDS["exit"], output)
 
 
 class ArtifactTests(unittest.TestCase):
