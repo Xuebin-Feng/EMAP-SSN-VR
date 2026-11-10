@@ -337,6 +337,57 @@ class CommandPackageTests(unittest.TestCase):
                 self.assertNotIn("Unrecognized export target", output)
 
 
+class AliasTests(unittest.TestCase):
+    """A command's declared aliases (ALIASES in its module) run it in the VR viewer too, and `help` shows them."""
+
+    PLUGIN = chr(10).join([
+        "ALIASES = ('zzvralias',)",
+        "from desktop.Command_Metadata import entry",
+        "CATALOG_ENTRY = entry('Prints a marker.')",
+        "def run(viewer, args):",
+        "    print('zzvr ran', args)",
+        "",
+    ])
+
+    def setUp(self):
+        import commands
+
+        self.folder = tempfile.mkdtemp(prefix="emapssn-vr-alias-")
+        pathlib.Path(self.folder, "zzvr_plain.py").write_text(self.PLUGIN, encoding="utf-8")
+        commands.__path__.append(self.folder)
+        importlib.invalidate_caches()
+
+        def remove():
+            commands.__path__.remove(self.folder)
+            sys.modules.pop("commands.zzvr_plain", None)
+            shutil.rmtree(self.folder, ignore_errors=True)
+
+        self.addCleanup(remove)
+        self.viewer = build_viewer()
+
+    def test_a_typed_alias_runs_the_command(self):
+        for typed in ("zzvr_plain a b", "zzvralias a b", "ZZVRALIAS a b", "vr_zzvralias a b"):
+            with self.subTest(typed=typed):
+                self.assertIn("zzvr ran ['a', 'b']", run_command(self.viewer, typed))
+
+    def test_the_history_keeps_what_was_typed(self):
+        buffer = io.StringIO()
+        with redirect_stdout(buffer), redirect_stderr(buffer):
+            self.viewer.process_command("zzvralias x", record_history=True)
+        self.assertEqual(self.viewer.command_history[-1], "zzvralias x")
+
+    def test_an_unknown_word_still_fails_as_typed(self):
+        self.assertIn("Unknown command: zzvrnone", run_command(self.viewer, "zzvrnone"))
+
+    def test_help_lists_the_aliases_beside_the_command_and_describes_it_by_either_name(self):
+        self.assertIn("zzvr_plain (zzvralias)", run_command(self.viewer, "help"))
+        for name in ("zzvr_plain", "zzvralias"):
+            with self.subTest(name=name):
+                described = run_command(self.viewer, f"help {name}")
+                self.assertIn("zzvr_plain (zzvralias)", described)
+                self.assertNotIn("Unknown command", described)
+
+
 class CommandEngineAPITests(unittest.TestCase):
     """The surface upstream commands call unconditionally."""
 

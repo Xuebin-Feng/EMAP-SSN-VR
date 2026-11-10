@@ -36,6 +36,7 @@ lists what this viewer does not have.
 import ast
 import os
 
+import Command_Declarations
 import Command_Engine
 from desktop.Command_Metadata import entry
 
@@ -45,9 +46,12 @@ CATALOG_ENTRY = entry('List the available commands, or describe one.')
 OVERRIDE_REASON = "it lists and describes the VR viewer's commands, which differ from the desktop Viewer's"
 
 try:
-    from desktop.Command_Metadata import COMMAND_METADATA, declarations, get_command_metadata
+    from desktop.Command_Metadata import COMMAND_METADATA, alias_map, declarations, get_command_metadata
 except Exception:  # pragma: no cover - only if the parent checkout is broken
     COMMAND_METADATA = {}
+
+    def alias_map():
+        return None
 
     def declarations(name):
         return None
@@ -139,8 +143,21 @@ def _summary(name, is_local=False):
         return ""
 
 
+def _aliases_of(name):
+    """The aliases the command declares (ALIASES in its module, main's or VR's), which the listing shows beside it."""
+    try:
+        return alias_map().by_command.get(name, ())
+    except Exception:
+        return ()
+
+
+def _label(name):
+    aliases = _aliases_of(name)
+    return f"{name} ({', '.join(aliases)})" if aliases else name
+
+
 def _describe(name, is_local=False):
-    lines = [f"{name}"]
+    lines = [_label(name)]
     if name in TERMINAL_COMMANDS:
         lines.append(f"  {TERMINAL_COMMANDS[name]}")
         return "\n".join(lines)
@@ -191,6 +208,7 @@ def run(viewer, args):
         name = args[0].lower().lstrip("-")
         if name.startswith("vr_"):
             name = name[3:]
+        name = Command_Declarations.canonical_command(name)
         available = _available_commands()
         if name not in available and name not in COMMAND_METADATA:
             Command_Engine.print_help(
@@ -207,7 +225,7 @@ def run(viewer, args):
         Command_Engine.print_help(viewer, "No commands were found.")
         return
 
-    width = max(len(name) for name in available)
+    width = max(len(_label(name)) for name in available)
     lines = [
         "EMAP-SSN VR viewer commands",
         "",
@@ -217,7 +235,7 @@ def run(viewer, args):
     for name in sorted(available):
         marker = " " if available[name] else "*"
         summary = _summary(name, available[name])
-        lines.append(f"  {marker} {name.ljust(width)}  {summary}")
+        lines.append(f"  {marker} {_label(name).ljust(width)}  {summary}")
 
     lines.append("")
     lines.append(

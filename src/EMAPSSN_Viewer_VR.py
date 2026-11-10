@@ -40,6 +40,7 @@ import Settings_VR as cfg
 # the real, Qt-importing EMAPSSN_Config load first.
 _bootstrap_vr.install_settings_alias(cfg)
 
+import Command_Declarations
 import Command_Engine
 import Viewer_Utils_VR as utils
 import Player_Build_VR
@@ -619,6 +620,8 @@ class HeadlessViewer:
         command_name = parts[0].lower()
         if command_name.startswith("vr_"):
             command_name = command_name[3:]
+        # A command's declared aliases (ALIASES in its module) stand for it; what was typed stays in the history.
+        command_name = Command_Declarations.canonical_command(command_name)
         args = parts[1:]
         
         # A command is a public module of the commands package. Anything else

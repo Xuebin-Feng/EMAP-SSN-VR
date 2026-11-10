@@ -49,6 +49,7 @@ import io
 import locale
 import os
 
+import Command_Declarations
 import Command_Engine
 from desktop.Command_Metadata import entry
 
@@ -198,7 +199,8 @@ def run(viewer, args):
             # and a self-referencing script recurses until RecursionError.
             if command_name.startswith('vr_'):
                 command_name = command_name[3:]
-            if command_name == 'run':
+            # A declared alias of run is run.
+            if Command_Declarations.canonical_command(command_name) == 'run':
                 print("Warning: Recursive 'run' command in script ignored to prevent infinite loop.")
                 continue
             commands.append(cmd_line)
