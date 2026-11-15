@@ -1917,7 +1917,8 @@ class TextSizedControlsTests(unittest.TestCase):
 
             switches = []
             for button in window.findChildren(namespace["QPushButton"]):
-                if not button.isCheckable():
+                # The high contrast button is an icon with no text to fit.
+                if not button.isCheckable() or button.objectName() == "highContrastButton":
                     continue
                 bold = QFont(button.font())
                 bold.setBold(True)

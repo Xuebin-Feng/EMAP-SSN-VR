@@ -148,7 +148,7 @@ class KindDeclarationTests(Registered):
         self.assertEqual(self.kind.theme_setting, Desktop_App.VR_CONFIG_THEME_SETTING)
         window = read(VR_SRC / "EMAPSSN_Config_VR.py")
         self.assertIn("ThemeColorButton(VR_CONFIG_THEME_SETTING, color=theme_color())", window)  # saves under it
-        self.assertIn("configured_theme_color(VR_CONFIG_THEME_SETTING)", window)  # and reads it back
+        self.assertIn("apply_saved_theme(app, VR_CONFIG_THEME_SETTING)", window)  # and reads it back
         for name in ("viewer", "tools", "session"):
             with self.subTest(other=name):
                 self.assertNotEqual(self.kind.theme_setting, kinds[name].theme_setting)
