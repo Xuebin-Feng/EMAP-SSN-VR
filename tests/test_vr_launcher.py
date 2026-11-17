@@ -206,6 +206,7 @@ class EnvironmentValidationTests(unittest.TestCase):
                 for name in (
                     "PYTHONHOME",
                     "PYTHONPATH",
+                    "PYTHONSAFEPATH",
                     "QT_PLUGIN_PATH",
                     "QT_QPA_PLATFORM_PLUGIN_PATH",
                     "QML_IMPORT_PATH",
@@ -351,7 +352,10 @@ class LauncherMonitorTests(unittest.TestCase):
         process.wait.return_value = 2  # the GUI ends in failure before it is ready: no terminal, no dialog
         with tempfile.TemporaryDirectory() as state_root:
             state = Path(state_root) / "vr_state"
-            with mock.patch.object(self.upstream.subprocess, "Popen", return_value=process) as popen:
+            inherited = {"PYTHONHOME": "/x", "QT_PLUGIN_PATH": "/y", "PYTHONSAFEPATH": "1"}
+            with mock.patch.dict(os.environ, inherited), mock.patch.object(
+                self.upstream.subprocess, "Popen", return_value=process
+            ) as popen:
                 self.assertEqual(self.upstream.run_monitor("vr", state), 2)
             call = popen.call_args
             command = call.args[0]
@@ -362,7 +366,7 @@ class LauncherMonitorTests(unittest.TestCase):
             environment = call.kwargs["env"]
             self.assertEqual(environment["SSN_GUI_READY_FILE"], str((state / "gui.ready").resolve()))
             self.assertEqual(environment["SSN_STARTUP_STATUS_FILE"], str((state / "startup.status").resolve()))
-            for name in ("PYTHONHOME", "QT_PLUGIN_PATH"):
+            for name in ("PYTHONHOME", "QT_PLUGIN_PATH", "PYTHONSAFEPATH"):
                 self.assertNotIn(name, environment)
         # The name is upstream's contract: Desktop_App pops this variable when the window becomes visible.
         self.assertIn(

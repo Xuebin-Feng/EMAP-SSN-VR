@@ -1667,6 +1667,60 @@ class DropdownValueTests(unittest.TestCase):
         self.assertFalse(self.report["profile_error"])
 
 
+class InterruptedRunFolderTests(unittest.TestCase):
+    """The folder an interrupted run left behind is the one the layout generator reuses.
+
+    VR Config passes the sequence file's base name as an allowed name, as the
+    desktop Config does, so a folder holding only that file and an unfinished
+    ``*.partial`` file counts as free instead of earning a ``_[<id>]`` sibling.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.report = report_from(
+            """
+            import pathlib, tempfile
+            cache_manifest = namespace["cache_manifest"]
+            compatibility = cache_manifest.build_compatibility(
+                "a" * 64, "b" * 64, "alignment",
+                alignment_score="global", normalization="alignment_length", top_edge_percent=5.0,
+            )
+            with tempfile.TemporaryDirectory() as temp_dir:
+                root = pathlib.Path(temp_dir)
+                (root / "readable-cache").mkdir()
+                (root / "readable-cache" / "set.fasta").write_text("x", encoding="utf-8")
+                (root / "readable-cache" / ".cache.h5.abc.partial").write_text("x", encoding="utf-8")
+                directory_input = window.inputs["SAVED_LAYOUT_DIR"]
+                directory_input.blockSignals(True)
+                directory_input.setText(str(root))
+                directory_input.blockSignals(False)
+                with mock.patch.object(
+                    window, "_cache_paths_from_inputs",
+                    return_value=(str(root / "set.fasta"), str(root / "network.h5")),
+                ), mock.patch.object(
+                    cache_manifest, "build_compatibility", return_value=compatibility
+                ), mock.patch.object(
+                    cache_manifest, "build_canonical_cache_name", return_value="readable-cache"
+                ), mock.patch.object(
+                    cache_manifest, "find_matching_manifest_folders", return_value=[]
+                ):
+                    window._apply_cache_discovery({
+                        "sequence": {"sha256": "a" * 64},
+                        "network": {"sha256": "b" * 64},
+                        "network_type": "alignment",
+                    })
+                print("@@" + json.dumps({
+                    "folder": pathlib.Path(window.current_cache_folder).name,
+                    "reused": pathlib.Path(window.current_cache_folder) == root / "readable-cache",
+                }))
+            """
+        )
+
+    def test_the_folder_holding_only_the_sequence_file_and_a_partial_file_is_reused(self):
+        self.assertTrue(self.report["reused"], self.report["folder"])
+        self.assertEqual(self.report["folder"], "readable-cache")
+
+
 class NormalizationLabelTests(unittest.TestCase):
     """The Normalization Mode dropdown names each mode in words; the stored value stays.
 
