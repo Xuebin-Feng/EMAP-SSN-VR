@@ -747,7 +747,37 @@ class ExportCacheNameTests(unittest.TestCase):
                     output = run_command(viewer, command)
                     self.assertEqual(self.written(), [])
                     self.assertEqual(os.listdir(self.root), ["outside"])
-                    self.assertIn(f"Error: Export refused group label '{label}'", output)
+                    if " " in label and command != "export groups":
+                        # A typed line is split at its spaces, so a label with
+                        # spaces never arrives whole: see the spaced test below.
+                        self.assertIn("Unrecognized export target", output)
+                    else:
+                        self.assertIn(f"Error: Export refused group label '{label}'", output)
+
+    def test_a_group_label_that_is_a_path_with_spaces_is_refused(self):
+        """A label whose path holds spaces is refused whatever the machine's temp folder is.
+
+        Typed, the line is split at its spaces, as on the desktop, so the label
+        never reaches the export whole and the line is refused as an unknown
+        target; given whole (as a script or the agent gives it) the label is
+        refused as a path. Either way nothing is written.
+        """
+        spaced = os.path.join(self.outside, "First Last", "my labels", "escaped")
+        groups = [{"alpha"}, {spaced}, set(), set(), set()]
+        viewer, _ = self.open_saved(groups, ["LEIDEN_1.0", 2])
+        self.assertEqual(viewer.group_labels[1], {spaced})
+
+        output = run_command(viewer, f"export #alpha# #{spaced}#")
+        self.assertIn("Unrecognized export target", output)
+        self.assertEqual(self.written(), [])
+
+        export = importlib.import_module("commands.export")
+        buffer = io.StringIO()
+        with redirect_stdout(buffer), redirect_stderr(buffer):
+            export.run(viewer, ["#alpha#", f"#{spaced}#"])
+        self.assertIn(f"Error: Export refused group label '{spaced}'", buffer.getvalue())
+        self.assertEqual(self.written(), [])
+        self.assertEqual(os.listdir(self.root), ["outside"])
 
     def test_clustering_parameters_that_are_paths_are_refused(self):
         # The folder name starts "Score0.45_LEIDEN_1.0_Min", which absorbs one '..'.
@@ -981,6 +1011,29 @@ class MetadataCommandTests(unittest.TestCase):
                 self.assertIn("Organism", viewer.metadata)
                 self.assertIn("Score", viewer.metadata)
 
+    def test_upload_takes_a_path_with_spaces_as_the_desktop_does(self):
+        """The line is split at its spaces; the whole remainder is tried as one file first."""
+        folder = os.path.join(self.folder, "First Last", "my sheets")
+        os.makedirs(folder)
+        spaced = os.path.join(folder, "extra data.csv")
+        shutil.copy(self.sheet, spaced)
+        for command in (
+            f"meta {spaced}",
+            f"meta upload {spaced}",
+            f'meta upload "{spaced}"',
+            f"meta import '{spaced}'",
+        ):
+            with self.subTest(command=command):
+                viewer = build_viewer()
+                output = run_command(viewer, command)
+                self.assertIn("Successfully uploaded metadata", output)
+                self.assertIn("Organism", viewer.metadata)
+
+        # Words that name no file together are still separate files.
+        viewer = build_viewer()
+        output = run_command(viewer, "meta upload extra.csv extra")
+        self.assertIn("Successfully uploaded metadata", output)
+
     def test_upload_reports_a_missing_file_the_way_upstream_does(self):
         output = run_command(self.viewer, "meta upload no_such_file.csv")
         self.assertIn("not found (checked absolute, relative", output)
@@ -1209,9 +1262,30 @@ class SelectSaveNameTests(unittest.TestCase):
         ):
             with self.subTest(name=name):
                 output = run_command(self.viewer, f"select save {name}")
-                self.assertIn("Error: Filename", output)
-                self.assertIn(reason, output)
+                self.assertIn("Error: ", output)
+                if " " in name:
+                    # Typed, a name with spaces is several words, and the
+                    # desktop refuses that first: see the spaced test below.
+                    self.assertIn("A file name is one word", output)
+                else:
+                    self.assertIn("Error: Filename", output)
+                    self.assertIn(reason, output)
                 self.assertEqual(self.written(), [])
+
+    def test_a_path_with_spaces_is_refused_and_nothing_is_written(self):
+        spaced = os.path.join(self.outside, "First Last", "my lists", "escaped.txt")
+        output = run_command(self.viewer, f"select save {spaced}")
+        self.assertIn("A file name is one word", output)
+        self.assertEqual(self.written(), [])
+
+        # Given whole, as a script or the agent gives it, it is refused as a path.
+        select = importlib.import_module("commands.select")
+        buffer = io.StringIO()
+        with redirect_stdout(buffer), redirect_stderr(buffer):
+            select.run(self.viewer, ["save", spaced])
+        self.assertIn("Error: Filename", buffer.getvalue())
+        self.assertIn("path separators", buffer.getvalue())
+        self.assertEqual(self.written(), [])
 
 class DisabledCommandTests(unittest.TestCase):
     """Commands that refuse must refuse cleanly, not half-run."""

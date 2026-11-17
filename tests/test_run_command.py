@@ -318,6 +318,21 @@ class CommandFileEncodingTests(RunFixture, unittest.TestCase):
                              ['select "a"', 'select "b"', 'select "c"'])
 
 
+class SpacedPathTests(RunFixture, unittest.TestCase):
+    """A script whose path holds spaces runs, however it is typed."""
+
+    def test_a_script_under_a_folder_with_spaces_runs(self):
+        folder = self.script.parent / "First Last" / "my scripts"
+        folder.mkdir(parents=True)
+        self.script = folder / "my commands.txt"
+        self.script.write_text("reset hide\n", encoding="utf-8")
+        for spelling in (f"{self.script}", f'"{self.script}"'):
+            with self.subTest(spelling=spelling):
+                output = run_command(self.viewer, f"run {spelling}")
+                self.assertNotIn("does not exist", output)
+                self.assertIn("Executing: reset hide", output)
+
+
 class NotAScriptFileTests(RunFixture, unittest.TestCase):
     """A name that is not a script file is refused without being opened."""
 
@@ -327,6 +342,16 @@ class NotAScriptFileTests(RunFixture, unittest.TestCase):
         self.assertIn("is a folder", output)
         self.assertNotIn("Permission denied", output)
         self.assertNotIn("Batch execution", output)
+
+    def test_a_folder_with_spaces_is_named_as_a_folder(self):
+        folder = self.script.parent / "First Last" / "my scripts"
+        folder.mkdir(parents=True)
+        for spelling in (f"{folder}", f'"{folder}"'):
+            with self.subTest(spelling=spelling):
+                output = run_command(self.viewer, f"run {spelling}")
+                self.assertIn(f"'{folder}' is a folder", output)
+                self.assertNotIn("does not exist", output)
+                self.assertNotIn("Batch execution", output)
 
     def test_a_device_name_is_not_opened(self):
         # 'con' would wait on the keyboard and block the viewer; 'NUL' is the

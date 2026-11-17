@@ -156,38 +156,53 @@ def _split_download_arguments(tokens):
     return tokens, []
 
 
+def _strip_matching_quotes(text):
+    """Remove one pair of matching single or double quotes around text."""
+    if len(text) >= 2 and text[0] == text[-1] and text[0] in ('"', "'"):
+        return text[1:-1]
+    return text
+
+
+def _find_metadata_file(path, meta_dir):
+    """Upstream's search order: as given, in META_DIR, then with each extension."""
+    if os.path.exists(path):
+        return os.path.abspath(path)
+    path_in_dir = os.path.join(meta_dir, path)
+    if os.path.exists(path_in_dir):
+        return os.path.abspath(path_in_dir)
+    for ext in ['.xlsx', '.xls', '.csv']:
+        if os.path.exists(path + ext):
+            return os.path.abspath(path + ext)
+        elif os.path.exists(os.path.join(meta_dir, path + ext)):
+            return os.path.abspath(os.path.join(meta_dir, path + ext))
+    return None
+
+
 def _resolve_upload_paths(viewer, tokens, meta_dir):
-    """Upstream's search order, per file: as given, in META_DIR, then extensions."""
+    """The files the words after ``meta`` name, found as upstream finds them.
+
+    A path with spaces reaches here as several words: the whole remainder is
+    tried as one file first, and the words are taken as separate files only
+    when no such file exists, as the desktop does.
+    """
+    if len(tokens) > 1:
+        whole = _find_metadata_file(_strip_matching_quotes(" ".join(tokens).strip()), meta_dir)
+        if whole:
+            return [whole]
     file_paths = []
     for token in tokens:
-        path = token.strip()
-        if os.path.exists(path):
-            file_paths.append(os.path.abspath(path))
+        path = _strip_matching_quotes(token.strip())
+        found = _find_metadata_file(path, meta_dir)
+        if found:
+            file_paths.append(found)
             continue
-
-        path_in_dir = os.path.join(meta_dir, path)
-        if os.path.exists(path_in_dir):
-            file_paths.append(os.path.abspath(path_in_dir))
-            continue
-
-        found = False
-        for ext in ['.xlsx', '.xls', '.csv']:
-            if os.path.exists(path + ext):
-                file_paths.append(os.path.abspath(path + ext))
-                found = True
-                break
-            elif os.path.exists(os.path.join(meta_dir, path + ext)):
-                file_paths.append(os.path.abspath(os.path.join(meta_dir, path + ext)))
-                found = True
-                break
-        if not found:
-            msg = (
-                f"Error: Metadata file '{path}' not found "
-                f"(checked absolute, relative, and {meta_dir})."
-            )
-            Command_Engine.print_help(viewer, msg)
-            Command_Engine.command_failed(viewer, msg)
-            return None
+        msg = (
+            f"Error: Metadata file '{path}' not found "
+            f"(checked absolute, relative, and {meta_dir})."
+        )
+        Command_Engine.print_help(viewer, msg)
+        Command_Engine.command_failed(viewer, msg)
+        return None
     return file_paths
 
 

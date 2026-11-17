@@ -124,8 +124,10 @@ def run(viewer, args):
     # surrounding quotes) when that spelling names a real file.
     # isfile, not exists: a folder or a Windows device name such as 'con' exists
     # too, and opening 'con' would wait on the keyboard and block the viewer.
+    # A folder is taken whole as well, so that it is named as a folder, and
+    # not cut at its first space and reported as missing.
     joined_path = ' '.join(args).strip().strip('"')
-    file_path = joined_path if os.path.isfile(joined_path) else args[0]
+    file_path = joined_path if os.path.isfile(joined_path) or os.path.isdir(joined_path) else args[0]
 
     if os.path.isdir(file_path):
         msg = f"Error: '{file_path}' is a folder. Name a script file inside it."
