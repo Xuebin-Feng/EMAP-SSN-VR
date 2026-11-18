@@ -24,7 +24,6 @@ packets queued for the client, the files written and the state restored.
 """
 
 import ast
-import atexit
 import inspect
 import io
 import json
@@ -46,12 +45,9 @@ VR_SRC = os.path.join(OPT_VR, "src")
 if VR_SRC not in sys.path:
     sys.path.insert(0, VR_SRC)
 
-_NEUTRAL = tempfile.TemporaryDirectory(prefix="ssn_vr_neutral_")  # removed when this process exits
-atexit.register(_NEUTRAL.cleanup)
-_NEUTRAL_SETTINGS = os.path.join(_NEUTRAL.name, "viewer_settings.json")
-with open(_NEUTRAL_SETTINGS, "w", encoding="utf-8") as _neutral_file:
-    json.dump({}, _neutral_file)
-os.environ.setdefault("SSN_VIEWER_SETTINGS_PATH", _NEUTRAL_SETTINGS)
+from tests.neutral_settings import install as _install_neutral_settings  # noqa: E402
+
+_NEUTRAL = _install_neutral_settings(only_if_unset=True)  # removed when this process exits
 
 import numpy as np  # noqa: E402
 

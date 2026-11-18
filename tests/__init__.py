@@ -9,7 +9,14 @@ guard (tests/desktop_openers.py in the project root) replaces the calls that ope
 a folder, a page or a console window, and fails a test that reaches one it did not
 expect. It is loaded by path, as opt_vr's tests already borrow
 tests/translation_fixtures.py, and nothing happens where opt_vr sits without the
-main program around it. The VR Configuration GUI runs in a subprocess; see
+main program around it.
+
+VR tests write only to temporary folders. Every test module loads the neutral
+settings of neutral_settings.py, which put the cache folder (and so the command
+history, saved configs and saved layouts) in a temporary directory, and nothing
+a test does may create or change a file inside the project folder.
+test_temp_history_vr checks that a viewer from each builder keeps its history
+outside it. The VR Configuration GUI runs in a subprocess; see
 run_gui_script in test_vr_config.
 """
 import importlib.util

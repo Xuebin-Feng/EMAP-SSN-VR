@@ -26,7 +26,6 @@ shared Command_Engine API upstream commands depend on, and the load-only
 layout cache consumer.
 """
 
-import atexit
 import io
 import json
 import os
@@ -40,6 +39,7 @@ import textwrap
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from types import SimpleNamespace
+from unittest import mock
 
 #: The submodule root; VR_SRC is its module tree, mirroring the main
 #: program's project-root/src split.
@@ -50,12 +50,9 @@ if VR_SRC not in sys.path:
 
 # A neutral settings file keeps these tests independent of whatever the user
 # last saved in the project's viewer_settings.json.
-_NEUTRAL = tempfile.TemporaryDirectory(prefix="ssn_vr_neutral_")  # removed when this process exits
-atexit.register(_NEUTRAL.cleanup)
-_NEUTRAL_SETTINGS = os.path.join(_NEUTRAL.name, "viewer_settings.json")
-with open(_NEUTRAL_SETTINGS, "w", encoding="utf-8") as _neutral_file:
-    json.dump({}, _neutral_file)
-os.environ["SSN_VIEWER_SETTINGS_PATH"] = _NEUTRAL_SETTINGS
+from tests.neutral_settings import install as _install_neutral_settings  # noqa: E402
+
+_NEUTRAL = _install_neutral_settings()  # removed when this process exits
 
 import numpy as np  # noqa: E402
 import pandas as pd  # noqa: E402
@@ -375,6 +372,9 @@ class AliasTests(unittest.TestCase):
         with redirect_stdout(buffer), redirect_stderr(buffer):
             self.viewer.process_command("zzvralias x", record_history=True)
         self.assertEqual(self.viewer.command_history[-1], "zzvralias x")
+        # The line also reached the history file, which is in a temporary folder.
+        with open(self.viewer.history_file, encoding="utf-8") as handle:
+            self.assertEqual(handle.read().splitlines()[-1], "zzvralias x")
 
     def test_an_unknown_word_still_fails_as_typed(self):
         self.assertIn("Unknown command: zzvrnone", run_command(self.viewer, "zzvrnone"))
@@ -1615,8 +1615,15 @@ class ViewerStateTests(unittest.TestCase):
                          norm(os.path.join(root, "Analysis_Results", "Sequence_Logos")))
         self.assertEqual(norm(cfg.resolve_directory_path("$input_file$/Meta_Data")),
                          norm(os.path.join(root, "Input_Files", "Meta_Data")))
-        viewer = build_viewer()
-        self.assertEqual(norm(os.path.dirname(viewer.history_file)),
+        # The history folder the default settings name; the viewers these
+        # tests build use the neutral settings, which keep it out of the project.
+        with tempfile.TemporaryDirectory() as empty:
+            settings = os.path.join(empty, "viewer_settings.json")
+            with open(settings, "w", encoding="utf-8") as handle:
+                json.dump({}, handle)
+            with mock.patch.dict(os.environ, {"SSN_VIEWER_SETTINGS_PATH": settings}):
+                defaults = cfg.load_settings()
+        self.assertEqual(norm(defaults["HISTORY_DIR"]),
                          norm(os.path.join(root, "Cache_Files_VR", "History")))
         # The client build alone stays in opt_vr.
         self.assertEqual(norm(vr_viewer.vr_app_search_dirs()[0]),

@@ -27,9 +27,7 @@ dispatcher can reach is loadable. That test is the reason this file exists; the
 rest keeps it honest.
 """
 
-import atexit
 import io
-import json
 import os
 import sys
 import tempfile
@@ -44,12 +42,9 @@ if VR_SRC not in sys.path:
     sys.path.insert(0, VR_SRC)
 
 # Keep these tests independent of whatever the user last saved.
-_NEUTRAL = tempfile.TemporaryDirectory(prefix="ssn_vr_neutral_")  # removed when this process exits
-atexit.register(_NEUTRAL.cleanup)
-_NEUTRAL_SETTINGS = os.path.join(_NEUTRAL.name, "viewer_settings.json")
-with open(_NEUTRAL_SETTINGS, "w", encoding="utf-8") as _neutral_file:
-    json.dump({}, _neutral_file)
-os.environ["SSN_VIEWER_SETTINGS_PATH"] = _NEUTRAL_SETTINGS
+from tests.neutral_settings import install as _install_neutral_settings  # noqa: E402
+
+_NEUTRAL = _install_neutral_settings()  # removed when this process exits
 
 with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
     import Command_Compatibility_VR as cc  # noqa: E402
