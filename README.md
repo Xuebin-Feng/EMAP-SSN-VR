@@ -36,6 +36,15 @@ of them. Use git as above instead.
 > This is why `opt_vr` ships `.bat` launchers and no `.sh` or `.app`
 > counterparts.
 
+> [!NOTE]
+> **Linux and macOS: leave this submodule out.** Clone EMAP-SSN with a plain
+> `git clone`, without `--recurse-submodules`, and do not run
+> `git submodule update --init opt_vr`. The main program needs nothing from it.
+> Work done for those systems, such as ports, test rounds, bug reports and fixes,
+> treats `opt_vr` as out of scope: the main program's test runner skips the
+> `opt_vr` section off Windows, and VR behaviour there is not a fault to report
+> or fix.
+
 Then install the VR client and the launcher shortcut:
 
 ```bat
