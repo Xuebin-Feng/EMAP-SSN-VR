@@ -54,6 +54,10 @@ class HistoryOutsideTheProjectTests(unittest.TestCase):
         self.assertFalse(inside(cfg.HISTORY_DIR, _bootstrap_vr.PROJECT_ROOT), cfg.HISTORY_DIR)
         self.assertFalse(inside(cfg.CACHE_FILE_DIR, _bootstrap_vr.PROJECT_ROOT), cfg.CACHE_FILE_DIR)
 
+    def test_the_console_logs_go_to_a_temporary_folder(self):
+        self.assertTrue(os.environ.get("SSN_LOG_DIR"))
+        self.assertFalse(inside(os.environ["SSN_LOG_DIR"], _bootstrap_vr.PROJECT_ROOT))
+
     def test_the_shared_builder(self):
         self.check(test_opt_vr.build_viewer())
 

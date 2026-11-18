@@ -13,14 +13,24 @@ main program around it.
 
 VR tests write only to temporary folders. Every test module loads the neutral
 settings of neutral_settings.py, which put the cache folder (and so the command
-history, saved configs and saved layouts) in a temporary directory, and nothing
-a test does may create or change a file inside the project folder.
+history, saved configs and saved layouts) in a temporary directory, and this
+package points SSN_LOG_DIR (the console logs of a window or launcher a test
+starts) at one too. Nothing a test does may create or change a file inside the
+project folder.
 test_temp_history_vr checks that a viewer from each builder keeps its history
 outside it. The VR Configuration GUI runs in a subprocess; see
 run_gui_script in test_vr_config.
 """
+import atexit
 import importlib.util
 import os
+import tempfile
+
+if not os.environ.get("SSN_LOG_DIR"):
+    # Without this, a test that starts a window or launcher writes its console log to temp/logs in the project.
+    _LOGS = tempfile.TemporaryDirectory(prefix="ssn_vr_logs_")  # removed when this process exits
+    atexit.register(_LOGS.cleanup)
+    os.environ["SSN_LOG_DIR"] = _LOGS.name
 
 #: The path of the main program's guard and the module loaded from it; "" and None where
 #: opt_vr is used on its own.
