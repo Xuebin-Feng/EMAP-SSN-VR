@@ -135,6 +135,7 @@ opt_vr/
     ├── Single_Instance_VR.py             # one VR viewer at a time
     ├── Detect_GPU_VR.py                  # can this machine drive a headset
     ├── Command_Compatibility_VR.py      # shared vs overridden command audit
+    ├── Background_Job_Scheduler_VR.py   # Qt-free file-job queue for shared commands
     ├── Command_Engine.py                # name pinned: upstream imports it
     ├── Viewer_Command_Portal.py         # name pinned: upstream imports it
     ├── commands/                        # name pinned: upstream imports it
@@ -303,7 +304,7 @@ parameters and custom attributes.
 
 Before a cache opens, the viewer checks it the way the desktop viewer does. It
 takes the cache's own analysis settings (alignment score, normalization, edge
-filter, the UMAP settings and `BOX_SCALE`), so an edge filter in
+filter, the UMAP or PaCMAP settings and `BOX_SCALE`), so an edge filter in
 `viewer_settings_vr.json` does not override the cache's; the desktop viewer
 ignores one too and narrows an open cache with its edge-threshold slider. With
 no cache pinned, the settings' edge filter selects the cache, so to see another
@@ -402,7 +403,7 @@ name, so the desktop viewer is unchanged.
 
 ## Background jobs
 
-`logo` and `label` hand their slow work to `viewer.background_job_scheduler`, which is
+`logo`, `label` and `identity` hand their slow work to `viewer.background_job_scheduler`, which is
 `src/Background_Job_Scheduler_VR.py`: the main program's scheduler loads Qt, so this is a Qt-free
 counterpart that gives a job the same things by the main program's own
 `utilities/Job_Cancellation`.

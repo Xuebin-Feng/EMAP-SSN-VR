@@ -2457,7 +2457,7 @@ class RunTimeTextTests(unittest.TestCase):
             window.run_consistency_check()
             check("consistency report", plain(window.tip_panel.text()))
             write_network(["WP_1_alpha", "WP_2_beta", "Other"])
-            blast = SimpleNamespace(network_type="blast", model_name="BLAST")
+            blast = SimpleNamespace(network_type="blast", model_name="BLAST", score_kind=None)
             cache_manifest = window.run_statistics.__globals__["cache_manifest"]
             with mock.patch.object(cache_manifest, "validate_network_schema", return_value=blast):
                 window.run_statistics()
@@ -4067,6 +4067,13 @@ class ScoreKindCacheDiscoveryTests(unittest.TestCase):
                     "tracker": gui.lbl_cache_tracker.text(),
                     "folder": os.path.basename(gui.current_cache_folder or ""),
                 }
+                stats_worker = namespace["StatisticsWorker"](
+                    1, str(work / name), str(work / "a.fasta"), "global", "alignment_length"
+                )
+                stats_report = stats_worker._report()
+                stats_summary, _stats_headings = namespace["statistics_report_text"](stats_report)
+                report[name]["stats_score_kind"] = stats_report.get("score_kind")
+                report[name]["stats_metric"] = stats_summary[3]
             gui.close()
             gui.deleteLater()
             app.processEvents()
@@ -4102,6 +4109,12 @@ class ScoreKindCacheDiscoveryTests(unittest.TestCase):
         self.assertFalse(case["records_kind"])
         self.assertEqual(case["tracker"], "Compatible Folder: as_evalue")
         self.assertEqual(case["folder"], "as_evalue")
+
+    def test_statistics_report_names_efi_and_evalue_metrics(self):
+        self.assertEqual(self.report["efi.h5"]["stats_score_kind"], "efi_alignment_score")
+        self.assertEqual(self.report["efi.h5"]["stats_metric"], "Metric: EFI alignment score")
+        self.assertEqual(self.report["evalue.h5"]["stats_score_kind"], "evalue")
+        self.assertEqual(self.report["evalue.h5"]["stats_metric"], "Metric: Log10(E-Value)")
 
 
 class ProjectRootFolderTests(unittest.TestCase):
