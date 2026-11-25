@@ -4225,7 +4225,8 @@ class StatisticsWindowTests(unittest.TestCase):
                 network.create_dataset("score", data=(rng.random(60) * 40).astype(np.float32))
             for name, nodes in (("all.fasta", range(6)), ("half.fasta", range(0, 6, 2))):
                 with open(os.path.join(work, name), "w", encoding="utf-8") as handle:
-                    handle.write("".join(">n%d\\nACDE\\n" % index for index in nodes))
+                    # Every record has a sequence of its own (sanitization merges records that share one).
+                    handle.write("".join(">n%d\\nACDE%s\\n" % (index, "K" * (index + 1)) for index in nodes))
 
             def select(fasta):
                 for key in ("FASTA_DIR", "HDF5_DIR"):
