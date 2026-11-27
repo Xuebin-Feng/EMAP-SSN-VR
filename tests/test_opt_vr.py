@@ -240,8 +240,47 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(cfg.LEGACY_KEY_SOURCES["NEIGHBOR_COLOR"], "INITIAL_NODE_COLOR")
 
     def test_no_qt_is_imported(self):
-        self.assertFalse(any(name.startswith("PySide6") for name in sys.modules))
-        self.assertFalse(any(name.startswith("vispy") for name in sys.modules))
+        # Always verify in a clean interpreter that importing the VR bootstrap,
+        # settings, viewer, and local command modules never pulls in Qt or VisPy.
+        command_dir = os.path.join(VR_SRC, "commands")
+        local_commands = sorted(
+            name[:-3]
+            for name in os.listdir(command_dir)
+            if name.endswith(".py") and not name.startswith("_")
+        )
+        script = textwrap.dedent(
+            f"""
+            import importlib, os, sys
+            os.environ.setdefault("MPLBACKEND", "Agg")
+            sys.path.insert(0, {VR_SRC!r})
+            import _bootstrap_vr
+            import Settings_VR as cfg
+            _bootstrap_vr.install_settings_alias(cfg)
+            import Command_Engine
+            import EMAPSSN_Viewer_VR
+            for name in {local_commands!r}:
+                importlib.import_module("commands." + name)
+            bad = sorted(
+                name for name in sys.modules
+                if name.startswith("PySide6") or name.startswith("vispy")
+            )
+            assert not bad, f"Unexpected GUI imports: {{bad}}"
+            """
+        )
+        result = subprocess.run(
+            [sys.executable, "-c", script],
+            capture_output=True, text=True, cwd=OPT_VR, timeout=120,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+        # When running the Qt-free VR test suite without VR Config GUI tests in
+        # the same process, also assert the current interpreter stayed Qt-free.
+        if not any(
+            name == "tests.test_vr_config" or name.startswith("tests.test_vr_config_")
+            for name in sys.modules
+        ):
+            self.assertFalse(any(name.startswith("PySide6") for name in sys.modules))
+            self.assertFalse(any(name.startswith("vispy") for name in sys.modules))
 
 
 class CommandPackageTests(unittest.TestCase):
@@ -839,16 +878,33 @@ class ExportCacheNameTests(unittest.TestCase):
             )
         except (OSError, subprocess.TimeoutExpired):
             pass
-        if self.results_ignore_case():
-            self.skipTest("fsutil can't make a case-sensitive folder here (it needs the WSL feature).")
-        viewer, _ = self.open_saved(
+        viewer, cache = self.open_saved(
             [{"Alpha"}, {"alpha"}, set(), set(), set()], ["LEIDEN_1.0", 2]
         )
-        self.assertIn("Exported 2 files", run_command(viewer, "export groups"))
-        self.assertEqual(
-            sorted(path.rsplit("/", 1)[1] for path in self.written()),
-            ["Alpha.fasta", "alpha.fasta"],
-        )
+        if not self.results_ignore_case():
+            self.assertIn("Exported 2 files", run_command(viewer, "export groups"))
+            self.assertEqual(
+                sorted(path.rsplit("/", 1)[1] for path in self.written()),
+                ["Alpha.fasta", "alpha.fasta"],
+            )
+            return
+
+        # fsutil cannot enable per-folder case sensitivity on this host (needs WSL);
+        # exercise the case-sensitive export branch deterministically by patching
+        # the folder case probe and recording both FASTA writes in memory.
+        export = importlib.import_module("commands.export")
+        written_files = {}
+
+        def record_write(path, headers, sequences):
+            written_files[os.path.basename(path)] = (list(headers), list(sequences))
+
+        with mock.patch.object(export, "folder_ignores_case", return_value=False), \
+             mock.patch.object(export, "write_fasta_atomic", side_effect=record_write):
+            output = run_command(viewer, "export groups")
+        self.assertIn("Exported 2 files", output)
+        self.assertEqual(sorted(written_files), ["Alpha.fasta", "alpha.fasta"])
+        self.assertEqual(written_files["Alpha.fasta"][0], [cache.headers[0]])
+        self.assertEqual(written_files["alpha.fasta"][0], [cache.headers[1]])
 
     def test_plain_names_are_exported_as_before(self):
         # The group command accepts '.' and '..'; their files are the plain

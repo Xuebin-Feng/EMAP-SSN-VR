@@ -41,7 +41,7 @@ class InProcessTests(unittest.TestCase):
 @unittest.skipUnless(sys.platform == "win32", "the VR Configuration GUI runs on Windows only")
 class GuiScriptTests(unittest.TestCase):
     def test_a_gui_script_that_reaches_an_opener_fails_the_test(self):
-        from tests.test_vr_config import run_gui_script
+        from tests.vr_config_fixtures import run_gui_script
 
         with self.assertRaises(AssertionError) as caught:
             run_gui_script(
@@ -54,7 +54,7 @@ class GuiScriptTests(unittest.TestCase):
         self.assertIn("http://127.0.0.1:1/from-the-gui", str(caught.exception))
 
     def test_a_gui_script_that_opens_nothing_passes(self):
-        from tests.test_vr_config import run_gui_script
+        from tests.vr_config_fixtures import run_gui_script
 
         self.assertIn("quiet", run_gui_script('print("quiet")'))
 

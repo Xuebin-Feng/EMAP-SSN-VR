@@ -54,7 +54,7 @@ class TemporaryFolderTests(unittest.TestCase):
         # scripts make their fixture folders.
         targets = ["tests.test_protocol_v1", "tests.test_command_compatibility", "tests.test_player_build"]
         if sys.platform == "win32":
-            targets.append("tests.test_vr_config.VRAtomicWriteTests")
+            targets.append("tests.test_vr_config_persistence.VRAtomicWriteTests")
         for target in targets:
             with self.subTest(target=target):
                 self.assertEqual(self.leftovers_of(["-m", "unittest", target]), [])

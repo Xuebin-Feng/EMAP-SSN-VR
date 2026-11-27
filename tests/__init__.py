@@ -18,8 +18,8 @@ package points SSN_LOG_DIR (the console logs of a window or launcher a test
 starts) at one too. Nothing a test does may create or change a file inside the
 project folder.
 test_temp_history_vr checks that a viewer from each builder keeps its history
-outside it. The VR Configuration GUI runs in a subprocess; see
-run_gui_script in test_vr_config.
+outside it. The VR Configuration GUI tests (test_vr_config_*) run offscreen in
+an isolated throwaway project guarded by an audit hook; see vr_config_fixtures.
 """
 import atexit
 import importlib.util
